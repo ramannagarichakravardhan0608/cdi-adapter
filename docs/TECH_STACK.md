@@ -28,7 +28,7 @@ Compose deployment · **Declared only** = listed as a dependency but never impor
 | Background processing | Redis 7, Celery, watchdog, `concurrent.futures` thread pools |
 | Document imaging | PyMuPDF, OpenCV, NumPy, Pillow |
 | OCR | RapidOCR, ONNX Runtime |
-| AI / model serving | Qwen2.5-VL-7B-Instruct (+3B fallback), PyTorch + CUDA, Hugging Face transformers, accelerate, qwen-vl-utils, einops, sentencepiece, httpx; vLLM + XGrammar (dormant) |
+| AI / model serving | Qwen2.5-VL-7B-Instruct (+3B fallback), PyTorch + CUDA, Hugging Face transformers, accelerate, qwen-vl-utils, einops, sentencepiece, httpx; vLLM 0.11.0 + XGrammar (E2-S1: rebuilt, in the gateway's own venv; `hf` stays active) |
 | Structured-output safety | JSON Schema (`jsonschema` + `referencing`) |
 | Clinical standards | HL7 FHIR R4, ABDM / NRCeS FHIR IG, ABHA, SNOMED CT, LOINC, ICD-10, UCUM; HL7 FHIR Validator (optional, Java) |
 | Terminology matching | Python `difflib` |
@@ -326,6 +326,11 @@ Compose deployment · **Declared only** = listed as a dependency but never impor
   `extract_concurrency`); `infra/runpod/start_vllm.sh` (installs vLLM in its own venv
   `/workspace/vllm-venv`); a commented-out `vllm` service in `docker-compose.yml`.
 - **When:** Only if `start_vllm.sh` is run **and** `CDI_MLSERVE_BACKEND=vllm` is set.
+- *Rebuilt (E2-S1, E2-S3):* in-process `AsyncLLMEngine` in `.venv-vllm` (vLLM 0.11.0, which pins
+  XGrammar 0.1.25). `mlserve/grammar.py` turns each extraction schema into an exact XGrammar
+  grammar. XGrammar 0.1.25 does not enforce a `number` maximum, so the 0–1 `confidence` rule is
+  written by hand. The engine uses `backend="xgrammar"` with no fallback. `CDI_VLLM_GUIDED`
+  (default `true`) switches it.
 
 ---
 
@@ -358,7 +363,10 @@ Compose deployment · **Declared only** = listed as a dependency but never impor
 - **When:** After S6 governance / human review: `project_patient`, the live re-projection on
   `GET /api/jobs/{id}/fhir`, and bundle generation after reviewer approval.
 
-### ABDM / NRCeS FHIR Implementation Guide (`nrces.fhir.r4.ndhm#6.5.0`) — Active
+### ABDM / NRCeS FHIR Implementation Guide (`ndhm.in#6.5.0`) — Active
+- **Id:** the FHIR package registry id is `ndhm.in` (canonical `https://nrces.in/ndhm/fhir/r4`);
+  `nrces.fhir.r4.ndhm`, used before E6-S1, is not a registry id. Pinned with every package it
+  uses in `infra/fhir/packages.lock`; upgrades only via `docs/ig-upgrade.md` (E6-S5).
 - **What:** India's National Digital Health Mission FHIR profiles: document bundles such as
   `PrescriptionRecord`, `DiagnosticReportRecord`, `OPConsultRecord`, `DischargeSummaryRecord`,
   `WellnessRecord`, `HealthDocumentRecord`.
@@ -388,15 +396,15 @@ Compose deployment · **Declared only** = listed as a dependency but never impor
   `fhir/canonical.py`. The package label is `CDI_TERMINOLOGY_PACKAGE=in-snomed-loinc-icd10`.
 - **When:** S5 terminology binding after extraction; codes are then carried into FHIR.
 
-### HL7 FHIR Validator (`validator_cli.jar` on Java) — Optional
+### HL7 FHIR Validator (`validator_cli.jar` 6.10.4 on Java 21) — Built (E6-S1), pod run pending
 - **What:** The official HL7 validator for FHIR resources against core specs and IG profiles.
 - **Why:** Real profile-level validation beyond the Python structural/conformance checks.
 - **Where:** `fhir/validate_abdm.py`: if `java` is on the path **and** the jar exists at
-  `CDI_FHIR_VALIDATOR_JAR` (default `/workspace/tools/validator_cli.jar`), it runs
-  `java -jar validator_cli.jar <bundle> -version 4.0.1 -ig nrces.fhir.r4.ndhm`; otherwise it falls
-  back to the Python checker.
-- **When:** On bundle validation. **Currently only the Python fallback runs**, because neither
-  Java nor the jar is deployed.
+  `CDI_FHIR_VALIDATOR_JAR` and the pinned IG tarball is in `CDI_FHIR_PACKAGE_HOME`, it runs the
+  validator offline against the pinned `ndhm.in#6.5.0` (`-tx n/a -no-http-access`); otherwise it
+  falls back to the Python checker.
+- **When:** On bundle validation. The pod installs it in `bootstrap_pod.sh` step 5b (E6-S1); it was
+  verified here on the golden bundles (120 IG errors found, E6-S4).
 
 ---
 
@@ -514,7 +522,8 @@ Compose deployment · **Declared only** = listed as a dependency but never impor
 |---|---|---|
 | `tenacity` | **Declared only** | In `pyproject.toml` dependencies, but not imported anywhere in `src/`, `scripts/` or `tests/`. Retries are done by Celery (`max_retries`) and custom code in `ml/client.py`. |
 | Snowstorm, SapBERT/BioLORD, FAISS | Planned (ARCHITECTURE §14 #2) | Not in the code; terminology uses the seed map + `difflib`. |
-| Temporal, Prometheus, Grafana, Loki, OpenTelemetry, KMS, WORM store, Presidio | Planned (§12–§14) | Not in the code. |
+| Temporal, Prometheus, Grafana, Loki, OpenTelemetry, KMS, WORM store | Planned (§12–§14) | Not in the code. |
+| **Presidio** 2.2.364 + spaCy `en_core_web_lg` 3.8.0 + `obi/deid_roberta_i2b2` (extra `deid`) | **Built (E11-S4)** | De-identification before any training/eval use: `cdi_adapter.deid`, `docs/deid.md`; pinned in `requirements.lock` (spaCy model by URL + sha256) and by commit (NER). |
 | ABDM gateway / Fidelius | Planned (§14 #7) | Only the DB tables (`abdm_care_context`, `abdm_consent`, `abdm_transfer`) exist. |
 | Fine-tuned `cdi-dslm` (QLoRA) | Planned (§14 #1d) | Not in the code. |
 | AWQ / INT4 quantization, `peft`, `trl` | Planned, **optional / deferred** (E2-S5, E2-S6) | No longer needed to start: the production baseline is the current 7B (bf16) on the Blackwell 32 GB GPU. Only a cost lever if the ₹75,000/month envelope needs headroom. |
@@ -522,8 +531,10 @@ Compose deployment · **Declared only** = listed as a dependency but never impor
 | Confidence gate 2 (post-VLM risk check) and CPU crop-verification | Planned (E4-S4, E12-S3) | Crop check runs on CPU (RapidOCR on the cropped bbox) by default. |
 | WhatsApp Business API intake | Planned (E15-S1) | Not in the code; uploads today are the web form and folder-watch only. |
 | Clinic/HIS API client (patient master read, governed write-back) | Planned (E15-S2) | Not in the code; ARCHITECTURE §13 lists write-back as not built. System of record for governed facts is an open decision. |
-| OIDC/SSO identity provider, secrets vault, TLS ingress + stable DNS | Planned (E11-S1, E1-S5, E1-S9) | None present; the web UI has no auth. |
-| k6 / Locust load harness | Planned (E1-S7) | Dev/test tool for the 30 × 5–10 burst. |
+| Web-app sign-in + roles | **Built (E11-S1)** | Local staff accounts (scrypt, stdlib) + server-side sessions + fail-closed route policy; `docs/auth.md`. |
+| OIDC/SSO identity provider, secrets vault | Planned (SSO: when the clinic has an IdP; vault: E1-S5) | Sign-in is local accounts until an IdP exists. |
+| TLS ingress + stable DNS: **Caddy 2.11.4** (official .deb, sha512-pinned) on an India-region VM + **autossh** reverse tunnel from the pod | Built (E1-S9), Blocked on the VM + domain | `infra/ingress/`, `infra/runpod/start_tunnel.sh`, `docs/ingress.md`; UI limited to clinic CIDRs until E11-S1. |
+| **Locust** load harness (`locust>=2.40`, extra `load`) | Built (E1-S7), Blocked on a real run (MinIO / pod) | Dev/test tool for the 30 × 5–10 burst: `scripts/load_test.py`, `docs/load-test.md`. Never installed on the pod. |
 | India-resident production host (IaC, private network, residency evidence) | Planned (E1-S10) | RunPod is the pilot host only. |
 
 ---

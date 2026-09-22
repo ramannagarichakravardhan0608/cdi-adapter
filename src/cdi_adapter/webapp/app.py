@@ -25,7 +25,7 @@ import json
 from typing import Any, Literal
 from uuid import UUID
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -37,14 +37,18 @@ from cdi_adapter.fhir.service import project_document, project_patient
 from cdi_adapter.logging import configure, get_logger
 from cdi_adapter.mpi import registry
 from cdi_adapter.storage import get_store
-from cdi_adapter.webapp import admin, review, review_page, reviewer
+from cdi_adapter.webapp import admin, auth, review, review_page, reviewer
 from cdi_adapter.webapp.jobs import get_runner
 from cdi_adapter.webapp.page import upload_page
 
 log = get_logger(__name__)
 MAX_FILES = 10
 
-app = FastAPI(title="CareFlow CDI-Adapter")
+# every route passes auth.authorize first: sign-in + role, per auth.POLICY (backlog E11-S1)
+# (FastAPI's /docs, /redoc and /openapi.json would bypass it, so they are switched off)
+app = FastAPI(title="CareFlow CDI-Adapter", dependencies=[Depends(auth.authorize)],
+              docs_url=None, redoc_url=None, openapi_url=None)  # fmt: skip
+app.include_router(auth.router)
 app.include_router(review.router)
 app.include_router(review_page.router)
 app.include_router(reviewer.router)

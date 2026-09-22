@@ -130,3 +130,36 @@ def test_upsert_registry_new_patient_then_lookup(db_env):
 def test_upsert_registry_new_patient_requires_core_fields(db_env):
     with session_scope() as c, pytest.raises(ValueError, match="name, mobile, dob"):
         registry.upsert_registry(c, f"CFP-X-{uuid.uuid4().hex[:6]}", {"address": "somewhere"})
+
+
+def test_concurrent_resolves_of_one_new_patient_mint_once(db_env):
+    """E2-S2: with vLLM two jobs can extract the same new patient at once. The second look-up
+    waits for the first mint to commit instead of missing it and minting a duplicate."""
+    import threading
+
+    abha = "6" + str(uuid.uuid4().int)[:13]
+    cand = _cand(name=f"Race {uuid.uuid4().hex[:6]}", abha=abha)
+    first_resolved, results = threading.Event(), {}
+
+    def first():
+        with session_scope() as c:
+            results["first"] = mpi.resolve_identity(c, cand)
+            first_resolved.set()
+            threading.Event().wait(0.5)  # still inside the transaction: the mint is uncommitted
+
+    def second():
+        first_resolved.wait(5)
+        with session_scope() as c:
+            results["second"] = mpi.resolve_identity(c, cand)
+
+    threads = [threading.Thread(target=first), threading.Thread(target=second)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+    assert results["first"][1] == "minted"
+    assert results["second"] == (results["first"][0], "abha")  # found, not minted again
+    with session_scope() as c:
+        n = c.execute(text("SELECT count(*) FROM patient_identity WHERE abha_number = :a"),
+                      {"a": abha}).scalar_one()  # fmt: skip
+    assert n == 1

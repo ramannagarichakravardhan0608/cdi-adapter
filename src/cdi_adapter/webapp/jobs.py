@@ -2,9 +2,11 @@
 
 * **Phase 1 (parallel)** — ``ThreadPoolExecutor(max(2, CDI_JOB_MAX_WORKERS))``: every document runs
   ``ingest -> OCR(rapidocr) -> classify -> [OCR(vlm) if handwritten]`` concurrently.
-* **Phase 2 (serial)** — ``extract -> terminology -> validate`` one document at a time, because
-  the ``hf`` backend does one forward pass at a time. The first document fixes the patient when
-  none was chosen; later documents attach to it.
+* **Phase 2** — ``extract -> terminology -> validate``. How many extractions run at once is
+  :func:`extract_slots` (backlog E2-S2): **one with ``hf``**, which does one forward pass at a
+  time, and up to ``vllm_max_num_seqs`` with ``vllm``, which batches concurrent requests. The
+  slots are shared by every job on the GPU. When no patient was chosen, the first document runs
+  alone and fixes the patient; the other documents then attach to it in parallel.
 * The job then stops at ``state = review`` (it does **not** auto-project). A registry patient
   chosen on the form arms the mismatch guard: a document for someone else stops the job with
   ``state = mismatch`` and its facts purged.
@@ -21,12 +23,27 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
-from cdi_adapter.config import get_settings
+from cdi_adapter.config import Settings, get_settings
 from cdi_adapter.logging import get_logger
 
 log = get_logger(__name__)
 
 STEPS = ("ingest", "ocr", "classify", "extract", "terminology", "validate")
+
+
+def extract_slots(settings: Settings | None = None) -> int:
+    """Phase-2 extractions allowed in flight at once, across all jobs (backlog E2-S2, §7.2).
+
+    ``hf`` is always 1: it does one forward pass at a time, so more would only queue on the GPU
+    (or OOM). ``vllm`` batches concurrent requests: ``CDI_EXTRACT_CONCURRENCY``, or when that is 0
+    (auto) the engine's own ``vllm_max_num_seqs``. ``stub`` is 1 unless set explicitly.
+    """
+    s = settings or get_settings()
+    if s.mlserve_backend == "hf":
+        return 1
+    if s.extract_concurrency:
+        return s.extract_concurrency
+    return s.vllm_max_num_seqs if s.mlserve_backend == "vllm" else 1
 
 
 @dataclass
@@ -116,11 +133,18 @@ class Job:
 
 
 class JobRunner:
-    def __init__(self, stages: Stages | None = None, max_workers: int | None = None) -> None:
+    def __init__(self, stages: Stages | None = None, max_workers: int | None = None,
+                 extract_concurrency: int | None = None) -> None:  # fmt: skip
         self.stages = stages or Stages.real()
         n = max(2, max_workers or get_settings().job_max_workers)
         self._pool = ThreadPoolExecutor(max_workers=n, thread_name_prefix="job-p1")
-        self._stage2_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="job-p2")
+        # E2-S2: with one slot this is exactly the old behaviour (one job at a time, serial
+        # Phase 2); with k slots, k jobs run and k extractions share the GPU at once
+        self.extract_slots = extract_concurrency or extract_slots()
+        k = self.extract_slots
+        self._job_pool = ThreadPoolExecutor(max_workers=k, thread_name_prefix="job")
+        self._p2_pool = ThreadPoolExecutor(max_workers=k, thread_name_prefix="job-p2")
+        self._slots = threading.BoundedSemaphore(k)
         self._jobs: dict[str, Job] = {}
 
     def get(self, job_id: str) -> Job | None:
@@ -132,7 +156,7 @@ class JobRunner:
         job = Job(id=uuid.uuid4().hex, docs=[DocState(filename=f[0]) for f in files],
                   patient_id=patient_id, registry_patient=registry_patient, abha=abha)  # fmt: skip
         self._jobs[job.id] = job
-        self._stage2_pool.submit(self._run, job, files)
+        self._job_pool.submit(self._run, job, files)
         return job
 
     def wait(self, job_id: str, timeout: float = 600) -> Job:
@@ -173,12 +197,18 @@ class JobRunner:
         from cdi_adapter.extract.service import IdentityMismatch
 
         s = self.stages
+        with job.lock:
+            if job.state == "mismatch":  # another document of this job already stopped it
+                d.status, d.step = "skipped", None
+                return
         try:
             d.step = "extract"
-            out = s.extract(d.document_id, patient_id=job.patient_id,
-                            expected_patient=job.registry_patient)  # fmt: skip
-            if out.get("patient_id") and job.patient_id is None:
-                job.patient_id = str(out["patient_id"])
+            with self._slots:  # the only GPU-bound step
+                out = s.extract(d.document_id, patient_id=job.patient_id,
+                                expected_patient=job.registry_patient)  # fmt: skip
+            with job.lock:
+                if out.get("patient_id") and job.patient_id is None:
+                    job.patient_id = str(out["patient_id"])
             d.steps_done.append("extract")
             if out.get("skipped"):
                 d.status, d.step = "skipped", None
@@ -194,10 +224,11 @@ class JobRunner:
             d.status, d.step = "done", None
         except IdentityMismatch as exc:
             d.status, d.step = "mismatch", None
-            job.state = "mismatch"
-            job.mismatch = {"filename": d.filename,
-                            "selected": (job.registry_patient or {}).get("name"),
-                            "document_name": exc.found.name}  # fmt: skip
+            with job.lock:
+                job.state = "mismatch"
+                job.mismatch = {"filename": d.filename,
+                               "selected": (job.registry_patient or {}).get("name"),
+                               "document_name": exc.found.name}  # fmt: skip
         except Exception as exc:
             d.status, d.error = "error", f"{type(exc).__name__}: {exc}"
             log.error("job_doc_failed", job=job.id, filename=d.filename, error=d.error)
@@ -208,13 +239,14 @@ class JobRunner:
                        for i, (name, raw, mime) in enumerate(files)]  # fmt: skip
             for f in futures:
                 f.result()
-            for d in job.docs:  # serial: one GPU forward pass at a time
-                if job.state == "mismatch":
-                    if d.status == "running":
-                        d.status = "skipped"
-                    continue
-                if d.status == "running":
-                    self._phase2(job, d)
+            ready = [d for d in job.docs if d.status == "running"]
+            # no patient yet: documents go one by one until one of them fixes it, so every
+            # document of the job lands on the same patient (§7.2)
+            while ready and job.patient_id is None and job.state != "mismatch":
+                self._phase2(job, ready.pop(0))
+            # then the rest in parallel, bounded by the shared extraction slots (E2-S2)
+            for f in [self._p2_pool.submit(self._phase2, job, d) for d in ready]:
+                f.result()
             if job.patient_id and job.state != "mismatch":
                 self.stages.merge_identity(job.patient_id)
             if job.state == "running":

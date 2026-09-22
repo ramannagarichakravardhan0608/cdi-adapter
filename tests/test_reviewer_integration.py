@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from cdi_adapter.canon.repo import create_rv_item_for_document
@@ -19,8 +18,17 @@ pytestmark = pytest.mark.integration
 @pytest.fixture
 def client(db_env):
     from cdi_adapter.webapp.app import app
+    from tests.helpers import signed_in
 
-    return TestClient(app)
+    return signed_in(app, "reviewer")  # E11-S1: the clinician role owns /reviewer
+
+
+@pytest.fixture
+def admin(db_env):
+    from cdi_adapter.webapp.app import app
+    from tests.helpers import signed_in
+
+    return signed_in(app, "admin")  # E11-S1: /admin is admin-only
 
 
 def _item_with_held_facts(extra_lines):
@@ -116,7 +124,7 @@ def test_approving_with_a_held_fact_never_promotes_it(client):
     assert n_verif == 3  # nobody decided the held fact: no verification is recorded for it
 
 
-def test_lab_item_promotes_into_cn_lab_result_test_code(client):
+def test_lab_item_promotes_into_cn_lab_result_test_code(client, admin):
     lines = ["Name: Canonlab Qz  Age: 50 Y", "Date: 02/09/2026", "LABORATORY REPORT",
              "HbA1c 7.8 % 4.0-5.6 H", "Serum Creatinine 1.1 mg/dL 0.6-1.3"]  # fmt: skip
     doc, blocks = _doc_with_ocr(lines, doc_type="lab_report")
@@ -130,7 +138,7 @@ def test_lab_item_promotes_into_cn_lab_result_test_code(client):
     _post(client, f"/api/reviewer/items/{item}/claim", reviewer="dr.lab")
     r = _post(client, f"/api/reviewer/items/{item}/approve", reviewer="dr.lab")
     assert r.json()["promoted"] == {"cn_lab_result": 2}
-    page = client.get("/admin", params={"mpi": mpi})  # patient_graph reads test_code (§4.5 fix)
+    page = admin.get("/admin", params={"mpi": mpi})  # patient_graph reads test_code (§4.5 fix)
     assert page.status_code == 200
     assert "4548-4" in page.text and "2160-0" in page.text and "DiagnosticReportRecord" in page.text
 
@@ -154,7 +162,8 @@ def test_unknown_item_and_missing_bundle(client):
     assert client.get(f"/api/reviewer/items/{item}/bundle").status_code == 404
 
 
-def test_admin_inspector_is_allow_listed(client):
+def test_admin_inspector_is_allow_listed(admin):
+    client = admin
     r = client.get("/admin")
     assert r.status_code == 200
     for t in ("cn_lab_result", "rv_item", "ai_event", "ops_patient_visit", "fin_billing_item"):
@@ -167,6 +176,7 @@ def test_admin_inspector_is_allow_listed(client):
 
 
 @pytest.mark.parametrize("path,marker", [("/reviewer", "Workbasket"), ("/admin", "Data inspector")])
-def test_pages_render(client, path, marker):
+def test_pages_render(admin, path, marker):
+    client = admin  # admin may open every page
     r = client.get(path)
     assert r.status_code == 200 and marker in r.text and "cdn" not in r.text.lower()

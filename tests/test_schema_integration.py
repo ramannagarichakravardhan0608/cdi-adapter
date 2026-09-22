@@ -1,4 +1,4 @@
-"""E0-S2 (integration): migrations 0001–0004 against a real PostgreSQL 16, plus the core DAL."""
+"""E0-S2 (integration): migrations 0001–0005 against a real PostgreSQL 16, plus the core DAL."""
 
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ CANONICAL_TABLES = {
     "cn_vital_sign", "cn_allergy", "cn_clinical_note", "cn_fhir_bundle",
     "ops_patient_visit", "fin_billing_item",
 }  # fmt: skip
+AUTH_TABLES = {"web_user", "web_session"}  # migration 0005 (backlog E11-S1)
 VIEWS = {"v_problem_list", "v_medication_list", "v_allergy_list", "v_results_grid",
          "v_encounter_timeline"}  # fmt: skip
 
@@ -57,10 +58,10 @@ def test_server_is_postgres_16(engine):
 
 
 def test_upgrade_head_creates_every_table_and_view(engine):
-    assert _tables(engine) == PER_DOC_TABLES | {"patient_registry"} | CANONICAL_TABLES
+    assert _tables(engine) == PER_DOC_TABLES | {"patient_registry"} | CANONICAL_TABLES | AUTH_TABLES
     assert _views(engine) == VIEWS
     with engine.connect() as c:
-        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0004"
+        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0005"
         assert c.execute(text("SELECT nextval('patient_mpi_seq')")).scalar_one() >= 1
 
 
@@ -161,4 +162,4 @@ def test_downgrade_base_then_upgrade_round_trip(pg_url, engine):
     command.downgrade(cfg, "base")
     assert _tables(engine) == set() and _views(engine) == set()
     command.upgrade(cfg, "head")
-    assert _tables(engine) == PER_DOC_TABLES | {"patient_registry"} | CANONICAL_TABLES
+    assert _tables(engine) == PER_DOC_TABLES | {"patient_registry"} | CANONICAL_TABLES | AUTH_TABLES

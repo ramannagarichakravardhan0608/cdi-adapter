@@ -83,10 +83,21 @@ def build_document_bundle(conn: Connection, document_id: str,
     ).scalar_one_or_none()  # fmt: skip
     facts = [f for f in repo.get_facts_for_document(conn, document_id)
              if f["is_current"] and f["review_state"] != "rejected"]  # fmt: skip
+    data_b64, url = _scan(doc, store)
+    return assemble_document_bundle(document_id, doc, doc_type, enc, pat, model, facts,
+                                    data_b64=data_b64, url=url,
+                                    now=datetime.now(UTC).isoformat())  # fmt: skip
+
+
+def assemble_document_bundle(document_id: str, doc: dict[str, Any], doc_type: str | None,
+                             enc: dict[str, Any], pat: dict[str, Any] | None, model: str | None,
+                             facts: list[dict[str, Any]], *, data_b64: str | None,
+                             url: str | None, now: str) -> dict[str, Any]:  # fmt: skip
+    """The S9 document bundle from already-loaded rows: pure, so the same inputs and ``now`` give
+    the same bundle (the E6-S4 golden bundles are built through here)."""
     governed = [f for f in facts if f["review_state"] in R.GOVERNED]
     held = [f for f in facts if f["review_state"] in R.HELD]
 
-    now = datetime.now(UTC).isoformat()
     p_ref, o_ref, pr_ref = (
         _ref("patient", doc.get("patient_id")),
         _ref("org"),
@@ -137,7 +148,6 @@ def build_document_bundle(conn: Connection, document_id: str,
         add("investigation", dr, R.diagnostic_report({"text": "Laboratory report"}, dr, p_ref,
                                                       e_ref, lab_refs, None), [])  # fmt: skip
 
-    data_b64, url = _scan(doc, store)
     entries.append((d_ref, R.document_reference(doc, d_ref, p_ref, data_b64=data_b64, url=url), []))
     sections["document"] = [d_ref]
     prov = _ref("provenance", document_id)

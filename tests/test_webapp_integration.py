@@ -5,7 +5,6 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from fastapi.testclient import TestClient
 
 from cdi_adapter.terminology.service import bind_document
 from cdi_adapter.validate.service import validate_document
@@ -24,8 +23,9 @@ def client(db_env, monkeypatch):
     get_settings.cache_clear()
     storage.get_store.cache_clear()
     from cdi_adapter.webapp.app import app
+    from tests.helpers import signed_in
 
-    yield TestClient(app)
+    yield signed_in(app, "admin")  # E11-S1: every route needs a signed-in role
     get_settings.cache_clear()
     storage.get_store.cache_clear()
 
@@ -111,9 +111,9 @@ def test_unknown_job_is_404(client):
 def test_end_to_end_job_needs_minio(app_env):
     from cdi_adapter.webapp.app import app
     from cdi_adapter.webapp.jobs import get_runner
-    from tests.helpers import make_pdf
+    from tests.helpers import make_pdf, signed_in
 
-    c = TestClient(app)
+    c = signed_in(app, "admin")
     pdf = make_pdf([_rx()])
     job_id = c.post("/api/jobs", files=[("files", ("rx.pdf", pdf, "application/pdf"))]).json()[
         "job_id"

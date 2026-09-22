@@ -2,10 +2,18 @@
 PY ?= .venv/bin/python
 COMPOSE = docker compose -f infra/compose/docker-compose.yml
 
-.PHONY: venv ci test test-unit lint up down nuke logs migrate api worker webapp mlserve watch samples smoke
+.PHONY: venv lock loadtest ci test test-unit lint up down nuke logs migrate api worker webapp mlserve watch samples smoke
 
 venv:
-	python3 -m venv .venv && $(PY) -m pip install -e ".[dev,ocr]"
+	python3 -m venv .venv && $(PY) -m pip install -e ".[dev,ocr,load]"
+
+# E1-S4: regenerate infra/runpod/requirements.lock from pyproject.toml + infra/runpod/versions.env
+lock:
+	$(PY) scripts/lock_pod_deps.py
+
+# E1-S7: 30 patients x 5-10 documents against HOST (e.g. make loadtest HOST=https://emr.example.in)
+loadtest:
+	$(PY) scripts/load_test.py --host $(HOST)
 
 ci:
 	$(PY) scripts/ci.py

@@ -21,7 +21,7 @@ Without a GPU the host can run `CDI_MLSERVE_BACKEND=stub` (for checks only — n
 | On the pod | On the fallback host |
 |---|---|
 | torch inherited from the RunPod image (App. B) | `bootstrap_pod.sh` installs the same pinned `torch 2.8.0` / `torchvision 0.23.0` (cu128) when `CDI_MLSERVE_BACKEND=hf` and torch is missing |
-| `LIVE URL: https://<POD_ID>-8888.proxy.runpod.net` (TLS by RunPod) | `LIVE URL: http://<host>:8888` (`CDI_PUBLIC_HOST` overrides the address); TLS + a stable hostname is E1-S9 |
+| `LIVE URL: https://<POD_ID>-8888.proxy.runpod.net` (TLS by RunPod) | `LIVE URL: http://<host>:8888` (`CDI_PUBLIC_HOST` overrides the address); staff keep using the stable ingress hostname (E1-S9), which this host joins by opening the same tunnel |
 | `/workspace` is MooseFS (0777) | an ordinary disk: the secrets store copy in `/workspace/secrets` keeps its 0700/0600 modes |
 
 ## Fail over
@@ -35,7 +35,7 @@ Without a GPU the host can run `CDI_MLSERVE_BACKEND=stub` (for checks only — n
 3. **Start.** `sudo bash /workspace/cdi/infra/runpod/start_all.sh` — installs packages, rebuilds
    PostgreSQL from `cdi.dump`, starts Redis and MinIO with the store's credentials, the model
    gateway and the web app, and prints the address.
-4. **Lock the port.** The web UI has no login yet (ARCHITECTURE §12; backlog E11-S1) and binds
+4. **Lock the port.** Staff sign in (backlog E11-S1), but the web app holds patient data and binds
    `0.0.0.0`: allow 8888 only from the clinic network / VPN (e.g. `ufw allow from <clinic-cidr> to
    any port 8888`, `ufw deny 8888`). The start script prints this warning on a fallback host.
 5. **Verify.**
@@ -43,5 +43,7 @@ Without a GPU the host can run `CDI_MLSERVE_BACKEND=stub` (for checks only — n
    - `python scripts/golden_path.py --mode full --baseline stub --fresh-db cdi_golden` with
      `CDI_MLSERVE_BACKEND=stub` (pipeline + stack), then the real-model run
      `bash infra/runpod/golden_nightly.sh` (§8.2 `real_vlm` baseline)
-6. **Point staff at it.** Until E1-S9 provides a stable hostname, the counter uses the printed
-   address.
+6. **Point staff at it.** Nothing changes for staff: copy `/workspace/secrets/tunnel/` along with the
+   data (step 1). `start_all.sh` then opens the tunnel from this host, and the stable ingress
+   hostname (E1-S9, `docs/ingress.md`) serves from here. It prints `COUNTER URL: https://…` when it
+   does. The printed `LIVE URL` is for diagnostics only.

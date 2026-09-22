@@ -117,7 +117,8 @@ Constraints that shaped the build:
 - Two synchronized outputs per document: **relational rows** and a **FHIR bundle**.
 - Portability: every jurisdiction difference is isolated into two swappable
   packages — a **Terminology Package** and a **Profile/IG Package** (`CDI_IG_PACKAGE`,
-  `CDI_TERMINOLOGY_PACKAGE`). India (`nrces.fhir.r4.ndhm#6.5.0`) is the default.
+  `CDI_TERMINOLOGY_PACKAGE`). India (`ndhm.in#6.5.0`, the NRCeS ABDM IG's FHIR registry id;
+  written `nrces.fhir.r4.ndhm` before E6-S1, which is not a registry id) is the default.
 
 ---
 
@@ -163,6 +164,7 @@ Constraints that shaped the build:
 
 > *Reconciled (E1-S8):* the job pool is `max(2, CDI_JOB_MAX_WORKERS)` threads for Phase 1 and one
 > serial thread for Phase 2 (extract), as §7.2 describes; the earlier "ThreadPool(1)" label was stale.
+> *(E2-S2: with `vllm`, Phase 2 uses up to `vllm_max_num_seqs` threads; with `hf` it stays one.)*
 
 Optional / not on the hot path: `cdi_adapter.worker` (Celery) chains the same
 stages for the **folder-watch** ingestion path; `cdi_adapter.api` is the original
@@ -214,6 +216,12 @@ any Ubuntu 24.04 host with an NVIDIA GPU. The only differences are handled in th
 2.8.0+cu128 is installed when it is not inherited (App. B), and the printed address is the host's
 own (`infra/runpod/lib.sh`). Runbook: `docs/fallback-host.md`.
 
+**Stable address (E1-S9):** because the pod's own URL changes on every restart, staff use one
+hostname served by Caddy on a small India-region ingress VM. TLS ends there, and the pod keeps a
+reverse SSH tunnel (autossh) open to it, so replacing the pod or failing over to the E1-S3 host
+keeps the URL. A dead backend gets a real 503 (`CDI_BACKEND_DOWN`), never a 200 error page.
+Runbook: `docs/ingress.md`.
+
 **One-command lifecycle:** `bash /workspace/cdi/infra/runpod/start_all.sh`
 → `bootstrap_pod.sh` (apt, initdb, restore, `alembic upgrade head`, venv) → start
 `mlserve` (:8077) → start `webapp` (:8888) → print the live URL.
@@ -247,7 +255,8 @@ Client side (`cdi_adapter.ml.client`):
 
 | Process | Port | Exposure | Notes |
 |---|---|---|---|
-| `cdi_adapter.webapp` | 8888 | **public** via `https://<pod-id>-8888.proxy.runpod.net` | 8888 is the only RunPod-proxied HTTP port on this pod (was Jupyter; Jupyter stopped) |
+| `cdi_adapter.webapp` | 8888 | **public** via `https://<pod-id>-8888.proxy.runpod.net`; the address of record is the stable ingress hostname (E1-S9) | 8888 is the only RunPod-proxied HTTP port on this pod (was Jupyter; Jupyter stopped) |
+| `autossh` → ingress VM | outbound SSH | pod dials out; no inbound port | reverse tunnel VM `127.0.0.1:18888` → pod `127.0.0.1:8888` (E1-S9, `infra/runpod/start_tunnel.sh`) |
 | `cdi_adapter.mlserve` | 8077 | localhost only | GPU model gateway |
 | PostgreSQL | 5432 | localhost | overlay `PGDATA`, `-k /tmp` |
 | Redis | 6379 | localhost | Celery broker (folder-watch path) |
@@ -767,6 +776,10 @@ never silently becomes trusted clinical data").
 - **FHIR content validation today = structural lint only** (`_lint`: Composition
   first, no dangling `urn:uuid:`, Observations valued, Conditions coded). Full HAPI
   + `nrces.fhir.r4.ndhm` IG profile validation is a named gap (§13).
+  *E6-S1 (2026-09-22):* the real validator is now deployable, pinned (`docs/ig-upgrade.md`) and
+  auto-selected by `validate_abdm.validate`; on the E6-S4 golden bundles it reports 120 IG errors
+  that the lint does not see (baseline `tests/golden/fhir/validation-baseline.json`). S9 gating
+  on it is E6-S2.
 
 ---
 
@@ -815,10 +828,15 @@ reflects the latest review decisions.
   [OCR(vlm) if handwritten]` concurrently. `classify` is the scored heuristic
   (`config.fast_classify` ON); it makes **no VLM call** for a clean printed
   prescription / lab report / vitals / radiology report.
-- **Phase 2 (serial).** `extract → terminology → validate` per document, serialised
+- **Phase 2 (serial with `hf`).** `extract → terminology → validate` per document, serialised
   on the single GPU **because the `hf` backend does one forward pass at a time** —
   firing them concurrently would OOM, not speed up. This lock is removed only once
-  the `vllm` backend lands (Roadmap #1 / §7.4). Extract uses one retry
+  the `vllm` backend lands (Roadmap #1 / §7.4). *(Backlog E2-S2:* the number of
+  extractions in flight is `extract_slots()`: always 1 with `hf`, and with `vllm`
+  `CDI_EXTRACT_CONCURRENCY`, or `vllm_max_num_seqs` when that is 0. The slots are shared by
+  every job. With no chosen patient, the first document runs alone and fixes the patient;
+  the rest then run in parallel. `resolve_identity` holds a transaction advisory lock, so
+  parallel jobs never mint the same new patient twice.*)* Extract uses one retry
   (`config.extract_retries = 1`). No document ever shows "queued" — the grid shows
   each cell `pending → running → done`.
 - The job then stops at **`state = review`** (it does **not** auto-project).
@@ -868,7 +886,7 @@ Planned changes and their honest effect:
 |---|---|---|---|
 | 1 | **`hf` → `vllm` async engine** (`AsyncLLMEngine`, paged KV, continuous batching) | *Projected* 2–3× throughput on Phase 2. **Built, deployed and A/B tested later this cycle — measured effect was zero** (72–74 s, unchanged); reverted to `hf`. See §3.4 for the finding and root-cause analysis; the code stays in the tree, dormant. | 32 GB ⇒ ~15 GB weights + ~12–14 GB KV ⇒ 3–4 concurrent page extractions, not 5 (large image prefill still serialises on compute). |
 | 2 | **Remove the Phase-2 serialisation lock** in `webapp/jobs.py` | Built alongside #1 (`_extract_sem`/`_stage2_pool` fan-out) — only overlapped 2 of 3 documents in the measured run, part of why #1 showed no gain. Dormant with #1 since the revert to `hf`. | Phase 1 is *already* parallel (`ThreadPoolExecutor`, 6 workers); the "`max_workers=1`" premise is not the current code. Celery for web uploads is a *scaling/durability* change (Roadmap #8), not a latency lever. |
-| 3 | **Grammar-locked decoding** (vLLM `guided_json` / XGrammar) | Built and tested as part of the same #1 effort — guarantees JSON *validity* but adds token-level decode overhead; contributed to, not against, the flat result. **Not clinical fidelity** either way — S6 + human review stay load-bearing. | Needs the v3 schemas *re-tightened* (they were loosened to stop retries) so the grammar actually constrains. Currently dormant with #1. |
+| 3 | **Grammar-locked decoding** (vLLM `guided_json` / XGrammar) | Built and tested as part of the same #1 effort — guarantees JSON *validity* but adds token-level decode overhead; contributed to, not against, the flat result. **Not clinical fidelity** either way — S6 + human review stay load-bearing. | Needs the v3 schemas *re-tightened* (they were loosened to stop retries) so the grammar actually constrains. Currently dormant with #1. *(E2-S3 rebuild: `mlserve/grammar.py`. Checked token by token with the real XGrammar 0.1.25 and Qwen tokenizer, XGrammar let `confidence: 1.8` through a 0–1 range, so that rule is now written exactly. A schema feature that cannot be enforced exactly is refused (HTTP 422), never sent loosely. The schemas are **not** re-tightened yet: the grammar enforces them as they stand.)* |
 | 4 | **CPU thread hygiene** — *done (2026-09-09).* `cdi_adapter/_cpu.py` reads the cgroup CPU quota (pod: ~13.6, not the 128 the host reports) and caps `OMP`/`OPENBLAS`/`MKL`/`RAYON`/ORT threads to `(budget-1) ÷ job_max_workers` before NumPy/OpenCV/ONNXRuntime load; `cv2.setNumThreads` + `RapidOCR(intra_op_num_threads=…)`. | ingest 16 s → ~7 s, RapidOCR 7–23 s → ~2 s (it was thrashing 128 threads on 13 cores). 3-doc wall **90 s → 74 s**. | shipped. |
 
 **Realistic target with #1–3 also done:** a 5-document job in **~20–35 s wall**,
@@ -937,15 +955,22 @@ Postgres.
 | `CDI_PAGE_DPI` | 200 | render resolution |
 | `CDI_WEBAPP_PORT` | **8888** | the RunPod-proxied port |
 | `CDI_MLSERVE_URL` / `_PORT` | `http://127.0.0.1:8077` / 8077 | model gateway |
-| `CDI_MLSERVE_BACKEND` | `hf` | `hf` \| `stub`; `vllm` was built, A/B tested and reverted (§3.4) — dormant, rebuilt under backlog E2-S1 *(reconciled E1-S8)* |
+| `CDI_MLSERVE_BACKEND` | `hf` | `hf` \| `stub` \| `vllm`; `vllm` was built, A/B tested and reverted (§3.4); rebuilt under backlog E2-S1 (own venv, see App. B), still not the active path *(reconciled E1-S8)* |
+| `CDI_VLLM_GPU_MEMORY_UTILIZATION` / `_MAX_MODEL_LEN` / `_MAX_NUM_SEQS` | 0.88 / 16384 / 4 | vLLM engine (E2-S1): ~15 GB weights + KV cache on 32 GB, 3–4 concurrent page extractions |
+| `CDI_VLLM_GUIDED` | `true` | grammar-locked JSON with XGrammar (E2-S3): every extraction schema becomes an exact grammar; vLLM rejects any token that would break it |
 | `CDI_VLM_MODEL_ID` / `_FALLBACK_MODEL_ID` | `Qwen/Qwen2.5-VL-7B-Instruct` / `…-3B-…` | VLM + OOM fallback |
 | `CDI_VLM_MAX_PIXELS_OCR` | 2 000 000 | processor cap (VRAM bound) |
 | `CDI_FAST_CLASSIFY` | `true` | S2 scored heuristic first; VLM only on ambiguous/handwritten |
 | `CDI_EXTRACT_RETRIES` | `1` | S4 VLM re-tries on schema failure (schemas relaxed → rare) |
 | `CDI_JOB_MAX_WORKERS` | 6 | Phase-1 documents in flight concurrently |
+| `CDI_EXTRACT_CONCURRENCY` | 0 (auto) | Phase-2 extractions in flight across all jobs (E2-S2): always 1 with `hf`; with `vllm`, this value or `CDI_VLLM_MAX_NUM_SEQS` when 0 |
 | `CDI_OCR_ENGINE` / `CDI_HANDWRITTEN_USES_VLM` | `rapidocr` / `true` | S3 routing |
-| `CDI_IG_PACKAGE` | `nrces.fhir.r4.ndhm#6.5.0` | Profile/IG package |
+| `CDI_IG_PACKAGE` | `ndhm.in#6.5.0` | Profile/IG package: the NRCeS ABDM IG by its FHIR registry id, pinned with every package it uses (`infra/fhir/packages.lock`, E6-S1); upgrades via `docs/ig-upgrade.md` (E6-S5) |
 | `CDI_TERMINOLOGY_PACKAGE` | `in-snomed-loinc-icd10` | Terminology package |
+| `CDI_SESSION_IDLE_MINUTES` / `_MAX_HOURS` / `_COOKIE_SECURE` | 30 / 12 / `true` | staff sign-in sessions (E11-S1); `false` only for plain-http local development |
+| `CDI_LOGIN_MAX_FAILURES` / `CDI_LOGIN_LOCKOUT_MINUTES` | 5 / 15 | account lockout (E11-S1) |
+| `CDI_DEID_SPACY_MODEL` / `_NER_MODEL` / `_NER_REVISION` / `_MIN_SCORE` | `en_core_web_lg` / `obi/deid_roberta_i2b2` / `78f2152e…` / 0.35 | de-identification before training use (E11-S4) |
+| `CDI_FHIR_VALIDATOR_JAR` / `CDI_FHIR_JAVA` / `CDI_FHIR_PACKAGE_HOME` | `/workspace/tools/validator_cli.jar` / `java` / `/workspace/tools/fhir-home` | HL7 validator (E6-S1): jar 6.10.4 (sha256-pinned); the package home holds the pinned IG tarball (`ig/`) and the frozen package cache; used offline only, else the Python fallback |
 
 Pod file: `/workspace/cdi/.env` (copied from `.env.runpod`).
 
@@ -970,6 +995,12 @@ overlay, **`pg_restore`s `/workspace/backup/cdi.dump`**, runs `alembic upgrade
 head`, rebuilds the venv if missing; then the gateway and web app start. Model
 weights are already in `/workspace/hf-cache`; scans are already in
 `/workspace/minio-data`.
+
+*Pinned (E1-S4):* every version the bootstrap installs comes from `infra/runpod/versions.env`
+(Ubuntu snapshot + apt versions, Go + checksum, MinIO tag + commit, torch) and
+`infra/runpod/requirements.lock` (hash-locked Python packages). The last step writes a version
+manifest to `/workspace/logs/manifests/` and stops the boot on drift from those pins, so the web
+app never starts on unpinned versions. Runbook: `infra/runpod/README.md`.
 
 ### 10.3 DB snapshots
 `snapshot.sh` (`pg_dump -Fc` → `/workspace/backup/cdi.dump`, keeps last 10) is on
@@ -1016,11 +1047,11 @@ checks must grep a content marker); `psql`/`pg_restore` need the URL with
 |---|---|---|
 | Data residency | all inference + PHI on the pod; no external API calls in the hot path | — |
 | Legacy DB | strictly read-only; never touched | — |
-| Web UI auth | **none** | add auth before any real data |
-| Transport | RunPod proxy provides TLS to the browser; internal is plaintext localhost | mTLS for a multi-node deployment |
+| Web UI auth | *E11-S1 (2026-09-22):* every route needs a signed-in staff account with a role (`intake` / `reviewer` / `admin`, fail-closed policy in `webapp/auth.py`); local accounts (`web_user`, scrypt), server-side sessions (`web_session`, token hash only; HttpOnly + Secure + SameSite=Strict; 30 min idle / 12 h max), lockout after 5 failures, same-origin check on writes, sign-in audited. Runbook `docs/auth.md` | SSO/OIDC when the clinic has an IdP; per-reviewer identity on S8 decisions (E7-S1) |
+| Transport | Staff use a stable hostname; TLS ends at Caddy on our own India-region ingress VM, which reaches the pod over an SSH tunnel the pod opens (E1-S9, `docs/ingress.md`). The UI is limited to clinic CIDRs until E11-S1. The RunPod proxy URL is for diagnostics only. Internal traffic is plaintext localhost. | mTLS for a multi-node deployment |
 | At rest | MinIO + Postgres on the pod; DB dump on `/workspace` | encryption at rest, KMS |
 | Audit | `audit_log` on every create/update/read | ship to a WORM store |
-| De-identification | none (demo data) | Presidio + clinical NER before any training corpus |
+| De-identification | *E11-S4 (2026-09-22):* `cdi_adapter.deid` — Presidio + spaCy `en_core_web_lg` + clinical NER `obi/deid_roberta_i2b2` (pinned commit, local files only) + Indian recognizers (ABHA, Aadhaar/Verhoeff, PAN, phone, PIN, MRN/UHID, address); surrogates, per-document date shift, typed placeholders; page images blacked out and re-OCR-verified; red-team re-identification check (`scripts/deid_redteam.py`). Runbook `docs/deid.md` | the human release review of each corpus (E2-S4 🔒) |
 | ABDM | schema for `abdm_care_context/consent/transfer`; **no gateway, no Fidelius** | build the DMZ edge (§14) |
 | DPDP Act 2023 | not addressed | consent, purpose limitation, retention, data-principal rights |
 | Secret hygiene | note: `RUNPOD_API_KEY` is readable in `/proc/1/environ` on this pod. *(E1-S5)* DB/Redis/MinIO credentials come from a 0700/0600 secrets store (`CDI_SECRETS_DIR`), not `.env`; no password on any command line (pgpass, Redis `requirepass` file); repo secret scan in CI | rotate the RunPod key (owner); don't share pods; the persistent store copy on `/workspace` (MooseFS, 0777) → KMS on the production host (E1-S10) |
@@ -1184,7 +1215,7 @@ clinical-emr-adapter/
 | Python | 3.12 |
 | torch / torchvision | 2.8.0+cu128 / 0.23.0+cu128 (inherited via `venv --system-site-packages`) |
 | transformers | 5.16.1 (current `hf` serving backend — one forward pass at a time) |
-| vLLM | *not installed* — planned serving backend (§7.4), needs a Blackwell sm_120 / torch 2.8 build |
+| vLLM | **0.11.0** (the last release on torch 2.8; cu128 build with Blackwell sm_120) — *rebuilt under E2-S1, 2026-09-22*: `VLLMBackend`, selected by `CDI_MLSERVE_BACKEND=vllm`; runs the gateway from its own venv `.venv-vllm` (`infra/runpod/requirements-vllm.lock`, transformers 4.57.6) because vLLM 0.11.0 predates transformers 5; `hf` remains the active backend |
 | VLM | `Qwen/Qwen2.5-VL-7B-Instruct` (Apache-2.0), bf16, ~15 GB VRAM, sdpa attention |
 | OCR | `rapidocr-onnxruntime` + `onnxruntime` (CPU) |
 | API / server | FastAPI + uvicorn |

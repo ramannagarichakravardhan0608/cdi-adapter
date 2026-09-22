@@ -41,7 +41,14 @@ def header(active: str = "") -> str:
         f'<a href="{h}"{" aria-current=page" if h == active else ""}>{escape(t)}</a>'
         for h, t in links
     )
-    return f'<header class="top">{LOGO_SVG}<b>CareFlow Polyclinic</b><nav>{nav}</nav></header>'
+    signout = (
+        '<form method=post action="/logout" style="margin-left:auto">'
+        "<button type=submit>Sign out</button></form>"
+    )  # E11-S1
+    return (
+        f'<header class="top">{LOGO_SVG}<b>CareFlow Polyclinic</b><nav>{nav}</nav>'
+        f"{signout}</header>"
+    )
 
 
 def page(title: str, body: str, *, active: str = "", script: str = "") -> str:

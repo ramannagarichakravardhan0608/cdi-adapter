@@ -156,8 +156,18 @@ def _mint(conn: Connection, cand: Candidate) -> UUID:
     return pid
 
 
+# pg advisory-lock key serialising resolve_identity (any fixed bigint; ascii 'CDI MPI')
+RESOLVE_LOCK_KEY = 0x434449204D5049
+
+
 def resolve_identity(conn: Connection, cand: Candidate) -> tuple[UUID, str]:
-    """Return ``(patient_id, how)`` with ``how`` in ``abha`` | ``fuzzy`` | ``minted``."""
+    """Return ``(patient_id, how)`` with ``how`` in ``abha`` | ``fuzzy`` | ``minted``.
+
+    Look-up and mint are one step under a transaction-scoped advisory lock: jobs extract in
+    parallel with vLLM (backlog E2-S2), and two documents of the same new patient must not both
+    miss the look-up and mint two records. The lock is released when the caller's transaction ends.
+    """
+    conn.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": RESOLVE_LOCK_KEY})
     if cand.abha:
         pid = conn.execute(
             text("SELECT id FROM patient_identity "

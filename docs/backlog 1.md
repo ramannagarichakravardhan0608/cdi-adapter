@@ -620,13 +620,16 @@ which feeds the **calibrator**; this feeds the **eval set**.
 ### Phase 1
 
 #### Block E6-S1 — HL7 validator + nrces.fhir.r4.ndhm IG package sidecar 🔄
-**Status:** Pending — reset from 🔄: code at `fdd4aeb` not provided
+**Status:** Blocked (2026-09-22). Built and verified here with the real validator (JRE + `validator_cli.jar` 6.10.4 + the pinned IG, all offline). What remains is the pod run of `bootstrap_pod.sh` step 5b (install + seed + digest proof on the pod), which needs the **RunPod pod**. Built as a dependency of E6-S5 (owner: "based on the architecture"). **Finding:** `nrces.fhir.r4.ndhm` is not a FHIR registry id; the NRCeS ABDM IG is **`ndhm.in`** (6.5.0, canonical `https://nrces.in/ndhm/fhir/r4`). The old `_run_hapi` also dropped the version. Both fixed. Runbook: `docs/ig-upgrade.md`.
 `Must · BLOCKER · 2 d · 3 pts · Deps: — · Arch ✔ §6, §13, §14 #5 · DoD-DEPLOY`
 The code already auto-switches to HAPI when `java` + `validator_cli.jar` are present (confirmed in `fhir/validate_abdm.py`). Remaining work is **deployment**, not new integration.
-- [ ] Deploy a JRE + `validator_cli.jar` + the pinned `nrces.fhir.r4.ndhm` IG package on the pod/cluster
-- [ ] `java -jar validator_cli.jar <bundle> -ig nrces.fhir.r4.ndhm` returns a real OperationOutcome for a test bundle
-- [ ] Verify the auto-switch from the Python fallback to HAPI
-- **Tests:** a known-bad bundle → errors reported by HAPI
+- [ ] Deploy a JRE + `validator_cli.jar` + the pinned `nrces.fhir.r4.ndhm` IG package on the pod/cluster. **Built, not run on the pod:**
+  - `bootstrap_pod.sh` step 5b refuses a `CDI_IG_PACKAGE` that differs from the pin, fetches and sha256-checks the jar, then runs `scripts/fhir_ig.py seed`.
+  - The seed installs the IG tarball (sha256-pinned) and exactly the 10 packages in `infra/fhir/packages.lock` from the registry, then proves every digest.
+  - The JRE is `openjdk-21-jre-headless=21.0.12+8-1~24.04` in the E1-S4 apt pins. New settings: `CDI_FHIR_JAVA`, `CDI_FHIR_PACKAGE_HOME`.
+- [x] `java -jar validator_cli.jar <bundle> -ig nrces.fhir.r4.ndhm` returns a real OperationOutcome for a test bundle. The pinned `ndhm.in#6.5.0` was verified here: the official IG example gives 0 errors. `hapi_command` runs offline (`-tx n/a -no-http-access` plus a closed-port proxy, §12) and batches files, because JVM start-up dominates.
+- [x] Verify the auto-switch from the Python fallback to HAPI. `validate()` gives `engine: hapi` and 21 IG errors on the WellnessRecord golden. Without Java it gives `engine: python` and `valid: true` on the same bundle: the fallback is blind to the IG, which is E6-S2's job to close.
+- **Tests:** a known-bad bundle → errors reported by HAPI. The real validator reports **120 errors across the 5 E6-S4 goldens**, so our S9 output is not yet ABDM-conformant (see E6-S4). `tests/test_fhir_ig_unit.py`.
 
 #### Block E6-S2 — Wire S9 to the real validator (replace `_lint`) ⬜
 **Status:** Pending
@@ -645,12 +648,22 @@ The code already auto-switches to HAPI when `java` + `validator_cli.jar` are pre
 - **Tests:** positive + negative identifier fixtures
 
 #### Block E6-S4 — Golden-bundle regression tests per artifact type ⬜
-**Status:** Pending
+**Status:** Blocked (2026-09-22). The suite is built and runs on the real validator. The goldens do **not pass the ABDM IG yet**: 120 errors, recorded in `tests/golden/fhir/validation-baseline.json`. The fixes belong to other blocks:
+- `Patient.identifier.type`: E6-S6 🔒
+- Composition section slices and small gaps: E6-S7 / E6-S2
+- HFR/HPR ids: E8-S1 🔒
+
+The CI run also needs a git host (E1-S1). Built as a dependency of E6-S5.
 `Must · BLOCKER · 2 d · 3 pts · Deps: E6-S1, E1-S1 · Arch ◐ §5 S9 ARTIFACT map · DoD-CODE`
-- [ ] 5 golden bundles: PrescriptionRecord, DiagnosticReportRecord, OPConsultRecord, DischargeSummaryRecord, WellnessRecord
-- [ ] Each passes the real IG validator in CI
-- [ ] Any `fhir/resources.py` change that breaks one fails the build
-- **Tests:** the golden-bundle suite
+- [x] 5 golden bundles: PrescriptionRecord, DiagnosticReportRecord, OPConsultRecord, DischargeSummaryRecord, WellnessRecord.
+  - `tests/golden/fhir/*.json`, built by `scripts/fhir_golden.py` from fixed synthetic inputs through the real S9 assembly.
+  - `fhir.service.build_document_bundle` is split into DB reads plus a pure `assemble_document_bundle`, with no behaviour change.
+- [ ] Each passes the real IG validator in CI. **Not yet: 120 known IG errors.**
+  - `fhir_golden.py --validate` is a ratchet: it fails on any error beyond the baseline and reports fixed ones.
+  - Verified here offline from the lock-seeded cache: "no new errors", exit 0.
+  - The CI step is in `.github/workflows/ci.yml` (integration job); it runs once a git host exists (E1-S1).
+- [x] Any `fhir/resources.py` change that breaks one fails the build. `fhir_golden.py --check` runs in the unit suite (`test_goldens_are_committed_and_match_the_builders`); a monkeypatched builder change makes all 5 differ.
+- **Tests:** the golden-bundle suite. `tests/test_fhir_ig_unit.py`, plus `CDI_TEST_FHIR_VALIDATOR=1` for the real-validator test.
 
 #### Block E6-S6 — Patient identity & demographics source of truth before FHIR ⬜ 🔒
 **Status:** Pending

@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from cdi_adapter.config import get_settings
 from cdi_adapter.logging import get_logger
 from cdi_adapter.mlserve.backends import Backend, make_backend
+from cdi_adapter.mlserve.grammar import GrammarError
 
 log = get_logger(__name__)
 
@@ -51,9 +52,12 @@ def create_app(backend: Backend | None = None) -> FastAPI:
                 ) from exc
         be: Backend = app.state.backend
         t0 = time.perf_counter()
-        text = be.generate(
-            req.prompt, image, max_tokens=req.max_tokens, json_schema=req.json_schema
-        )
+        try:
+            text = be.generate(
+                req.prompt, image, max_tokens=req.max_tokens, json_schema=req.json_schema
+            )
+        except GrammarError as exc:  # E2-S3: never served unconstrained instead
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         secs = round(time.perf_counter() - t0, 3)
         log.info("vlm_generate", backend=be.name, model=be.model, seconds=secs)
         return GenerateResponse(

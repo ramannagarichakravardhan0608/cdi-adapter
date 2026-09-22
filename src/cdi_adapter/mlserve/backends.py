@@ -1,6 +1,6 @@
-"""Model-gateway backends (ARCHITECTURE §3.4): ``stub`` | ``hf``.
+"""Model-gateway backends (ARCHITECTURE §3.4): ``stub`` | ``hf`` | ``vllm``.
 
-``vllm`` is built later by backlog E2-S1 (dormant path in the as-built system).
+``vllm`` (backlog E2-S1): vLLM AsyncLLMEngine with continuous batching, in its own venv.
 
 * ``stub`` — deterministic keyword responder so tests and CI need no GPU. It reads only the text
   between ``<document>`` … ``</document>`` in the prompt (OCR blocks as ``[bN] text`` lines) and
@@ -422,8 +422,166 @@ class HFBackend(Backend):
             return self._runner(self._model, self._processor, prompt, image_png, max_tokens)
 
 
+# =================================================================== vllm (backlog E2-S1)
+#
+# vLLM ``AsyncLLMEngine``: paged KV cache + continuous batching (§3.4). The engine runs on its
+# own asyncio loop in a background thread; the gateway serves ``/vlm/generate`` from a thread pool,
+# so concurrent requests reach the engine together and are batched, while ``generate`` keeps the
+# same synchronous contract as ``hf`` and ``stub``. vLLM 0.11.0 is the last release on torch 2.8
+# (App. B) and needs transformers < 5, so it runs in the gateway's own venv (``.venv-vllm``,
+# ``infra/runpod/requirements-vllm.lock``); the pipeline venv is untouched.
+#
+# Grammar-locked decoding (backlog E2-S3): a request's ``json_schema`` becomes an exact XGrammar
+# grammar (``mlserve.grammar``) and vLLM masks every token it cannot accept. The engine's
+# structured-output backend is fixed to xgrammar with no fallback, so a request is never quietly
+# served by another backend or unconstrained. ``CDI_VLLM_GUIDED=false`` switches it off.
+
+
+def _default_engine_factory(model_id: str, settings: Settings):  # pragma: no cover - GPU pod
+    from vllm import AsyncEngineArgs, AsyncLLMEngine
+
+    args = AsyncEngineArgs(
+        model=model_id,
+        dtype="bfloat16",
+        gpu_memory_utilization=settings.vllm_gpu_memory_utilization,
+        max_model_len=settings.vllm_max_model_len,
+        max_num_seqs=settings.vllm_max_num_seqs,
+        limit_mm_per_prompt={"image": 1},
+        mm_processor_kwargs={"max_pixels": settings.vlm_max_pixels_ocr},
+        enforce_eager=False,
+        **_structured_output_args(settings),
+    )
+    return AsyncLLMEngine.from_engine_args(args)
+
+
+def _structured_output_args(settings: Settings) -> dict[str, Any]:  # pragma: no cover - needs vllm
+    from vllm.config import StructuredOutputsConfig
+
+    return {
+        "structured_outputs_config": StructuredOutputsConfig(**structured_output_config(settings))
+    }
+
+
+def structured_output_config(settings: Settings) -> dict[str, Any]:
+    """vLLM ``StructuredOutputsConfig`` fields (E2-S3): xgrammar only, never a silent fallback."""
+    return {"backend": "xgrammar", "disable_fallback": True}
+
+
+def _default_prompt_builder(model_id: str) -> Callable[[str, bool], str]:  # pragma: no cover
+    from transformers import AutoProcessor
+
+    processor = AutoProcessor.from_pretrained(model_id)
+
+    def build(prompt: str, with_image: bool) -> str:
+        content: list[dict[str, Any]] = [{"type": "image"}] if with_image else []
+        content.append({"type": "text", "text": prompt})
+        messages = [{"role": "user", "content": content}]
+        return str(processor.apply_chat_template(messages, tokenize=False,
+                                                 add_generation_prompt=True))  # fmt: skip
+
+    return build
+
+
+def _default_sampling(max_tokens: int, grammar: str | None = None) -> Any:  # pragma: no cover
+    from vllm import SamplingParams
+    from vllm.sampling_params import StructuredOutputsParams
+
+    so = StructuredOutputsParams(grammar=grammar) if grammar else None
+    # greedy, as hf do_sample=False
+    return SamplingParams(temperature=0.0, max_tokens=max_tokens, structured_outputs=so)
+
+
+class VLLMBackend(Backend):
+    name = "vllm"
+    device = "cuda"
+
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        *,
+        engine_factory: Callable[[str, Settings], Any] = _default_engine_factory,
+        prompt_builder: Callable[[str], Callable[[str, bool], str]] = _default_prompt_builder,
+        sampling: Callable[[int, str | None], Any] = _default_sampling,
+        grammar_builder: Callable[[dict[str, Any]], str] | None = None,
+    ) -> None:
+        from cdi_adapter.mlserve.grammar import schema_to_ebnf
+
+        self.settings = settings or get_settings()
+        self._engine_factory, self._prompt_builder, self._sampling = (
+            engine_factory, prompt_builder, sampling)  # fmt: skip
+        self._grammar = grammar_builder or schema_to_ebnf
+        self.model = self.settings.vlm_model_id
+        self._engine: Any = None
+        self._build: Callable[[str, bool], str] | None = None
+        self._loop: Any = None
+        self._start_lock = threading.Lock()  # only engine start-up is serialised, not generation
+        self._seq = 0
+
+    @property
+    def loaded(self) -> bool:
+        return self._engine is not None
+
+    def _ensure_loaded(self) -> None:
+        if self._engine is not None:
+            return
+        with self._start_lock:
+            if self._engine is not None:
+                return
+            import asyncio
+
+            loop = asyncio.new_event_loop()
+            threading.Thread(target=loop.run_forever, name="vllm-engine", daemon=True).start()
+            t0 = time.perf_counter()
+            try:
+                engine = self._engine_factory(self.settings.vlm_model_id, self.settings)
+                self.model = self.settings.vlm_model_id
+            except Exception as exc:
+                if not _is_oom(exc):
+                    raise
+                log.warning("vlm_oom_fallback", primary=self.settings.vlm_model_id,
+                            fallback=self.settings.vlm_fallback_model_id)  # fmt: skip
+                engine = self._engine_factory(self.settings.vlm_fallback_model_id, self.settings)
+                self.model = self.settings.vlm_fallback_model_id
+            self._build = self._prompt_builder(self.model)
+            self._loop, self._engine = loop, engine
+            log.info("vlm_loaded", backend="vllm", model=self.model,
+                     seconds=round(time.perf_counter() - t0, 1))  # fmt: skip
+
+    async def _run(self, request: dict[str, Any], params: Any, request_id: str) -> str:
+        final = None
+        async for out in self._engine.generate(request, params, request_id):
+            final = out
+        if final is None or not final.outputs:
+            raise RuntimeError(f"vllm returned no output for {request_id}")
+        return str(final.outputs[0].text)
+
+    def generate(self, prompt, image_png=None, *, max_tokens=1024, json_schema=None) -> str:
+        import asyncio
+
+        from PIL import Image
+
+        # built before the engine is touched: a schema that cannot be locked exactly fails fast
+        grammar = (self._grammar(json_schema)
+                   if json_schema and self.settings.vllm_guided else None)  # fmt: skip
+        self._ensure_loaded()
+        assert self._build is not None
+        request: dict[str, Any] = {"prompt": self._build(prompt, image_png is not None)}
+        if image_png:
+            image = Image.open(io.BytesIO(image_png)).convert("RGB")
+            request["multi_modal_data"] = {"image": image}
+        with self._start_lock:
+            self._seq += 1
+            request_id = f"cdi-{self._seq}"
+        fut = asyncio.run_coroutine_threadsafe(
+            self._run(request, self._sampling(max_tokens, grammar), request_id), self._loop
+        )
+        return fut.result()
+
+
 def make_backend(settings: Settings | None = None) -> Backend:
     s = settings or get_settings()
     if s.mlserve_backend == "hf":
         return HFBackend(s)
+    if s.mlserve_backend == "vllm":
+        return VLLMBackend(s)
     return StubBackend()

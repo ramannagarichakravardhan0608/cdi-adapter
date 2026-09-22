@@ -104,7 +104,11 @@ def test_env_runpod_keys_are_all_real_settings():
     keys = [ln.split("=", 1)[0] for ln in (ROOT / ".env.runpod").read_text().splitlines()
             if ln and not ln.startswith("#")]  # fmt: skip
     fields = {f"CDI_{f}".upper() for f in Settings.model_fields}
-    assert keys and set(keys) <= fields, set(keys) - fields
+    # E1-S9: the ingress keys are read by the lifecycle scripts only, never by the app
+    tunnel = (RUNPOD / "start_tunnel.sh").read_text(encoding="utf-8")
+    script_only = {k for k in keys if k.startswith("CDI_INGRESS_")}
+    assert script_only and all(f"${{{k}" in tunnel for k in script_only), script_only
+    assert keys and set(keys) - script_only <= fields, set(keys) - script_only - fields
     env = dict(ln.split("=", 1) for ln in (ROOT / ".env.runpod").read_text().splitlines()
                if ln and not ln.startswith("#"))  # fmt: skip
     assert env["CDI_MLSERVE_BACKEND"] == "hf" and env["CDI_WEBAPP_PORT"] == "8888"

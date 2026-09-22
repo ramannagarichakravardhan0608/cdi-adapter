@@ -11,7 +11,10 @@ export HF_HOME=${HF_HOME:-$WS/hf-cache}
 if curl -fsS "http://127.0.0.1:$PORT/healthz" | grep -q '"status":"ok"'; then
   echo "mlserve already running"; exit 0
 fi
-( cd "$REPO" && setsid nohup "$REPO/.venv/bin/python" -m cdi_adapter.mlserve \
+# the vllm backend runs from its own venv (backlog E2-S1: vLLM on torch 2.8 needs transformers < 5)
+PY=$REPO/.venv/bin/python
+if [ "${CDI_MLSERVE_BACKEND:-stub}" = "vllm" ]; then PY=$REPO/.venv-vllm/bin/python; fi
+( cd "$REPO" && setsid nohup "$PY" -m cdi_adapter.mlserve \
     >"$WS/logs/mlserve.log" 2>&1 </dev/null & )
 for _ in $(seq 60); do
   curl -fsS "http://127.0.0.1:$PORT/healthz" 2>/dev/null | grep -q '"status":"ok"' && { echo "mlserve up"; exit 0; }
