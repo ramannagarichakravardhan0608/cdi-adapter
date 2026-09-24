@@ -35,6 +35,7 @@ from cdi_adapter.podmanifest import TORCH_FAMILY, normalize, parse_versions  # n
 
 LOCK = ROOT / "infra" / "runpod" / "requirements.lock"
 VLLM_LOCK = ROOT / "infra" / "runpod" / "requirements-vllm.lock"  # backlog E2-S1
+QUANT_LOCK = ROOT / "infra" / "runpod" / "requirements-quant.lock"  # backlog E2-S6
 VERSIONS = ROOT / "infra" / "runpod" / "versions.env"
 
 PYTHON = (3, 12)
@@ -86,6 +87,13 @@ def vllm_requirements(pyproject: Mapping[str, Any]) -> list[str]:
     plus vLLM. Kept apart because vLLM on torch 2.8 needs transformers < 5 (see versions.env)."""
     extras = pyproject["project"].get("optional-dependencies", {})
     return [*extras.get("vllm", []), *TOOLING]
+
+
+def quant_requirements(pyproject: Mapping[str, Any]) -> list[str]:
+    """The offline quantization venv (backlog E2-S6): llm-compressor on torch 2.8, which caps
+    transformers at 4.55.2 (see versions.env)."""
+    extras = pyproject["project"].get("optional-dependencies", {})
+    return [*extras.get("quant", []), *TOOLING]
 
 
 def constraints(versions: Mapping[str, str]) -> list[str]:
@@ -220,9 +228,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--check", action="store_true", help="compare only; exit 1 on a difference")
     ap.add_argument(
         "--target",
-        choices=("main", "vllm"),
+        choices=("main", "vllm", "quant"),
         default="main",
-        help="main: the pipeline venv; vllm: the vLLM gateway venv (E2-S1)",
+        help="main: the pipeline venv; vllm: the vLLM gateway venv (E2-S1); "
+        "quant: the AWQ quantization venv (E2-S6)",
     )
     args = ap.parse_args(argv)
 
@@ -233,6 +242,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         cons = [c for c in constraints(versions) if not c.startswith("transformers==")]
         cons.append(f"transformers=={versions['VLLM_TRANSFORMERS_VERSION']}")
         entries = lock_entries(resolve(vllm_requirements(pyproject), cons))
+        text = render(entries, cons)
+    elif args.target == "quant":
+        lock, cmd = QUANT_LOCK, "python scripts/lock_pod_deps.py --target quant"
+        cons = [c for c in constraints(versions) if not c.startswith("transformers==")]
+        cons.append(f"transformers=={versions['QUANT_TRANSFORMERS_VERSION']}")
+        entries = lock_entries(resolve(quant_requirements(pyproject), cons))
         text = render(entries, cons)
     else:
         lock, cmd = LOCK, "python scripts/lock_pod_deps.py"

@@ -63,6 +63,15 @@ The web app follows the backend (E2-S2). With `vllm` it sends up to `CDI_VLLM_MA
 extractions at once, across all jobs. `CDI_EXTRACT_CONCURRENCY` overrides that number; 0 means
 auto. With `hf` it always sends one at a time.
 
+**Batching short documents (E2-S8), off by default.** With `CDI_EXTRACT_BATCH_MAX=3`, up to 3
+short documents of one type (one page, at most `CDI_EXTRACT_BATCH_MAX_BLOCKS` OCR blocks) go to
+the gateway in one `POST /vlm/generate_batch`. With `hf` that is one padded `generate` for all
+of them, so their output tokens are produced in the same decode steps. With `vllm` they reach the
+engine together. Every document stays its own sequence (own prompt, image, schema, evidence
+map), and a batch that runs out of GPU memory is split, not dropped. A/B: run the E1-S7 burst
+twice, with `CDI_EXTRACT_BATCH_MAX=1` and `=3` (restart the web app between runs), and compare
+docs/minute. Turn it on only if the gain is real and the E2-S7 accuracy check shows no drop.
+
 **A/B check on the pod.** Run the same job on each backend and compare the wall time and the
 extracted facts:
 

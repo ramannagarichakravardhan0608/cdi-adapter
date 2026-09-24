@@ -92,9 +92,20 @@ CDI_LOAD_PASSWORD='…' python scripts/load_test.py --host https://emr.example.i
 
 `loadtest1` is an `intake` account. Every simulated patient signs in with its own session.
 
+## Who a decision is recorded under (backlog E7-S1)
+
+Every clinical decision is recorded under the **signed-in user**, never a name the browser sends:
+
+- S8 fact decisions (`POST /api/facts/{id}/review`): `fact_provenance.agent` and the audit actor.
+- The `/reviewer` workbasket: claim, approve, reject and "my worklist" (`GET /api/reviewer/worklist`).
+- The Generate EMR edits (`POST /api/jobs/{id}/generate`: keep, drop, correct).
+
+A `reviewer` field in a request body or query is ignored. Only the reviewer who claimed a review
+item may approve or reject it (HTTP 403 otherwise). An `admin` may decide any claimed item, for
+example when its reviewer has left; that decision is recorded under the admin's own name. The review
+pages no longer have a "Reviewer id" box; they show who is signed in.
+
 ## Not in this block
 
-- The reviewer name recorded on S8 decisions still comes from the request body. Tying it to the
-  signed-in user is **E7-S1** ("AuthN for the /review console"), which depends on this block.
 - The ingest API `cdi_adapter.api` (`:8080`, `POST /ingest`) is internal and bound to
   `127.0.0.1`, so it is outside §7.1 and not part of the staff UI.

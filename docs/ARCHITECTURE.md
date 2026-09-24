@@ -211,6 +211,14 @@ boot**. Nothing unique is lost: the scan bytes live in MinIO on `/workspace`, an
 every derived row is reproducible from those by re-running the pipeline *and* is
 captured in the 15-minute dump.
 
+**Data-tier HA (E10-S6):** optionally, a hot Postgres standby streams WAL from the primary
+through a replication slot (RPO = the replication lag, normally under 1 s; fenced failover with
+`python -m cdi_adapter.ha pg failover`; the app follows through `CDI_DATABASE_HOSTS`), and MinIO
+is erasure-coded over 4 drives (one drive lost: no data or writes lost). On one host this
+covers a crashed database or a lost MinIO drive, not the loss of the pod; that needs the standby
+and MinIO on other hosts (MinIO refuses loopback multi-node in a container, and §12 keeps
+services on loopback). Runbook: `docs/ha.md`.
+
 **Fallback host (E1-S3, owner decision 2026-09-21: native, no Docker):** the same scripts run on
 any Ubuntu 24.04 host with an NVIDIA GPU. The only differences are handled in the scripts: torch
 2.8.0+cu128 is installed when it is not inherited (App. B), and the printed address is the host's
@@ -295,7 +303,9 @@ read-model views: [`db/views.sql`](../db/views.sql); migration:
 > §4.6 (re-derived from the live schema) for the canonical / review layer. Live totals: 37 tables
 > (20 per-document, listed above and created by `db/schema.sql` / migration 0001; plus
 > `patient_registry`, the clinic's own master list from migration 0003 (§5 "Patient registry"); plus
-> 15 canonical/review tables (§4.6); plus `alembic_version`) and 5 views.
+> 15 canonical/review tables (§4.6); plus `alembic_version`) and 5 views. Since then: `web_user` /
+> `web_session` (migration 0005, E11-S1) and `model_version` / `model_rollout` (migration 0006,
+> E10-S5, `docs/model-rollout.md`).
 >
 > This table describes the **per-document** schema (S1–S9, unchanged). A second,
 > **longitudinal/review** schema (`cn_*`, `ops_*`/`fin_*`, `ai_*`, `rv_*`) was
@@ -836,7 +846,7 @@ reflects the latest review decisions.
   `CDI_EXTRACT_CONCURRENCY`, or `vllm_max_num_seqs` when that is 0. The slots are shared by
   every job. With no chosen patient, the first document runs alone and fixes the patient;
   the rest then run in parallel. `resolve_identity` holds a transaction advisory lock, so
-  parallel jobs never mint the same new patient twice.*)* Extract uses one retry
+  parallel jobs never mint the same new patient twice. Backlog E2-S8, off by default:* with `CDI_EXTRACT_BATCH_MAX` > 1, short documents of one type (one page, at most `CDI_EXTRACT_BATCH_MAX_BLOCKS` OCR blocks) share one batched model call and one slot; each is still its own sequence with its own prompt and evidence map.*)* Extract uses one retry
   (`config.extract_retries = 1`). No document ever shows "queued" — the grid shows
   each cell `pending → running → done`.
 - The job then stops at **`state = review`** (it does **not** auto-project).
@@ -888,6 +898,7 @@ Planned changes and their honest effect:
 | 2 | **Remove the Phase-2 serialisation lock** in `webapp/jobs.py` | Built alongside #1 (`_extract_sem`/`_stage2_pool` fan-out) — only overlapped 2 of 3 documents in the measured run, part of why #1 showed no gain. Dormant with #1 since the revert to `hf`. | Phase 1 is *already* parallel (`ThreadPoolExecutor`, 6 workers); the "`max_workers=1`" premise is not the current code. Celery for web uploads is a *scaling/durability* change (Roadmap #8), not a latency lever. |
 | 3 | **Grammar-locked decoding** (vLLM `guided_json` / XGrammar) | Built and tested as part of the same #1 effort — guarantees JSON *validity* but adds token-level decode overhead; contributed to, not against, the flat result. **Not clinical fidelity** either way — S6 + human review stay load-bearing. | Needs the v3 schemas *re-tightened* (they were loosened to stop retries) so the grammar actually constrains. Currently dormant with #1. *(E2-S3 rebuild: `mlserve/grammar.py`. Checked token by token with the real XGrammar 0.1.25 and Qwen tokenizer, XGrammar let `confidence: 1.8` through a 0–1 range, so that rule is now written exactly. A schema feature that cannot be enforced exactly is refused (HTTP 422), never sent loosely. The schemas are **not** re-tightened yet: the grammar enforces them as they stand.)* |
 | 4 | **CPU thread hygiene** — *done (2026-09-09).* `cdi_adapter/_cpu.py` reads the cgroup CPU quota (pod: ~13.6, not the 128 the host reports) and caps `OMP`/`OPENBLAS`/`MKL`/`RAYON`/ORT threads to `(budget-1) ÷ job_max_workers` before NumPy/OpenCV/ONNXRuntime load; `cv2.setNumThreads` + `RapidOCR(intra_op_num_threads=…)`. | ingest 16 s → ~7 s, RapidOCR 7–23 s → ~2 s (it was thrashing 128 threads on 13 cores). 3-doc wall **90 s → 74 s**. | shipped. |
+| 5 | **Batch short documents into one model call** (backlog E2-S8) — *built, off by default (`CDI_EXTRACT_BATCH_MAX=1`).* Short documents of one type (one page, few OCR blocks) go to `POST /vlm/generate_batch` together: one padded `generate` with `hf`, submitted together with `vllm`. | *Expected* to help `hf` most: the output tokens of the batch are produced in the same decode steps instead of one document after another. **Not measured yet**; it needs the E1-S7 A/B on the GPU. | Each document stays its **own sequence** (own prompt, image, schema, evidence map), deliberately not one merged prompt, so evidence can never be tied to the wrong document (§0 evidence rule). A batch that runs out of memory is split; a failed batch call falls back to one call per document. |
 
 **Realistic target with #1–3 also done:** a 5-document job in **~20–35 s wall**,
 ~12–18 s perceived per document, `_partial` effectively gone — a solid **3–4×**
@@ -954,15 +965,23 @@ Postgres.
 | `CDI_INBOX_DIR` / `_PROCESSED_DIR` / `_FAILED_DIR` | `/workspace/data/*` | folder-watch |
 | `CDI_PAGE_DPI` | 200 | render resolution |
 | `CDI_WEBAPP_PORT` | **8888** | the RunPod-proxied port |
+| `CDI_OTEL_TRACES_ENDPOINT` / `CDI_OTEL_LOGS_ENDPOINT` | empty (off) | E10-S3: OTLP/HTTP export to the local Tempo (`http://127.0.0.1:4318/v1/traces`) and Loki (`http://127.0.0.1:3100/otlp/v1/logs`); spans exist either way, so logs always carry `trace_id` |
+| `CDI_METRICS_PORT` | 9464 | E10-S1: the web app's Prometheus `/metrics`, on its own port bound to 127.0.0.1 (never the staff port); 0 = off. The gateway's `/metrics` is on its own loopback port 8077 |
 | `CDI_MLSERVE_URL` / `_PORT` | `http://127.0.0.1:8077` / 8077 | model gateway |
 | `CDI_MLSERVE_BACKEND` | `hf` | `hf` \| `stub` \| `vllm`; `vllm` was built, A/B tested and reverted (§3.4); rebuilt under backlog E2-S1 (own venv, see App. B), still not the active path *(reconciled E1-S8)* |
 | `CDI_VLLM_GPU_MEMORY_UTILIZATION` / `_MAX_MODEL_LEN` / `_MAX_NUM_SEQS` | 0.88 / 16384 / 4 | vLLM engine (E2-S1): ~15 GB weights + KV cache on 32 GB, 3–4 concurrent page extractions |
 | `CDI_VLLM_GUIDED` | `true` | grammar-locked JSON with XGrammar (E2-S3): every extraction schema becomes an exact grammar; vLLM rejects any token that would break it |
 | `CDI_VLM_MODEL_ID` / `_FALLBACK_MODEL_ID` | `Qwen/Qwen2.5-VL-7B-Instruct` / `…-3B-…` | VLM + OOM fallback |
+| `CDI_MODEL_VERSION` / `CDI_VLM_MODEL_REVISION` | empty | E10-S5: the registered model version a gateway serves (on `/healthz`) and the revision it loads; set by `python -m cdi_adapter.modelops serve` (`docs/model-rollout.md`) |
+| `CDI_MODEL_ROUTE_TTL_S` | `5` | E10-S5: how often the web app re-reads the rollout (primary / canary share); a rollback reaches every worker within this |
+| `CDI_DATABASE_HOSTS` | empty | E10-S6: primary and standby, e.g. `127.0.0.1:5432,127.0.0.1:5433`; the app connects to the writable one (libpq `target_session_attrs=read-write`), so a failover needs no config change (`docs/ha.md`) |
+| `CDI_PG_STANDBY_PORT` / `CDI_MINIO_MODE` | empty / `single` | E10-S6: opt-in hot standby (built by the bootstrap); MinIO `erasure` (one host, `CDI_MINIO_DRIVES` drives) or `cluster` (one process per host of `CDI_MINIO_ADDRESSES`; `CDI_S3_ENDPOINT_URL` then lists every host) |
 | `CDI_VLM_MAX_PIXELS_OCR` | 2 000 000 | processor cap (VRAM bound) |
 | `CDI_FAST_CLASSIFY` | `true` | S2 scored heuristic first; VLM only on ambiguous/handwritten |
 | `CDI_EXTRACT_RETRIES` | `1` | S4 VLM re-tries on schema failure (schemas relaxed → rare) |
 | `CDI_JOB_MAX_WORKERS` | 6 | Phase-1 documents in flight concurrently |
+| `CDI_EXTRACT_BATCH_MAX` | 1 (off) | E2-S8: up to this many short documents of one doc_type share one batched model call (`POST /vlm/generate_batch`); every document stays its own sequence. Off until the GPU A/B shows a gain |
+| `CDI_EXTRACT_BATCH_MAX_BLOCKS` | 40 | E2-S8: a document is short enough to batch when it has one page and at most this many OCR blocks |
 | `CDI_EXTRACT_CONCURRENCY` | 0 (auto) | Phase-2 extractions in flight across all jobs (E2-S2): always 1 with `hf`; with `vllm`, this value or `CDI_VLLM_MAX_NUM_SEQS` when 0 |
 | `CDI_OCR_ENGINE` / `CDI_HANDWRITTEN_USES_VLM` | `rapidocr` / `true` | S3 routing |
 | `CDI_IG_PACKAGE` | `ndhm.in#6.5.0` | Profile/IG package: the NRCeS ABDM IG by its FHIR registry id, pinned with every package it uses (`infra/fhir/packages.lock`, E6-S1); upgrades via `docs/ig-upgrade.md` (E6-S5) |
@@ -1006,6 +1025,19 @@ app never starts on unpinned versions. Runbook: `infra/runpod/README.md`.
 `snapshot.sh` (`pg_dump -Fc` → `/workspace/backup/cdi.dump`, keeps last 10) is on
 `cron` every 15 min; run it manually before a planned pod stop.
 
+*E10-S11 (2026-09-24):* each snapshot also copies every new MinIO object (scans, pages) to
+`objects/<key>` in the backup folder, sha256-checked, and writes `last_backup.json`. A weekly
+restore drill (`python -m cdi_adapter.dr drill`, cron Sundays 03:30) does four things:
+
+1. rebuilds Postgres and MinIO in a clean environment from the backups alone;
+2. proves every original scan byte-identical against `source_document.sha256`;
+3. runs the golden path on the restored stack;
+4. measures RPO and RTO against the targets (20 min / 30 min).
+
+Alerts: `CdiBackupStale`, `CdiRestoreDrillFailed`, `CdiRestoreDrillOverdue`. For real disaster
+recovery the backup folder (`CDI_BACKUP_DIR`) must live off the pod. Runbook, including which
+rows a restore cannot bring back: `docs/dr.md`.
+
 ### 10.4 Logs & health
 ```
 /workspace/logs/mlserve.log     model load, every /vlm/generate
@@ -1047,7 +1079,7 @@ checks must grep a content marker); `psql`/`pg_restore` need the URL with
 |---|---|---|
 | Data residency | all inference + PHI on the pod; no external API calls in the hot path | — |
 | Legacy DB | strictly read-only; never touched | — |
-| Web UI auth | *E11-S1 (2026-09-22):* every route needs a signed-in staff account with a role (`intake` / `reviewer` / `admin`, fail-closed policy in `webapp/auth.py`); local accounts (`web_user`, scrypt), server-side sessions (`web_session`, token hash only; HttpOnly + Secure + SameSite=Strict; 30 min idle / 12 h max), lockout after 5 failures, same-origin check on writes, sign-in audited. Runbook `docs/auth.md` | SSO/OIDC when the clinic has an IdP; per-reviewer identity on S8 decisions (E7-S1) |
+| Web UI auth | *E11-S1 (2026-09-22):* every route needs a signed-in staff account with a role (`intake` / `reviewer` / `admin`, fail-closed policy in `webapp/auth.py`); local accounts (`web_user`, scrypt), server-side sessions (`web_session`, token hash only; HttpOnly + Secure + SameSite=Strict; 30 min idle / 12 h max), lockout after 5 failures, same-origin check on writes, sign-in audited. Runbook `docs/auth.md`. *E7-S1 (2026-09-24):* every clinical decision (S8 fact review, `/reviewer` claim/approve/reject, Generate EMR edits) is recorded under the signed-in user; a client-sent reviewer is ignored; only the claimer (or an admin, under the admin's name) decides a review item | SSO/OIDC when the clinic has an IdP |
 | Transport | Staff use a stable hostname; TLS ends at Caddy on our own India-region ingress VM, which reaches the pod over an SSH tunnel the pod opens (E1-S9, `docs/ingress.md`). The UI is limited to clinic CIDRs until E11-S1. The RunPod proxy URL is for diagnostics only. Internal traffic is plaintext localhost. | mTLS for a multi-node deployment |
 | At rest | MinIO + Postgres on the pod; DB dump on `/workspace` | encryption at rest, KMS |
 | Audit | `audit_log` on every create/update/read | ship to a WORM store |
@@ -1077,8 +1109,8 @@ checks must grep a content marker); `psql`/`pg_restore` need the URL with
 | ABDM HIP/HRP gateway + consent + Fidelius | ❌ not built | schema only |
 | Legacy write-back / FHIR façade | ❌ not built | |
 | Ingestion at scale | ⚠️ | web app is a single-thread `ThreadPool`; Celery chain exists but unused here; no queue backpressure, no retries tuning |
-| Observability | ⚠️ | structlog to files; no Prometheus/Grafana/OTel |
-| HA / DR | ❌ | single pod; DB dump is the only backup |
+| Observability | ⚠️ | structlog to files. *E10-S1 (2026-09-24):* Prometheus `/metrics` on loopback only (web app `:9464`, gateway `:8077`): per-stage latency histograms, extraction queue depth, jobs, human review backlog, GPU utilization/memory (`nvidia-smi`), S6 gate `auto_accepted` vs `in_review`, reviewer throughput, gateway call time/outcome (`docs/metrics.md`). *E10-S2 (2026-09-24):* native Prometheus 3.14.0 + Alertmanager 0.34.1 + Grafana 13.2.2 on loopback (`infra/monitoring/`, pinned + sha256), dashboard "CDI-Adapter overview", 4 alerts (SLA-window breach, GPU OOM, queue backlog, `_partial` rate above its 7-day baseline) with synthetic-trigger tests and on-call responses (`docs/alerts.md`). *E10-S3 (2026-09-24):* OpenTelemetry: one trace per job (every stage of every document, the gateway via `traceparent`, the FHIR projection), `trace_id`/`span_id` on every log line; Tempo 3.0.3 (traces) + Loki 3.7.8 (logs) on loopback, linked both ways in Grafana (`docs/tracing.md`). *E10-S4 (2026-09-24):* drift monitors: `cdi_fact_confidence` per fact at the S6 gate and alert `CdiConfidenceDrift` (KS distance, last 6 h vs the previous 7 days, > 0.25); human-override and unmapped-code rates as daily trend lines on the dashboard; checked by an injected shift in a staging Prometheus (`scripts/drift_staging_check.py`). *E10-S5 (2026-09-24):* model registry (`model_version`, pinned revision) + append-only rollout log (`model_rollout`); the web app routes a share of documents by id to a canary gateway, a failing canary falls back to the primary, `extraction.model_version` records who answered; `compare` gates promotion on live `_partial` / failure / reviewer rejection and correction rates (+ the E2-S7 offline report when registered); `python -m cdi_adapter.modelops rollback` is the one-command undo (`docs/model-rollout.md`) |
+| HA / DR | ⚠️ | single pod; DB dump every 15 min. *E10-S6 (2026-09-24):* optional hot Postgres standby (streaming, replication slot; RPO = replication lag, drill-measured; fenced failover, the app follows via `CDI_DATABASE_HOSTS`) and erasure-coded MinIO over 4 drives (one drive lost: no data or writes lost; `docs/ha.md`). Covers a crashed database or a lost MinIO drive on the pod; a lost host needs the standby and MinIO on other hosts |
 | AuthN/AuthZ, rate limiting, DPDP workflow | ❌ | |
 
 **Honest summary:** a functional, on-prem, open-source **prototype** that takes real
@@ -1095,7 +1127,7 @@ placeholder-grade:
 
 | # | Work | Status |
 |---|---|---|
-| 1 | **Harden + accelerate S4.** (a) **Swap the gateway to a `vllm` `AsyncLLMEngine`** — paged KV cache + continuous batching; deprecate `hf`. (b) **Remove the Phase-2 serialisation lock** in `webapp/jobs.py` so concurrent extracts batch on vLLM. (c) **Grammar-locked decoding** (vLLM `guided_json` / XGrammar) — JSON valid by construction, deletes the repair + retry path; re-tighten the v3 schemas so the grammar constrains. (d) **Fine-tune `cdi-dslm`** (Qwen2.5-VL-7B or a 2–3 B distil + QLoRA, AWQ/INT4) on synthetic + de-identified gold; eval harness (field F1, numeric exactness, hallucination, FHIR validity). Expected: 3-doc job ~90 s → ~30–40 s; 5-doc ~20–35 s. **Floor stays ~8–15 s/doc** for a 7B — sub-5 s needs the small DSLM (d). Grammar fixes JSON validity, **not** clinical fidelity. | **(a)(b)(c) built + tested, measured no gain, reverted to `hf` — see §3.4/§7.4. (d) not started — see `CDI-Adapter-Finetuning-Plan.md`** |
+| 1 | **Harden + accelerate S4.** (a) **Swap the gateway to a `vllm` `AsyncLLMEngine`** — paged KV cache + continuous batching; deprecate `hf`. (b) **Remove the Phase-2 serialisation lock** in `webapp/jobs.py` so concurrent extracts batch on vLLM. (c) **Grammar-locked decoding** (vLLM `guided_json` / XGrammar) — JSON valid by construction, deletes the repair + retry path; re-tighten the v3 schemas so the grammar constrains. (d) **Fine-tune `cdi-dslm`** (Qwen2.5-VL-7B or a 2–3 B distil + QLoRA, AWQ/INT4) on synthetic + de-identified gold; eval harness (field F1, numeric exactness, hallucination, FHIR validity). Expected: 3-doc job ~90 s → ~30–40 s; 5-doc ~20–35 s. **Floor stays ~8–15 s/doc** for a 7B — sub-5 s needs the small DSLM (d). Grammar fixes JSON validity, **not** clinical fidelity. | **(a)(b)(c) built + tested, measured no gain, reverted to `hf` — see §3.4/§7.4. (d) fine-tune not started — see `CDI-Adapter-Finetuning-Plan.md`; its AWQ/INT4 quantize + benchmark tooling is built (E2-S6, `docs/quantization.md`) and waits on the checkpoint** |
 | 2 | **Real terminology service** — Snowstorm-lite (SNOMED CT India) + LOINC/ICD in Postgres; SapBERT/BioLORD + FAISS candidate gen + rule reranker; `$validate-code` / `$translate`; local-code minting. Replaces `seed.py`. | next |
 | 3 | **Fit the S6 calibrator** — replace `_calibrate` with isotonic regression per `doc_type × fact_type` on clinician-adjudicated data; derive the gate thresholds empirically per class. | after data |
 | 4 | **S7 longitudinal reconciliation** — temporal merge across encounters, `supersedes` chains, medication continuity, derived patient-summary view. | — |

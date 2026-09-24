@@ -4,7 +4,7 @@
 * ``GET /api/review/facts/{fact_id}`` — the fact, its ``medication_detail``, every
   ``fact_provenance`` row -> resolved ``ocr_block`` texts + the ``bbox_union`` + the page image url
   (``/api/documents/{id}/pages/{n}``) + the rule findings.
-* ``POST /api/facts/{fact_id}/review`` ``{action: accept|correct|reject, corrections?, reviewer?,
+* ``POST /api/facts/{fact_id}/review`` ``{action: accept|correct|reject, corrections?,
   note?}``: accept -> ``clinician_confirmed``; correct -> ``apply_fact_correction`` (whitelisted
   fields) -> a new current fact ``corrected`` that ``supersedes`` the original; reject ->
   ``rejected``, ``is_current=false``, ``clinical_status='entered-in-error'``.
@@ -12,7 +12,8 @@
 Every decision writes a ``fact_provenance`` row with ``agent = <reviewer>`` and
 ``model_stack = {"reviewer": "human"}``, an ``audit_log`` row, and closes the ``review_task`` once
 none of its facts remain ``in_review``. ``GET /api/jobs/{id}/fhir`` then re-projects live.
-(The reviewer identity comes from the request body until backlog E7-S1 adds sessions.)
+The reviewer is the signed-in user (backlog E7-S1): a ``reviewer`` sent by the client is
+ignored, so a decision can never be recorded under someone else's name.
 """
 
 from __future__ import annotations
@@ -20,12 +21,13 @@ from __future__ import annotations
 from typing import Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import Connection, text
 
-from cdi_adapter import repo
+from cdi_adapter import metrics, repo
 from cdi_adapter.db import session_scope
+from cdi_adapter.webapp import auth
 
 router = APIRouter()
 
@@ -49,7 +51,7 @@ _COPY_COLS = (
 class ReviewDecision(BaseModel):
     action: Literal["accept", "correct", "reject"]
     corrections: dict[str, Any] | None = None
-    reviewer: str = Field(default="reviewer", min_length=1, max_length=120)
+    # no reviewer field (E7-S1): the reviewer is the session user; a client-sent one is ignored
     note: str | None = Field(default=None, max_length=2000)
 
 
@@ -132,7 +134,8 @@ def _close_tasks(conn: Connection, fact_ids: list[str]) -> int:
     return closed
 
 
-def decide(conn: Connection, fact_id: UUID | str, d: ReviewDecision) -> dict[str, Any]:
+def decide(conn: Connection, fact_id: UUID | str, d: ReviewDecision,
+           reviewer: str) -> dict[str, Any]:  # fmt: skip
     fact = _fact(conn, fact_id)
     if not fact["is_current"] or fact["review_state"] not in REVIEWABLE:
         raise ReviewError(409, f"fact is {fact['review_state']}; already adjudicated")
@@ -147,14 +150,15 @@ def decide(conn: Connection, fact_id: UUID | str, d: ReviewDecision) -> dict[str
                           "WHERE id = :i"), {"i": fact["id"]})  # fmt: skip
         state = "rejected"
     else:
-        result_id = apply_fact_correction(conn, fact, d.corrections or {}, d.reviewer)
+        result_id = apply_fact_correction(conn, fact, d.corrections or {}, reviewer)
         state = "corrected"
-    _reviewer_provenance(conn, result_id, fact, d.reviewer)
-    repo.write_audit(conn, actor=d.reviewer, action="update", entity="clinical_fact",
+    _reviewer_provenance(conn, result_id, fact, reviewer)
+    repo.write_audit(conn, actor=reviewer, action="update", entity="clinical_fact",
                      entity_id=fact["id"],
                      detail={"action": d.action, "result_fact": str(result_id),
                              "corrections": d.corrections, "note": d.note})  # fmt: skip
     closed = _close_tasks(conn, [str(fact["id"]), str(result_id)])
+    metrics.REVIEW_DECISIONS.labels(d.action).inc()
     return {"fact_id": str(fact["id"]), "result_fact_id": str(result_id), "review_state": state,
             "tasks_closed": closed}  # fmt: skip
 
@@ -222,6 +226,7 @@ def api_fact(fact_id: UUID) -> dict[str, Any]:
 
 
 @router.post("/api/facts/{fact_id}/review")
-def api_review(fact_id: UUID, body: ReviewDecision) -> dict[str, Any]:
+def api_review(fact_id: UUID, body: ReviewDecision, request: Request) -> dict[str, Any]:
+    reviewer = auth.actor(request).username
     with session_scope() as conn:
-        return _http(lambda: decide(conn, fact_id, body))
+        return _http(lambda: decide(conn, fact_id, body, reviewer))

@@ -47,7 +47,7 @@ async function showFact(id){
       <tr><th>Code</th><td>${esc(f.code_system)} ${esc(f.code)} ${esc(f.code_display)}</td></tr>
       <tr><th>Confidence</th><td>${(f.confidence_overall??0).toFixed(3)}</td></tr>
       <tr><th>Findings</th><td>${(d.findings||[]).map(x => `<span class="pill ${x.severity==='blocker'?'bad':'warn'}">${esc(x.code)}</span> ${esc(x.message)}`).join('<br>')||'—'}</td></tr></table>
-    <p><label>Reviewer <input id=rv value="${esc(localStorage.getItem('reviewer')||'')}" placeholder="your id"></label></p>
+    <p class=muted>Your decision is signed with your sign-in name.</p>
     <p><label>Correct text <input id=c_text value="${esc(f.local_text)}"></label>
        <label>value <input id=c_val size=6 value="${f.value_num??''}"></label>
        <label>code <input id=c_code size=12 value="${esc(f.code)}"></label></p>
@@ -62,9 +62,7 @@ async function showFact(id){
   };
 }
 async function act(id, action){
-  const reviewer = $('#rv').value.trim() || 'reviewer';
-  localStorage.setItem('reviewer', reviewer);
-  const body = {action, reviewer};
+  const body = {action};  // the reviewer is the signed-in user (backlog E7-S1)
   if (action === 'correct'){
     body.corrections = {local_text: $('#c_text').value};
     if ($('#c_val').value !== '') body.corrections.value_num = Number($('#c_val').value);

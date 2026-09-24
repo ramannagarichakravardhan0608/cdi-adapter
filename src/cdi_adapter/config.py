@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     # deployment (backlog E1-S5); the defaults are local-dev only and `secretstore check` rejects
     # them. repr=False keeps them out of logs and tracebacks.
     database_url: str = Field(default="postgresql+psycopg://cdi:cdi@127.0.0.1:5432/cdi", repr=False)
+    # E10-S6: the primary and its standby, e.g. "127.0.0.1:5432,127.0.0.1:5433". When set, the app
+    # connects to whichever of them is writable (libpq target_session_attrs=read-write), so a
+    # failover needs no change here. Empty = the host in the database URL only.
+    database_hosts: str = ""
+    # E10-S11: where snapshot.sh keeps the dumps + object copies, and the restore drill reports
+    backup_dir: str = "/workspace/backup"
+    dr_report_dir: str = "/workspace/logs/dr"
     redis_url: str = Field(default="redis://127.0.0.1:6379/0", repr=False)
 
     # object store (MinIO)
@@ -44,6 +51,13 @@ class Settings(BaseSettings):
 
     # web app (the RunPod-proxied port)
     webapp_port: int = 8888
+    # Prometheus /metrics of the web app (backlog E10-S1): its own port, bound to 127.0.0.1 only,
+    # so the staff-facing app and the ingress never serve it; 0 = off
+    metrics_port: int = Field(default=9464, ge=0, le=65535)
+    # OpenTelemetry export (backlog E10-S3): empty = off (spans still exist, so logs keep their
+    # trace ids). Pod: Tempo's OTLP receiver and Loki's OTLP ingestion, both on 127.0.0.1
+    otel_traces_endpoint: str = ""  # e.g. http://127.0.0.1:4318/v1/traces
+    otel_logs_endpoint: str = ""  # e.g. http://127.0.0.1:3100/otlp/v1/logs
 
     # model gateway
     mlserve_url: str = "http://127.0.0.1:8077"
@@ -51,6 +65,12 @@ class Settings(BaseSettings):
     mlserve_backend: Literal["stub", "hf", "vllm"] = "stub"
     vlm_model_id: str = "Qwen/Qwen2.5-VL-7B-Instruct"
     vlm_fallback_model_id: str = "Qwen/Qwen2.5-VL-3B-Instruct"
+    # model registry (backlog E10-S5): a gateway started for a registered version loads the model
+    # at its pinned revision and reports the version on /healthz; the web app routes documents to
+    # the primary or the canary gateway from the rollout log, re-read every model_route_ttl_s
+    vlm_model_revision: str | None = None
+    model_version: str | None = None
+    model_route_ttl_s: float = Field(default=5.0, ge=0)
     vlm_max_pixels_ocr: int = 2_000_000
     # vllm backend (backlog E2-S1, §3.4): 32 GB = ~15 GB weights + ~12-14 GB KV cache
     # -> 3-4 concurrent page extractions
@@ -67,6 +87,12 @@ class Settings(BaseSettings):
     # Phase-2 extractions in flight at once (backlog E2-S2, §7.2): 0 = auto, i.e.
     # vllm_max_num_seqs with the vllm backend and 1 otherwise; hf is always 1
     extract_concurrency: int = Field(default=0, ge=0)
+    # batch short documents of one doc_type into one gateway call (backlog E2-S8, §7.4): one
+    # batched forward pass in which every document is its own sequence with its own prompt, so
+    # evidence can never cross documents. "Short" = one page and at most extract_batch_max_blocks
+    # OCR blocks. 1 = off, the default until the E1-S7 A/B on the GPU shows a gain.
+    extract_batch_max: int = Field(default=1, ge=1, le=8)
+    extract_batch_max_blocks: int = Field(default=40, ge=1)
     ocr_engine: Literal["rapidocr", "vlm"] = "rapidocr"
     handwritten_uses_vlm: bool = True
     ocr_min_conf: float = Field(default=0.30, ge=0, le=1)  # §5 S3: RapidOCR line kept if >= this

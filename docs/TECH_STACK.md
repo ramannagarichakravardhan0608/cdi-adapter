@@ -522,7 +522,10 @@ Compose deployment · **Declared only** = listed as a dependency but never impor
 |---|---|---|
 | `tenacity` | **Declared only** | In `pyproject.toml` dependencies, but not imported anywhere in `src/`, `scripts/` or `tests/`. Retries are done by Celery (`max_retries`) and custom code in `ml/client.py`. |
 | Snowstorm, SapBERT/BioLORD, FAISS | Planned (ARCHITECTURE §14 #2) | Not in the code; terminology uses the seed map + `difflib`. |
-| Temporal, Prometheus, Grafana, Loki, OpenTelemetry, KMS, WORM store | Planned (§12–§14) | Not in the code. |
+| Prometheus client (`prometheus-client` 0.26.0) | In the code (E10-S1) | `/metrics` of the web app (loopback `:9464`) and the gateway (loopback `:8077`); `docs/metrics.md`. The Prometheus server is E10-S2. |
+| Prometheus 3.14.0, Alertmanager 0.34.1, Grafana 13.2.2 | In the repo (E10-S2) | Native release tarballs pinned with sha256 in `versions.env`, started by `infra/monitoring/start_monitoring.sh` on 127.0.0.1; rules, dashboard and on-call runbook in `infra/monitoring/` and `docs/alerts.md`. |
+| OpenTelemetry SDK 1.44.0 + OTLP/HTTP exporter; Tempo 3.0.3; Loki 3.7.8 | In the repo (E10-S3) | `cdi_adapter.tracing`; Tempo and Loki started by `infra/monitoring/start_monitoring.sh` on 127.0.0.1, pinned with sha256 in `versions.env`; `docs/tracing.md`. |
+| Temporal, KMS, WORM store | Planned (§12–§14) | Not in the code. |
 | **Presidio** 2.2.364 + spaCy `en_core_web_lg` 3.8.0 + `obi/deid_roberta_i2b2` (extra `deid`) | **Built (E11-S4)** | De-identification before any training/eval use: `cdi_adapter.deid`, `docs/deid.md`; pinned in `requirements.lock` (spaCy model by URL + sha256) and by commit (NER). |
 | ABDM gateway / Fidelius | Planned (§14 #7) | Only the DB tables (`abdm_care_context`, `abdm_consent`, `abdm_transfer`) exist. |
 | Fine-tuned `cdi-dslm` (QLoRA) | Planned (§14 #1d) | Not in the code. |

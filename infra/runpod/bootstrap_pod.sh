@@ -76,6 +76,13 @@ if [ ! -f "$PGDATA/PG_VERSION" ]; then
   install -d -o postgres -g postgres -m 700 "$PGDATA"
   su postgres -c "$PGBIN/initdb -D $PGDATA -E UTF8 --locale=C.UTF-8"
 fi
+# E10-S6: a data folder fenced by a failover is never started as a primary again (two writable
+# primaries = split brain). It comes back only as a standby: python -m cdi_adapter.ha pg rejoin
+if [ -f "$PGDATA/cdi.fenced" ]; then
+  echo "bootstrap stopped: $PGDATA was fenced by a failover ($(cat "$PGDATA/cdi.fenced"))."
+  echo "The standby is the primary now; rejoin this one: python -m cdi_adapter.ha pg rejoin"
+  exit 1
+fi
 if ! su postgres -c "$PGBIN/pg_ctl -D $PGDATA status" >/dev/null 2>&1; then
   # pg_ctl opens the log file as postgres. On the pod /workspace is MooseFS (0777) so any user can
   # create it; on a fallback host (E1-S3) $WS/logs is an ordinary root-owned directory, and the
@@ -116,6 +123,21 @@ if [ "${CDI_MLSERVE_BACKEND:-stub}" = "hf" ] && ! "$REPO/.venv/bin/python" -c "i
     "torchvision==$TORCHVISION_VERSION" --index-url https://download.pytorch.org/whl/cu128
 fi
 ( cd "$REPO" && "$REPO/.venv/bin/python" -m alembic upgrade head )
+
+# ---------------------------------------------------------------- 3a. Postgres hot standby (E10-S6)
+# Opt-in: CDI_PG_STANDBY_PORT (and CDI_DATABASE_HOSTS listing both servers for the app). Built from
+# the primary by pg_basebackup through a replication slot; the overlay is wiped on restart, so it
+# is rebuilt then. A standby on this host covers a crashed or damaged primary, not a lost pod:
+# that needs it on a second host (docs/ha.md).
+if [ -n "${CDI_PG_STANDBY_PORT:-}" ]; then
+  export PGDATA CDI_PG_BIN=$PGBIN
+  STANDBY_DATA=${CDI_PG_STANDBY_DATA:-$PGDATA-standby}
+  if [ -f "$STANDBY_DATA/PG_VERSION" ]; then
+    su postgres -c "$PGBIN/pg_ctl -D $STANDBY_DATA status" >/dev/null 2>&1       || su postgres -c "$PGBIN/pg_ctl -D $STANDBY_DATA -l $WS/logs/postgres-standby.log -w start"
+  else
+    ( cd "$REPO" && "$REPO/.venv/bin/python" -m cdi_adapter.ha pg setup-standby )
+  fi
+fi
 
 # ---------------------------------------------------------------- 3b. vLLM gateway venv (E2-S1)
 # Only with CDI_MLSERVE_BACKEND=vllm: vLLM 0.11.0 (torch 2.8, App. B) needs transformers < 5, so the
@@ -164,7 +186,12 @@ if [ ! -x "$MINIO_BIN" ]; then
   mv "$MINIO_BIN.partial" "$MINIO_BIN"
   rm -rf /tmp/minio-src
 fi
-if ! curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1; then
+if [ "${CDI_MINIO_MODE:-single}" != "single" ]; then
+  # E10-S6 (docs/ha.md): "erasure" = one process, CDI_MINIO_DRIVES drives on this host (a lost drive);
+  # "cluster" = this host's process of a multi-host set (a lost node; CDI_S3_ENDPOINT_URL lists
+  # every host). Moving the single-drive store's objects in: python -m cdi_adapter.ha minio migrate
+  ( cd "$REPO" && CDI_MINIO_BIN=$MINIO_BIN "$REPO/.venv/bin/python" -m cdi_adapter.ha minio start )
+elif ! curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1; then
   MINIO_ROOT_USER=$(secret get cdi_s3_access_key) MINIO_ROOT_PASSWORD=$(secret get cdi_s3_secret_key) \
     setsid nohup "$MINIO_BIN" server "$WS/minio-data" --address 127.0.0.1:9000 \
       --console-address 127.0.0.1:9001 >"$WS/logs/minio.log" 2>&1 </dev/null &
@@ -192,10 +219,13 @@ fi
 
 # ---------------------------------------------------------------- 6. cron: DB snapshot every 15 min
 service cron start >/dev/null 2>&1 || cron || true
-( crontab -l 2>/dev/null | grep -v -e 'infra/runpod/snapshot.sh' -e 'infra/runpod/golden_nightly.sh'
+( crontab -l 2>/dev/null | grep -v -e 'infra/runpod/snapshot.sh' -e 'infra/runpod/golden_nightly.sh' \
+    -e 'cdi_adapter.dr drill'
   echo "*/15 * * * * bash $REPO/infra/runpod/snapshot.sh >>$WS/logs/snapshot.log 2>&1"
   # E1-S6: nightly golden path on the real model (isolated DB + bucket; drift -> golden_alerts.log)
-  echo "30 2 * * * bash $REPO/infra/runpod/golden_nightly.sh >>$WS/logs/golden.log 2>&1" ) | crontab -
+  echo "30 2 * * * bash $REPO/infra/runpod/golden_nightly.sh >>$WS/logs/golden.log 2>&1"
+  # E10-S11: weekly restore drill from the backups alone (docs/dr.md); its report feeds the alerts
+  echo "30 3 * * 0 cd $REPO && CDI_MINIO_BIN=$MINIO_BIN $REPO/.venv/bin/python -m cdi_adapter.dr drill >>$WS/logs/dr.log 2>&1" ) | crontab -
 
 # ---------------------------------------------------------------- 7. version manifest + drift check
 # Records this boot's versions in $WS/logs/manifests and checks every pin (backlog E1-S4). Drift

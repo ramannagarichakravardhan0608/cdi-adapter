@@ -496,20 +496,59 @@ RunPod is the pilot. Production needs a host whose region is documented as India
 - **Note:** the acceptance criterion "`_partial` rate on the E2-S4 gold set drops to 0" can't be measured until E2-S4 exists.
 
 #### Block E2-S6 — Quantize + benchmark the fine-tuned DSLM ⬜
-**Status:** Pending
+**Status:** Blocked (2026-09-24). The quantize and benchmark tooling is built and tested here. The block's input, the **E2-S5 checkpoint**, does not exist yet: E2-S5 is Pending on the E2-S4 gold set, which waits on a clinical annotator. A `MEASURED` row also needs the **32 GB target GPU**. Runbook: `docs/quantization.md`; one command on the GPU host: `infra/runpod/dslm_quantize_bench.sh`.
 `Should · HARDEN · 3 d · 5 pts · Deps: E2-S5 · Arch ✔ §14 #1d (AWQ/INT4) · DoD-EVAL`
-- [ ] AWQ/INT4 the E2-S5 checkpoint
-- [ ] Measure latency/VRAM vs the bf16 7B baseline: extract-seconds/doc and concurrent slots at 32 GB
-- [ ] Write the results into *Sizing & Capacity* (DSLM row, currently row 32), tagged MEASURED
-- **Tests:** benchmark script output archived
+- [ ] AWQ/INT4 the E2-S5 checkpoint. **Tool built; waits on E2-S5.**
+  - `cdi_adapter.dslm.quantize`: AWQ `W4A16_ASYM` (int4, group 128), llm-compressor 0.7.1.4 in its own venv `.venv-quant` (`requirements-quant.lock`, 56 packages, hash-locked, transformers 4.55.2, torch 2.8).
+  - **Version decision (from the architecture):** 0.7.1.4 is the release that writes compressed-tensors **0.11.0**, the exact version vLLM 0.11.0 reads (E2-S1), and that runs on torch 2.8 (App. B). Newer releases need torch ≥ 2.9 or transformers 5.
+  - **Gap found and fixed:** llm-compressor has no AWQ mapping for Qwen2.5-VL, and its generic fallback would also smooth the vision tower's `up_proj → down_proj`. The mappings are anchored to the decoder's `layers.N`; the vision tower and `lm_head` stay bf16.
+  - Calibrated on the real S4 requests (`cdi_adapter.dslm.corpus`: normalized page image at the serving `max_pixels` + the `[bN]` prompt), synthetic or de-identified only. It refuses a non-Qwen2.5-VL or already-quantized source, and checks that the output is compressed-tensors int4/g128.
+  - `cdi_quantization.json` records source, recipe, calibration digest and tool versions.
+  - The output serves with no new setting: `CDI_VLM_MODEL_ID=<dir>` (vLLM detects the format).
+- [ ] Measure latency/VRAM vs the bf16 7B baseline: extract-seconds/doc and concurrent slots at 32 GB. **Tool built; needs the checkpoint and the target GPU.**
+  - `cdi_adapter.dslm.bench run` replays the corpus through the production `VLLMBackend`: same engine settings, prompt, image handling and XGrammar lock as the gateway. The 7B→3B fallback is off, so a variant that does not fit fails. One process per variant.
+  - It records:
+    - s/doc (median/p95, after a warm-up)
+    - docs/min at concurrency 1/2/4
+    - VRAM in use
+    - vLLM's KV cache in tokens
+    - slots = KV tokens ÷ p95 request footprint (and a worst case at the full `max_tokens`)
+  - `VLLMBackend` gained `generate_with_usage` (prompt/output token counts) and `kv_cache_tokens()`. `generate` and the `/vlm/generate` contract are unchanged.
+- [ ] Write the results into *Sizing & Capacity* (DSLM row, currently row 32), tagged MEASURED. **Row produced; the workbook is not in the repo.**
+  - `bench compare` produces the comparison and a Sizing row per variant. The tag is `MEASURED` only on the RTX PRO 4500 32 GB; any other GPU is tagged `MEASURED on <gpu> (not the 32 GB target)`.
+  - Output agreement with bf16 is shown as a regression signal only. Accuracy is E2-S7 on the E2-S4 gold set (DoD-EVAL).
+  - The Excel is not in this repository, so the row is copied by hand from the archived `.md`.
+- **Tests:** benchmark script output archived. `compare --archive docs/bench/e2-s6` writes a dated `.json` (summary + every raw result) and `.md`. `tests/test_dslm_unit.py` has 24 tests: the corpus matches the pipeline's request, data-class refusal, real RapidOCR on the samples, AWQ mappings cover every decoder projection and no vision layer, recipe/source/output checks, calibration round-robin, manifest, the backend's token/KV hooks, and the run (production backend, no fallback, slots arithmetic, concurrency 4 in flight). Also: compare (speed-up, schema-valid, agreement, tag never passed off), the archive, the quant lock matching vLLM's compressed-tensors, and the run script's venv order.
+- **Risk to check on the pod:** vLLM 0.11.0's int4 (Marlin) kernels on the Blackwell GPU. If `dslm-awq` fails to start there, record the failure. The fix is a vLLM pin change (App. B), not a silent change of method.
 
 #### Block E2-S8 — Batch small documents/pages into fewer VLM calls ⬜
-**Status:** Pending
+**Status:** Blocked (2026-09-24). Batching is built and verified here, including on real PostgreSQL, where a batched extraction writes the same facts as single calls. It is **off by default** (`CDI_EXTRACT_BATCH_MAX=1`). The two measurements the block asks for need things this build does not have: the docs/minute A/B needs the **GPU pod** (E1-S7 harness), and the accuracy check needs the **E2-S4 gold set** and the E2-S7 harness.
 `Could · OPTIMIZE · 2 d · 3 pts · Deps: E2-S1, E1-S7 · Arch ◐ §7.4 Performance plan · DoD-CODE`
-- [ ] Group short documents (e.g. single-page vitals sheets) into one VLM call where the schema allows
-- [ ] Measurably higher docs/minute/GPU on the E1-S7 harness vs one call per document
-- [ ] No drop in per-field accuracy on E2-S4
-- **Tests:** E1-S7 A/B + E2-S7 accuracy comparison
+- [x] Group short documents (e.g. single-page vitals sheets) into one VLM call where the schema allows
+  - **Design, chosen from the architecture (owner delegated the choice):** one call carries several documents as **separate sequences in one batched forward pass**, not one merged prompt.
+    - Speed: extraction time is mostly output tokens (§7.4). Separate sequences produce them in the same decode steps; a merged prompt would still produce them one after another.
+    - Safety: a merged prompt risks evidence from one document being tied to another (§0.5 "evidence proves"). Separate sequences keep each document's prompt, image, schema and evidence map apart.
+  - "Where the schema allows" = the same doc_type (the same schema, so similar output lengths and no sequence waits long on another). "Short" = one page and at most `CDI_EXTRACT_BATCH_MAX_BLOCKS` (40) OCR blocks. Groups hold up to `CDI_EXTRACT_BATCH_MAX` documents.
+  - **Built:**
+    - Gateway: `POST /vlm/generate_batch` (1–8 items, texts returned in order, same validation and 422 rules as `/vlm/generate`).
+      - `hf`: one left-padded `generate` for the whole batch, still one pass at a time on the GPU; each row cut to its own `max_tokens`. A batch that runs out of GPU memory is split into single calls, not dropped.
+      - `vllm`: all items reach the engine together, each with its own grammar lock.
+    - Client: `vlm_json_batch`. Each batched answer goes through the same repair and validation; one that fails continues on exactly the single-call path (re-ask with its errors, same retries, same `_partial` fallback).
+    - Extract service: `extract_documents`. The single and batched paths share the same steps (`_start` / `_request` / `_complete` / `_record_failure`), so each document still gets its own run, provenance, identity check and audit. One document's failure never touches the others, and a failed batch call falls back to one call per document.
+    - Job runner: groups only in the parallel part of Phase 2, after the first document has fixed the patient. A batch takes one GPU slot. A mismatch inside a batch stops the job exactly as a single one does. A document whose shape cannot be read goes alone. `repo.document_shape` gives the page and OCR-block counts.
+    - Settings: `CDI_EXTRACT_BATCH_MAX` (default 1 = off), `CDI_EXTRACT_BATCH_MAX_BLOCKS` (40).
+- [ ] Measurably higher docs/minute/GPU on the E1-S7 harness vs one call per document. **Needs the GPU pod.** Run the E1-S7 burst with `CDI_EXTRACT_BATCH_MAX=1` and `=3` (`infra/runpod/README.md`). The expected gain is mostly on `hf`, but that is not measured yet, so it stays off.
+- [ ] No drop in per-field accuracy on E2-S4. **Needs the E2-S4 gold set + the E2-S7 harness.** Here, with the stub model, a batched extraction writes exactly the facts, values, units, confidences, review states and evidence blocks that single calls write, on real PostgreSQL.
+- **Tests:**
+  - `test_batch_unit.py` (18):
+    - the endpoint answers each item as its own request, with the same validation
+    - `hf`: one pass for the batch under the GPU lock; out of memory → split; other errors raise
+    - `vllm`: all items in flight together, each with its own grammar
+    - the client: one call, only the invalid answer is asked again; a batch of one is the single path; stub batched = single; HTTP body and count check
+    - the extract service: per-document isolation (skip, missing image, mismatch); a failed batch falls back to single calls; one pending document is not batched
+    - the job runner: grouping by type, shortness, page count and size limit; off by default; a mismatch in a batch; a failed batch; an unreadable shape; the real stages wired
+  - `test_batch_integration.py` (Postgres): batched = single, document by document.
+  - E1-S7 A/B + E2-S7 accuracy comparison: pending, as above.
 
 ---
 
@@ -538,12 +577,28 @@ RunPod is the pilot. Production needs a host whose region is documented as India
 ### Phase 3
 
 #### Block E7-S1 — AuthN for the /review console ⬜ 🔒
-**Status:** Pending
+**Status:** Completed (2026-09-24). Built and tested on real PostgreSQL with the real web app. The 🔒 (identity provider / user directory) was resolved by E11-S1: accounts are local to the app (`web_user`), since the architecture names no identity provider. A clinic SSO can replace the password check later without changing this block. Runbook: `docs/auth.md` "Who a decision is recorded under".
 `Must · BLOCKER · 2 d · 3 pts · Deps: E11-S1 (resolved by resequencing, §3.1) · Arch ✔ §12, §4.3, §14 #6 · DoD-SEC`
-- [ ] `/review`, `/api/review/*` and `/api/facts/*/review` require an authenticated staff session
-- [ ] The reviewer comes from the session and can no longer be typed by the client (`fact_provenance.agent`)
+- [x] `/review`, `/api/review/*` and `/api/facts/*/review` require an authenticated staff session
+  - Already enforced by E11-S1's fail-closed policy (`reviewer` or `admin` role). This block adds tests on real PostgreSQL: no session → 401 (a browser is sent to `/login`); an `intake` session → 403; nothing is decided either way.
+- [x] The reviewer comes from the session and can no longer be typed by the client (`fact_provenance.agent`)
+  - `auth.actor(request)` gives the signed-in user. `review.decide(conn, fact_id, decision, reviewer)` takes the reviewer from it, and `ReviewDecision` no longer has a `reviewer` field, so a client-sent one is ignored.
+  - The same rule is applied everywhere a clinical decision is recorded, not only S8:
+    - `/reviewer` claim, approve, reject and "my worklist" (`?reviewer=` is ignored);
+    - Generate EMR edits (`POST /api/jobs/{id}/generate`, previously recorded as `job-editor`).
+  - **Gap found and fixed:** approve and reject checked that an item was claimed, but not by whom, so once identity was real any reviewer could approve another's claimed item. Now only the claimer may decide an item (403 otherwise). An `admin` may override, and the decision is recorded under the admin's own name.
+  - Pages: the "Reviewer id" boxes are gone from `/review` and `/reviewer`; `/reviewer` shows who is signed in (`/api/me`) and loads the worklist by itself.
 - **Tests:** unauthenticated → rejected; a spoofed reviewer parameter is ignored
-- 🔒 Identity provider / user directory
+  - `test_review_integration.py` now runs on the real signed-in app (12 tests, 3 new):
+    - a spoofed `reviewer: "dr.mallory"` → provenance agent and audit actor are the session user;
+    - no session / `intake` → 401 / 403 on every review route, nothing decided;
+    - Generate EMR edits are signed by the session user despite a spoofed reviewer.
+  - `test_reviewer_integration.py` (14 tests, 4 new):
+    - a spoofed reviewer on claim is ignored; a worklist is always the caller's own;
+    - a second reviewer gets 403 on approve and reject and the item stays claimed;
+    - an admin override is recorded under the admin;
+    - no session / `intake` → 401 / 403 on every console route.
+  - DoD-SEC: the misuse cases above are the documented negative tests. No plaintext secret was added (secret scan CLEAN).
 
 ---
 
@@ -634,56 +689,176 @@ retries and exhausts connection pools.
 ### Phase 7
 
 #### Block E10-S1 — Prometheus metrics ⬜
-**Status:** Pending
+**Status:** Completed (2026-09-24). Built, tested, and deploy-checked on the Colab L4 fallback host (Ubuntu 24.04, `docs/fallback-host.md`) at the owner's direction, in place of the pod. `/healthz` was OK on both processes. `/metrics` was bound to 127.0.0.1 only (9464, 8077), and staff port 8888 returned 404 for `/metrics`. During a live job every stage counted once (extract 57.8 s), GPU utilization peaked at 100% with 18.4 GB in use, `cdi_extract_in_flight` reached 1, the gate counted 3 `in_review`, the backlog rose by 1 held task and 1 workbasket item, and the gateway counted 2 `ok` calls. Runbook: `docs/metrics.md`. The Prometheus server that scrapes these is E10-S2.
 `Must · BLOCKER · 3 d · 5 pts · Deps: — · Arch ✔ §13, §14 #9 · DoD-DEPLOY`
-- [ ] `/metrics` exposes per-stage latency histograms, queue depth, GPU utilization %, and S6 gate `auto_accepted` vs `in_review` counts (plus reviewer throughput)
+- [x] `/metrics` exposes per-stage latency histograms, queue depth, GPU utilization %, and S6 gate `auto_accepted` vs `in_review` counts (plus reviewer throughput)
+  - **Design, chosen from the architecture (owner delegated the choice):** `prometheus-client` (0.26.0, the version the vLLM lock already pins), exposed by the two processes that do the work, and **loopback only** (§12):
+    - the web app on its own port `CDI_METRICS_PORT` (9464, bound to 127.0.0.1), never on the staff port 8888 that the ingress and the RunPod proxy expose, so nothing needs a sign-in or an ingress rule to protect it;
+    - the model gateway on its existing loopback port (8077).
+  - Metrics (`src/cdi_adapter/metrics.py`):
+    - per stage: `cdi_stage_seconds{stage}` (histogram, 0.25 s–10 min) and `cdi_stage_failures_total{stage}` for ingest / ocr / classify / extract / terminology / validate; `extract` covers the GPU work only;
+    - queue depth: `cdi_extract_waiting`, `cdi_extract_in_flight`, `cdi_jobs{state}`, and the human queue `cdi_review_backlog{queue}` (held-fact tasks, audit tasks, workbasket, claimed; read from PostgreSQL at scrape time);
+    - GPU: `cdi_gpu_utilization_percent{gpu}` and memory used/total, read from `nvidia-smi` at scrape time;
+    - S6 gate: `cdi_gate_decisions_total{decision}` (auto_accepted / in_review);
+    - reviewer throughput: `cdi_review_decisions_total{action}` and `cdi_review_items_total{action}`;
+    - gateway: `cdi_vlm_generate_seconds{kind}` and `cdi_vlm_requests_total{kind,outcome}` (ok / refused / error).
+  - Rules: labels come only from fixed lists, so no PHI can become a label. A database or GPU failure leaves that metric out of the scrape; the scrape itself never fails.
+  - **Found while testing:** with one GPU slot, waiting documents sit in the thread pool's own queue and never reach the slot, so counting "waiting for the slot" showed 0 while documents waited. Queue depth is now counted per job, from the end of Phase 1 until a slot is held; skipped documents and anything left at the end of the job are subtracted.
+  - **Dependency choice:** `nvidia-ml-py` would fall under the lock's `nvidia-*` torch-family rule, which assumes the torch image supplies it, and it doesn't. `nvidia-smi`, installed with every driver, needs nothing new.
+  - `requirements.lock`: only `prometheus-client==0.26.0` was added. A fresh resolve would also have bumped six unrelated packages (starlette 1.6→1.7, boto3, botocore, filelock, mako, wcwidth), and those were left unchanged.
 - **Tests:** scrape test for each metric
+  - `test_metrics_unit.py` (15), all parsed back from the real exposition format:
+    - every stage timed across a job; a raising stage counts a failure;
+    - queue depth peaks while documents wait for one slot and returns to 0;
+    - jobs by state; review backlog, including a database outage leaving it absent;
+    - GPU from recorded `nvidia-smi` output (`[N/A]` skipped; no GPU → absent);
+    - the gateway `/metrics` counting ok / refused / batch calls;
+    - the web app's loopback server serving every metric, while the staff app has no `/metrics` and it isn't in the policy table;
+    - port 0 serves nothing; labels from the fixed list only.
+  - `test_metrics_integration.py` (2, real PostgreSQL): the gate counters match what `validate_document` decided; claim, accept and approve counters and the backlog query move with a real reviewer session.
 
 #### Block E10-S2 — Grafana dashboards + alerting ⬜
-**Status:** Pending
+**Status:** Completed (2026-09-24). Built, tested, and deploy-checked on the Colab L4 fallback host at the owner's direction, as for E10-S1. Runbook: `docs/alerts.md` (on-call); `docs/metrics.md` (the stack). **Open, owner's choice:** where alerts are delivered. The `oncall` receiver has no channel yet, so alerts show in Alertmanager and Grafana but page no one; add one integration (email, webhook, pager) with its credential in the secrets store.
 `Must · BLOCKER · 2 d · 3 pts · Deps: E10-S1 · Arch ✔ §14 #9 · DoD-DEPLOY`
-- [ ] 4 alert rules: SLA-window breach, GPU OOM, queue backlog above threshold, `_partial` rate above rolling baseline
-- [ ] A documented on-call response for each
+- [x] 4 alert rules: SLA-window breach, GPU OOM, queue backlog above threshold, `_partial` rate above rolling baseline
+  - `infra/monitoring/rules/cdi-alerts.yml`:
+    - `CdiSlaWindowBreach` (page): a job still running past 300 s, or one that finished past 300 s in the last 10 min (ADR-0002);
+    - `CdiGpuOom` (page): any CUDA out-of-memory in 15 min;
+    - `CdiQueueBacklog` (page): `cdi_extract_waiting` > 30 for 5 min. That is ~7.5 min of work at the 57.8 s/page measured in E10-S1 with up to 4 slots, so the SLA is already lost;
+    - `CdiPartialRateAboveBaseline` (ticket): the last hour's `_partial` share > 1.5 × its 7-day rate + 5 points, with ≥ 10 extractions.
+  - New inputs in `cdi_adapter.metrics`: `cdi_job_seconds` (300 s bucket exact), `cdi_job_oldest_running_seconds` (so a breach shows while it happens), `cdi_vlm_oom_total{where}` (load / batch / generate), `cdi_extractions_total{outcome}`.
+  - **Stack, chosen from the architecture (native, pinned, loopback; owner delegated the choice):** Prometheus 3.14.0, Alertmanager 0.34.1 and Grafana 13.2.2 from the projects' release tarballs, with sha256 in `versions.env`, checked before unpacking. `infra/monitoring/start_monitoring.sh` is idempotent and starts all three on 127.0.0.1 (9090 / 9093 / 3000). Prometheus keeps 30 days (the 7-day baseline needs it). Dashboard "CDI-Adapter overview" (13 panels, alert list first) is provisioned read-only.
+  - **Found on the Colab deploy check, fixed:** Grafana 13.2 ignores the admin-password `__FILE` override and silently created **admin/admin**. The script now sets the admin password from the secrets store after every start (`grafana cli admin reset-admin-password --password-from-stdin`), passes credentials to curl on stdin only, and **fails the start (and stops Grafana) if admin/admin is still accepted**. The password is `cdi_grafana_admin_password` in the secrets store (E1-S5), generated by `init` and strength-checked by `check`.
+- [x] A documented on-call response for each
+  - `docs/alerts.md`: numbered steps per alert, what each Grafana panel tells you, and the fix per cause (`where` of an OOM, a stuck vs. a busy queue, what changed for `_partial`). The standing rule: never lower a gate threshold or auto-accept to beat the SLA; a hold with an ETA is always an acceptable answer (§0.5, ADR-0002).
 - **Tests:** a synthetic trigger for each alert
+  - `infra/monitoring/rules/cdi-alerts.test.yml`: a firing and a quiet case per alert. Quiet cases: jobs inside the SLA, no OOM, a burst that drains, a steady baseline, too few extractions to judge. Run by the pinned `promtool test rules`.
+  - `tests/test_monitoring_unit.py` (15). It runs promtool when present and also checks:
+    - every metric a rule or panel uses exists;
+    - every alert has a runbook section with steps, and every expected annotation matches the rule's own;
+    - the dashboard is provisioned against the local Prometheus;
+    - everything listens on loopback;
+    - every download is pinned and hash-checked;
+    - the Grafana password comes from the store and admin/admin is refused;
+    - the new counters move (job time, oldest running job, OOM at load / batch / generate).
+  - `tests/test_metrics_integration.py` (+1, PostgreSQL): an extraction counts as `complete` or `partial`.
 
 #### Block E10-S3 — Centralized logs + OTel tracing ⬜
-**Status:** Pending
+**Status:** Completed (2026-09-24). Built, tested, and deploy-checked on the Colab L4 fallback host at the owner's direction, as for E10-S1 and E10-S2. Runbook: `docs/tracing.md`.
 `Should · HARDEN · 3 d · 5 pts · Deps: E10-S1 · Arch ✔ §10.4, §14 #9 · DoD-DEPLOY`
-- [ ] One trace id follows a document from `POST /api/jobs` through every stage to the FHIR bundle
-- [ ] Viewable in one place (Loki/Tempo or equivalent)
+- [x] One trace id follows a document from `POST /api/jobs` through every stage to the FHIR bundle
+  - `cdi_adapter.tracing` (OpenTelemetry SDK 1.44.0, OTLP/HTTP). `POST /api/jobs` starts a `job` span and returns its `trace_id` (also in `GET /api/jobs/{id}`).
+  - Every stage of every document is a child span: `stage.<name>` with `cdi.document_id`. It comes from the same `metrics.stage` timer as `cdi_stage_seconds`, so traces and metrics always agree.
+  - Pool threads are given the job's context explicitly, since worker threads don't inherit it.
+  - The web app sends W3C `traceparent` to the model gateway, which continues the trace (`vlm.generate` / `vlm.generate_batch` under the document's `stage.extract`).
+  - The FHIR projection (`/fhir`, Generate EMR) is a later request, attached to the job's stored span context (`fhir.project`).
+  - Every structlog line carries `trace_id` / `span_id`. Attributes are ids and fixed names only; no PHI.
+  - Dependencies: only the 7 OTel packages (including `googleapis-common-protos`) were added to `requirements.lock` and `requirements-vllm.lock`, hash-pinned. `protobuf` stays at 7.36.2, and unrelated bumps from a fresh resolve were left out.
+  - **Race found and fixed:** `JobRunner.wait()` returned when `state` left `running`, but a mismatch sets `state` while other documents are still extracting. A job now has a `finished` event, set only when its run has fully ended.
+- [x] Viewable in one place (Loki/Tempo or equivalent)
+  - Tempo 3.0.3 (traces) and Loki 3.7.8 (logs over OTLP, trace ids as structured metadata), pinned with sha256 and started by `start_monitoring.sh` on 127.0.0.1. Grafana links a log line's `trace_id` to Tempo, and a span to its logs in Loki.
+  - Settings `CDI_OTEL_TRACES_ENDPOINT` / `CDI_OTEL_LOGS_ENDPOINT`: off by default, on in `.env.runpod`.
+  - **Found on the Colab check, fixed:** Tempo 3.0 moved retention from `compactor` to `backend_worker`. Also, a Grafana already running from before did not know the new data sources, because provisioning is read only at start; the script now reloads provisioning on every run.
 - **Tests:** end-to-end trace-continuity test
+  - `tests/test_tracing_unit.py` (5). A 2-document job runs through the real runner, the real gateway app over HTTP, and the web app's FHIR projection. It checks:
+    - one trace for everything;
+    - every stage of every document under the job;
+    - each gateway span under its document's extract span;
+    - FHIR under the job;
+    - every log line with the job's trace id and its stage's span id;
+    - two jobs are two traces;
+    - a shipped log record carries its trace context;
+    - export is off by default;
+    - no patient name in any span.
+  - `tests/test_monitoring_unit.py` (+6): Tempo and Loki on loopback, OTLP ports matching `.env.runpod`, Grafana links both ways, pins and hashes, OTel in both venvs, the provisioning reload.
 
 #### Block E10-S4 — Drift monitors ⬜
-**Status:** Pending
+**Status:** Completed (2026-09-24). Built, tested, and deploy-checked on the Colab L4 fallback host at the owner's direction, as for E10-S1 to E10-S3. On-call: `docs/alerts.md#cdiconfidencedrift`.
 `Should · HARDEN · 3 d · 5 pts · Deps: E10-S1, E3-S3 · Arch ✔ §14 #9 · DoD-DEPLOY`
-- [ ] Confidence-distribution shift alert (same day)
-- [ ] Human-override rate and unmapped-code rate as trend lines on the E10-S2 dashboard
+- [x] Confidence-distribution shift alert (same day)
+  - New metric `cdi_fact_confidence{fact_type}`: the calibrated confidence of every fact the S6 gate decides. Its buckets have the gate lines exact (0.95 audit, 0.985 auto-accept); `fact_type` comes from a fixed list or is `other` (no PHI).
+  - Alert `CdiConfidenceDrift` (ticket): the Kolmogorov-Smirnov distance between the last 6 hours and the 7 days before them is over 0.25, with at least 50 facts, for 30 minutes.
+- [x] Human-override rate and unmapped-code rate as trend lines on the E10-S2 dashboard
+  - New metric `cdi_terminology_bindings_total{outcome}` (`bound` / `local_only`) from S5.
+  - Dashboard: 17 panels (was 13). New: KS distance with the 0.25 line, confidence quantiles p10/p50/p90, human-override rate (corrected or rejected / all reviewer decisions, 1 day), unmapped-code rate (`local_only` / all bindings, 1 day).
+  - `start_monitoring.sh` now sends SIGHUP to a running Prometheus / Alertmanager, so an upgrade loads new rules without a restart.
 - **Tests:** an injected distribution shift in staging triggers the alert
+  - `scripts/drift_staging_check.py`: 7 days of normal history plus a same-day shift are backfilled (`promtool tsdb create-blocks-from openmetrics`) into a throwaway staging Prometheus on 127.0.0.1:9091 that loads the real rule file. The shift must make the alert active; a control without the shift must stay inactive. The live Prometheus is not touched.
+  - `cdi-alerts.test.yml` (+3 promtool cases): a shift fires; a steady distribution stays quiet; a shift on too few facts stays quiet.
+  - Unit (+4) and integration (+2) tests: KS values, the staging history, the rule's window and volume guard, the reload lines, the gate observes every fact, the bindings are counted.
 
 #### Block E10-S5 — Model registry + canary/rollback ⬜
-**Status:** Pending
+**Status:** Blocked (2026-09-24). Everything is built, tested, and drill-checked on the Colab L4 with real models. What is blocked: comparing on the **E2-S7 gold-set metrics**, because E2-S7 (and the E2-S4 gold set it needs) are not built yet. The registry already stores each version's E2-S7 report and gates promotion on it once reports exist. Runbook: `docs/model-rollout.md`.
 `Should · HARDEN · 2 d · 3 pts · Deps: E2-S7 · Arch ✔ §14 #9 · DoD-DEPLOY`
-- [ ] Deploy a new model version to a small traffic percentage first; compare E2-S7 metrics live against the incumbent
-- [ ] One command rolls back to the previous registered version
+- [ ] Deploy a new model version to a small traffic percentage first; compare E2-S7 metrics live against the incumbent. Built except the E2-S7 metrics:
+  - Registry: migration 0006. `model_version` stores the model id, pinned revision, backend, quantization and the E2-S7 report. `model_rollout` is an append-only log that a trigger refuses to UPDATE or DELETE; every change is also written to `audit_log`.
+  - `python -m cdi_adapter.modelops` commands: `register`, `serve`, `deploy`, `canary --percent 1-50`, `set-percent`, `compare`, `promote`, `rollback`, `status`.
+  - Each version runs in its own gateway process. A gateway joins the rollout only if its `/healthz` reports exactly the registered version, model and backend.
+  - The web app routes by document id (`sha256 mod 100 < canary %`) and re-reads the state every 5 s. A canary that fails (unreachable or 5xx) hands the call to the primary. A batch never mixes the two sides.
+  - `extraction.model_version` records the version that answered. New metrics: `cdi_model_extractions_total{role,outcome}`, `cdi_model_canary_fallbacks_total`, `cdi_model_canary_percent`. Dashboard: 2 new canary panels (19 in total).
+  - `compare` works on live documents over the same window. It gates on the `_partial` rate (+5 points), failed extractions (+2), reviewer rejections (+5) and corrections (+10), with at least 20 canary documents. It adds the E2-S7 offline report when one is registered (at most 1 point worse). Blocked part: no E2-S7 reports exist yet.
+- [x] One command rolls back to the previous registered version
+  - `python -m cdi_adapter.modelops rollback`. With a canary deployed, it drops the canary. Otherwise it returns to the previous primary in the log, starting its gateway first when it is down, and switches only once that gateway answers as that version.
 - **Tests:** canary + rollback drill
+  - `tests/test_modelops_unit.py` (24 tests): routing share, cache and database outage, fallback (5xx vs 4xx), gateway identity, the gate, the CLI, the revision pin.
+  - `tests/test_modelops_integration.py` (7 tests; Postgres, real gateways over HTTP, stub models): the full drill including a stopped gateway, no document lost when the canary breaks, no mixed batches, the gate, the exact-version checks, the append-only log, and a real `serve` process.
+  - `scripts/model_rollout_drill.py`: the same drill with real models on the GPU; **passed on Colab**.
 
 #### Block E10-S6 — Postgres primary + standby, MinIO multi-node ⬜
-**Status:** Pending
+**Status:** Blocked (2026-09-24). Built and tested. Both drills a single host can run passed on the Colab L4: a Postgres failover with RPO 0 s, and a MinIO drive loss with no data lost. What is blocked: **a whole MinIO node (host) lost**, which needs MinIO on separate hosts, the same second host as E1-S3. MinIO refuses loopback multi-node inside a container, and §12 keeps every service on loopback. A standby on another host (for losing the whole pod) needs that host too. Runbook: `docs/ha.md`.
 `Should · HARDEN · 4 d · 8 pts · Deps: E1-S3 · Arch ✔ §3.3, §10.3, §13, §14 #9 · DoD-DEPLOY`
-- [ ] Postgres failover to a standby with RPO < 1 minute (vs today's 15-minute dump)
-- [ ] MinIO survives one node loss without data loss
+- [x] Postgres failover to a standby with RPO < 1 minute (vs today's 15-minute dump)
+  - `cdi_adapter.ha.pg` + `python -m cdi_adapter.ha pg setup-standby | status | failover | rejoin | drill`.
+  - The hot standby streams WAL (`pg_basebackup -R`) through the physical replication slot `cdi_standby`. The replication role `cdi_repl` takes its password from the secrets store (new secret `cdi_replication_password`, kept in a postgres-owned `.pgpass-replication`).
+  - **Fenced failover:** the old primary is stopped and gets `cdi.fenced`, and `bootstrap_pod.sh` refuses to start a fenced data folder (no split brain). Then the standby is promoted. `rejoin` rebuilds the old primary as the new standby and keeps its old folder aside.
+  - **The app follows by itself:** new setting `CDI_DATABASE_HOSTS` with `target_session_attrs=read-write` in `db.engine_url()`, plus `pool_pre_ping`.
+  - The bootstrap builds the standby when `CDI_PG_STANDBY_PORT` is set (opt-in).
+  - Monitoring: `cdi_pg_standbys_streaming`, `cdi_pg_replication_lag_seconds` and `cdi_pg_replication_slots_inactive`. Alerts `CdiPgReplicationLag` (page, above 30 s) and `CdiPgStandbyDisconnected` (ticket).
+  - On one host this covers a crashed or damaged database. Losing the whole pod needs the standby on a second host.
+- [ ] MinIO survives one node loss without data loss. **Blocked on a second host.** One host is covered, and multi-host is built:
+  - `cdi_adapter.ha.minio`, `CDI_MINIO_MODE=erasure`: one MinIO process on 127.0.0.1 over 4 erasure-coded drives, protecting against a lost or corrupted drive.
+  - `CDI_MINIO_MODE=cluster`: one process per host of `CDI_MINIO_ADDRESSES`, protecting against a lost node. This needs real hosts.
+    - At the pinned release (`cmd/endpoint.go`), MinIO never treats `127.0.0.1` as a node when `/.dockerenv` exists, as on the pod and Colab.
+    - Binding to a non-loopback address would break §12; the owner said to follow the architecture.
+  - The app's `ObjectStore` takes a comma-separated `CDI_S3_ENDPOINT_URL`, one client per host, and a node that does not answer (or answers 503) passes the call to the next one.
+  - `minio migrate` copies every object into the erasure set and reads each copy back.
+  - Monitoring: `cdi_minio_drives` and `cdi_minio_drives_offline` (MinIO's own gauges on loopback), `cdi_minio_nodes` and `cdi_minio_nodes_online`. Alert `CdiMinioDegraded`.
 - **Tests:** failover drill; node-loss drill
+  - Postgres: `tests/test_ha_integration.py` runs the real drill with PostgreSQL 16 servers: crash the primary, fail over, measure RPO and RTO, rejoin. `python -m cdi_adapter.ha pg drill` runs the same on Colab.
+  - MinIO: `tests/test_ha_unit.py` covers failover in the object store, the command lines, the collectors, fencing in the bootstrap and the CLI. The drive-loss drill passed on Colab.
+  - The node-loss drill needs the second host.
+  - 3 alerts with a firing and a quiet promtool case each (4 cases for `CdiMinioDegraded`).
 
 #### Block E10-S11 — Restore / DR drill with a measured RPO and RTO ➕ ⬜
-**Status:** Pending
+**Status:** Blocked (2026-09-24). Everything is built, and the restore drill **passed on the Colab L4** with real PostgreSQL 16 and a real MinIO: RPO 38.6 s, RTO 8.5 s, every scan byte-identical, golden path green. What is blocked: two items that depend on other blocks. **E1-S6** is Blocked (the golden path `--mode full` needs its drift explained, so the drill runs `--mode seeded`). **E14-S5** is Pending, and data-tier loss is now in its list. Also, a backup that survives losing the pod needs `CDI_BACKUP_DIR` on the second host (E1-S3 / E10-S6). Runbook: `docs/dr.md`.
 `Must · BLOCKER · 2 d · 3 pts · Deps: E10-S6 · Arch ✔ §3.3 / §10.3 (the pg_dump + auto-restore persistence model), §13 "HA/DR: single pod" · DoD-DEPLOY`
 E10-S6 *promises* RPO < 1 min. Nothing in this backlog ever restores anything, and the whole
 documented persistence model is a 15-minute dump replayed at boot.
-- [ ] Rehearsed restore of Postgres **and** the MinIO scan bytes into a clean environment, from backups alone
-- [ ] Measured RPO and RTO published against the documented targets; the golden-path suite (E1-S6) passes against the restored environment
-- [ ] Runbook entry for data-tier loss, stating which derived rows are reproducible by re-running the pipeline and which are not
-- [ ] Add data-tier loss to E14-S5's failure-injection set (it currently covers web restart, worker restart, GPU loss, terminology outage and a poison document — not this)
+- [x] Rehearsed restore of Postgres **and** the MinIO scan bytes into a clean environment, from backups alone
+  - `snapshot.sh` (every 15 min) now also backs up the objects: `python -m cdi_adapter.dr backup` copies every new MinIO object to `objects/<key>`, checks each by sha256, and writes the manifest `objects.json`. It then writes `last_backup.json`; a failure is recorded too, through a `trap`.
+  - `python -m cdi_adapter.dr drill` starts from empty servers and uses the backup folder alone:
+    1. `pg_restore --exit-on-error` of the newest good dump;
+    2. `alembic upgrade head`;
+    3. every object restored, checked against its sha256;
+    4. **every document's original scan checked against `source_document.sha256`**;
+    5. the golden path.
+- [x] Measured RPO and RTO published against the documented targets; the golden-path suite (E1-S6) passes against the restored environment
+  - Targets are in `docs/dr.md`: **RPO 20 min** (the 15-min cadence plus the dump) and **RTO 30 min**. They are proposed for the owner to confirm.
+  - The report goes to `$WS/logs/dr/restore-<time>.json` and `last.json`, and to `/metrics` (`cdi_dr_rpo_seconds`, `cdi_dr_rto_seconds`, `cdi_dr_restore_last_ok`, `cdi_backup_last_success_timestamp_seconds`), plus a Grafana "Backups" panel.
+  - The golden path runs as `--mode seeded` on the restored server. `--mode full` is E1-S6's own open drift.
+- [x] Runbook entry for data-tier loss, stating which derived rows are reproducible by re-running the pipeline and which are not
+  - `docs/dr.md` covers the procedure and a table of every table.
+  - Reproducible by re-running the pipeline: OCR, classification, extraction, machine facts, FHIR, AI events.
+  - Not reproducible after the snapshot: reviewer decisions, canonical EMR edits, `audit_log`, registry and identity links, visits and billing, ABDM consents, web users, the model registry.
+- [x] Add data-tier loss to E14-S5's failure-injection set: done in E14-S5's "Failure runs" line, pointing at this drill.
 - **Tests:** the restore drill itself, re-run on a schedule; a backup that fails to restore raises an alert
+  - **Scheduled:** the bootstrap's crontab runs `python -m cdi_adapter.dr drill` weekly (Sunday 03:30).
+  - **Alerts:** `CdiRestoreDrillFailed` (page) when the last drill failed; `CdiBackupStale` (page) when there has been no good backup for 45 min; `CdiRestoreDrillOverdue` (ticket) when no drill has run for 8 days. Each has promtool cases.
+  - `tests/test_dr_integration.py` (real PostgreSQL 16) checks that:
+    - the drill rebuilds from a `pg_dump` plus object backups, 4/4 scans intact, golden path green;
+    - a corrupted object backup fails the drill;
+    - a truncated dump fails the drill.
+  - `tests/test_dr_unit.py` has 14 tests.
 
 #### Block E10-S9 — Application-tier HA: multi-instance webapp/mlserve ⬜
 **Status:** Pending
@@ -882,7 +1057,7 @@ Replaces the earlier "one shared GPU" idea in the workbook with the topology in 
 > **E1-S8 re-score (2026-09-21):** ⛔ HOLD lifted → Arch ✔. External 🔒 dependencies, if any, are unchanged.
 - [ ] ≥ 3 repeated 30 × 10 runs (mixed typed/image/handwritten, concurrent review, realistic retries) meet the configured p95 SLA
 - [ ] Zero lost acknowledged uploads, zero duplicate final facts, zero schema-invalid ready bundles, zero illegal auto-accepts
-- [ ] Failure runs: web restart, worker restart, one GPU loss, terminology outage, one poison document
+- [ ] Failure runs: web restart, worker restart, one GPU loss, terminology outage, one poison document, **data-tier loss** (added by E10-S11: Postgres and its standby lost, restored from the backups alone with `python -m cdi_adapter.dr drill` / `docs/dr.md`, with the measured RPO and RTO in the report)
 - [ ] Report reviewer-capacity results against the Sizing sheet. **Informational, not a gate** (decision 2026-09-20): a reviewer shortfall leaves facts held with an ETA at the counter; it does not block rollout
 - **Tests:** the soak + failure-injection suite
 - 🔒 Clinical + operations go-live approval
@@ -976,3 +1151,14 @@ Replaces the earlier "one shared GPU" idea in the workbook with the topology in 
 | 2026-09-22 | E2-S3 | **Blocked (the engine run needs the GPU pod).** `mlserve/grammar.py` (schema → exact XGrammar EBNF; `unsupported()` refuses features that cannot be locked exactly → HTTP 422), `VLLMBackend` passes the grammar, engine `backend="xgrammar"` with no fallback, setting `CDI_VLLM_GUIDED`. Found: XGrammar 0.1.25 does not enforce a `number` maximum (a 0–1 `confidence` accepted `1.8`), so that rule is hand-written. Also found in testing: sorting the schema for the cache key reordered properties (the grammar forced `confidence` first), so the order is kept. Dev: XGrammar 0.1.25 installed hash-checked into `.tools/xgrammar`; the tokenizer comes from the local Hugging Face cache. Docs: ARCHITECTURE §9 and §14 #3, TECH_STACK, pod README, `.env.*`. | `test_grammar_unit.py` 36 passed (real XGrammar + Qwen tokenizer; 105/105 random outputs valid); `test_vllm_unit.py` 16 passed (5 new); unit 691 passed / 4 skipped; CI gate GREEN. |
 | 2026-09-22 | E2-S2 | **Blocked (the A/B needs vLLM on the GPU pod).** `extract_concurrency` setting + `extract_slots()` (hf 1; vllm = setting or `vllm_max_num_seqs`); `JobRunner` runs k jobs and k extractions at once over one shared semaphore, first document alone when the patient is unknown; `mpi.resolve_identity` under `pg_advisory_xact_lock` (race found: parallel jobs could mint a duplicate patient). Docs: ARCHITECTURE §3.3 note, §7.2, §9; `.env.example`, `.env.runpod`; pod README. | `test_jobs_unit.py` 14 passed (7 new, 5 repeat runs stable); new race test passes with the lock and fails without it; unit 650 passed / 4 skipped; integration 122 passed / 11 skipped (MinIO); CI gate GREEN. |
 | 2026-09-22 | E2-S1 | **Blocked (real vLLM needs Linux + the GPU pod).** `VLLMBackend` (AsyncLLMEngine, background event loop, continuous batching, 7B→3B OOM fallback), `mlserve_backend` accepts `vllm`, settings `CDI_VLLM_*`. Version decision: vLLM 0.11.0 (last on torch 2.8, App. B) in the gateway's own venv (`.venv-vllm`, transformers 4.57.6) because no vLLM satisfies both App. B pins; `requirements-vllm.lock` (133 packages) via `lock_pod_deps.py --target vllm`; `versions.env` `VLLM_VERSION` / `VLLM_TRANSFORMERS_VERSION` / `TORCHAUDIO_VERSION`; bootstrap step 3b + a second drift check; `start_mlserve.sh` picks the venv; extra `vllm`. Docs: ARCHITECTURE App. B + §9, TECH_STACK, pod README (A/B steps). | `test_vllm_unit.py` 11 passed (fake engine); both locks reproduce (`--check`); unit 643 passed / 4 skipped; CI gate GREEN. |
+| 2026-09-24 | E2-S6 | **Blocked (needs the E2-S5 checkpoint and the 32 GB target GPU).** `src/cdi_adapter/dslm/` has three modules: `corpus` builds the real S4 requests without a DB, synthetic/de-identified only; `quantize` runs AWQ `W4A16_ASYM` with decoder-anchored mappings and a `cdi_quantization.json` manifest; `bench` has `run` (production `VLLMBackend`, no 3B fallback, s/doc, docs/min, VRAM, KV tokens, slots) and `compare` (Sizing row, `MEASURED` only on the target GPU, archive). `VLLMBackend.generate_with_usage` + `kv_cache_tokens()`. Version decision: llm-compressor 0.7.1.4 in `.venv-quant` (writes compressed-tensors 0.11.0 = vLLM 0.11.0's; torch 2.8), `requirements-quant.lock` 56 packages via `lock_pod_deps.py --target quant`, `versions.env` `LLMCOMPRESSOR_VERSION` / `QUANT_TRANSFORMERS_VERSION`, extra `quant`. Found: llm-compressor has no Qwen2.5-VL AWQ mapping and its fallback also matches the vision MLP. `infra/runpod/dslm_quantize_bench.sh`, `docs/quantization.md`. The *Sizing & Capacity* workbook is not in the repo, so the row is copied by hand. | `test_dslm_unit.py` 24 passed (incl. real RapidOCR corpus build); `test_vllm_unit.py` + `test_grammar_unit.py` unchanged and passing; the 6-sample corpus builds (5 classified by the heuristic, 1 labelled); unit 716 passed / 4 skipped; CI gate GREEN. |
+| 2026-09-24 | E2-S8 | **Blocked (the docs/minute A/B needs the GPU pod; the accuracy check needs the E2-S4 gold set).** Built, off by default. Design (from the architecture): several documents in one batched forward pass as **separate sequences**, not a merged prompt, so output tokens are produced in the same decode steps and evidence cannot cross documents (§0.5). Gateway `POST /vlm/generate_batch` (`hf`: one left-padded `generate`, split on OOM; `vllm`: items submitted together, each grammar-locked); `GenItem`; client `generate_batch` + `vlm_json_batch` (an invalid batched answer continues on the unchanged single-call retry path); `extract_documents` (single and batched share `_start` / `_request` / `_complete` / `_record_failure`; per-document isolation; failed batch → single calls); `JobRunner._groups` (same doc_type, one page, ≤ `CDI_EXTRACT_BATCH_MAX_BLOCKS` OCR blocks, ≤ `CDI_EXTRACT_BATCH_MAX` per group, after the patient is fixed; one slot per batch); `repo.document_shape`. Docs: ARCHITECTURE §7.2 note, §7.4 row 5, §9; `.env.example`, `.env.runpod`; pod README. | `test_batch_unit.py` 18 passed; `test_batch_integration.py` passed on real PostgreSQL (batched = single facts, values, evidence, runs); jobs / vLLM / extract suites unchanged and passing; unit 734 passed / 4 skipped; CI gate GREEN; integration 123 passed with the same 11 MinIO-only cases as before. |
+| 2026-09-24 | E7-S1 | **Completed.** `webapp/auth.actor()`; `review.decide(..., reviewer)` with no client `reviewer` field; `/reviewer` claim / approve / reject / worklist and Generate EMR edits take the session user (the `?reviewer=` query and `reviewer` body fields are ignored; `job-editor` is gone). **Gap found:** approve/reject never checked who had claimed the item; `promote._assert_claimed` now requires the claimer (403), with an admin override recorded under the admin's name. Pages: no "Reviewer id" box; `/reviewer` shows the signed-in user and loads by itself. Docs: `docs/auth.md`, ARCHITECTURE auth row. | `test_review_integration.py` 12 and `test_reviewer_integration.py` 14 passed on real PostgreSQL through the signed-in app (7 new misuse tests: spoofed reviewer, other reviewer, admin override, no session, intake role, generate edits); unit 734 passed / 4 skipped; CI gate GREEN; integration 131 passed / 11 skipped (MinIO only); secret scan CLEAN. |
+| 2026-09-24 | E10-S1 | **Blocked (DoD-DEPLOY: the deploy check needs the pod or a fallback host).** `src/cdi_adapter/metrics.py`: `cdi_stage_seconds` / `_failures_total` per stage, `cdi_extract_waiting` / `_in_flight`, `cdi_jobs`, `cdi_review_backlog`, `cdi_gate_decisions_total`, `cdi_review_decisions_total`, `cdi_review_items_total`, `cdi_vlm_generate_seconds` / `_requests_total`, `cdi_gpu_*` (from `nvidia-smi`). Web app `/metrics` on its own loopback port (`CDI_METRICS_PORT` 9464, `webapp.app.start_metrics`), gateway `/metrics` on its loopback port 8077; the staff app has no metrics route. Queue depth counted per job (found: with one slot, documents waited in the thread pool, invisible to a slot-only gauge). Lock: only `prometheus-client==0.26.0` added (a fresh resolve would have bumped 6 unrelated packages, left unchanged). Docs: `docs/metrics.md`, ARCHITECTURE observability row + §9, TECH_STACK, `.env.*`. | `test_metrics_unit.py` 15 and `test_metrics_integration.py` 2 passed; jobs / batch suites unchanged and passing; unit gate GREEN; integration 133 passed / 11 skipped (MinIO only). Colab deploy check not run: the updated source could not be moved to Colab from here (see chat, 2026-09-24). |
+| 2026-09-24 | E10-S1 | **Completed: deploy check on the Colab L4 fallback host** (owner: "use the colab"). Updated source unpacked over the running copy, `prometheus-client==0.26.0` installed hash-checked, gateway and web app restarted. | Bound to 127.0.0.1 only (`ss`: 9464, 8077; 8888 is the public app); `:8888/metrics` 404; `/healthz` OK. Live job (prescription page): `cdi_stage_seconds_count` +1 for each of the 6 stages (extract 57.8 s, ingest 4.5 s, ocr 4.4 s); `cdi_gpu_utilization_percent` peak 100, GPU memory 18.4 GB; `cdi_extract_in_flight` peak 1; `cdi_jobs{review}` +1; `cdi_gate_decisions_total{in_review}` +3; `cdi_review_backlog` held +1, workbasket +1; `cdi_vlm_requests_total{single,ok}` +2 (first answer failed the schema, one retry). |
+| 2026-09-24 | E10-S2 | **Completed; deploy-checked on the Colab L4 fallback host** (owner: "use the colab"; the VM was wiped mid-session and rebuilt from a full source package). `infra/monitoring/`: `prometheus.yml`, `alertmanager.yml`, `rules/cdi-alerts.yml` (4 alerts) + `rules/cdi-alerts.test.yml` (synthetic triggers), Grafana provisioning + dashboard "CDI-Adapter overview" (13 panels), `start_monitoring.sh`; `versions.env` pins Prometheus 3.14.0 / Alertmanager 0.34.1 / Grafana 13.2.2 with sha256; new metrics `cdi_job_seconds`, `cdi_job_oldest_running_seconds`, `cdi_vlm_oom_total{where}`, `cdi_extractions_total{outcome}`; secret `cdi_grafana_admin_password` (E1-S5 store); `docs/alerts.md` (on-call). **Security finding fixed:** Grafana 13.2 ignored the admin-password `__FILE` override and started with admin/admin; the password is now set from the store after start (`reset-admin-password --password-from-stdin`), credentials go to curl on stdin only, and the start fails if admin/admin still works. Alert delivery channel: owner's choice, not configured. | On Colab: every download sha256-verified; `promtool check rules` 4 rules; **`promtool test rules` SUCCESS** (each alert fires on its trigger and stays quiet on its normal case); `test_monitoring_unit.py` **15 passed on Linux** (promtool tests included); 9090/9093/3000 bound to 127.0.0.1 only; Prometheus targets cdi-webapp, cdi-mlserve, prometheus all up; 4 rules loaded `ok`; a synthetic alert through Alertmanager showed `active`; Grafana 13.2.2 healthy, datasource "Successfully queried the Prometheus API", dashboard provisioned in folder "CDI-Adapter", anonymous 401; after the fix admin/admin 401 and the store password 200 (the new curl-on-stdin check: CHECK-PASSES). Locally: `test_monitoring_unit.py` 13 passed / 2 skipped (promtool is Linux-only); metrics integration +1. |
+| 2026-09-24 | E10-S3 | **Completed; deploy-checked on the Colab L4 fallback host.** `cdi_adapter.tracing`; job / `stage.*` / `vlm.generate` / `fhir.project` spans; `trace_id` in the job API and on every log line; `traceparent` web app -> gateway; job context handed to pool threads; `Job.finished` (fixes a `wait()` race after a mismatch). Tempo 3.0.3 + Loki 3.7.8 in `infra/monitoring/` (pinned + sha256, loopback, OTLP), Grafana data sources linked both ways; `CDI_OTEL_*` settings; 7 OTel packages in both locks (nothing else changed). Found on Colab and fixed: Tempo 3.0 moved retention to `backend_worker`; a running Grafana did not know new data sources (provisioning now reloaded on every start). Docs: `docs/tracing.md`, ARCHITECTURE observability row + §9, TECH_STACK, `docs/metrics.md`. | Local: `test_tracing_unit.py` 5 passed; `test_monitoring_unit.py` 19 passed / 2 skipped (promtool is Linux-only); unit gate GREEN; integration 134 passed / 11 skipped (MinIO only). **Colab (live job `99610dfd…`, trace `18b85b96e5c7c8c5d0693e2298d97b19`):** the API returned the trace id; Tempo holds **10 spans in that one trace across both services**: `job` -> `stage.ingest`, `stage.ocr`, `stage.classify`, `stage.extract` (-> 2 × `vlm.generate` in cdi-mlserve), `stage.terminology`, `stage.validate`, and `fhir.project` after the bundle request. Loki holds **12 log lines with that trace id** (web app 11, gateway 1: ingested ... projected, job_finished). Grafana: Prometheus, Tempo and Loki data sources all OK; ports 3100 / 3200 / 4318 / 9095 / 9096 bound to 127.0.0.1. |
+| 2026-09-24 | E10-S4 | **Completed; deploy-checked on the Colab L4 fallback host.** Metrics `cdi_fact_confidence{fact_type}` (S6 gate) and `cdi_terminology_bindings_total{outcome}` (S5); alert `CdiConfidenceDrift` (KS distance, last 6 h vs the 7 days before, > 0.25, >= 50 facts, 30 min, ticket) with 3 promtool cases; dashboard 17 panels (KS distance, confidence quantiles, human-override rate, unmapped-code rate); `scripts/drift_staging_check.py` (injected shift in a staging Prometheus); `start_monitoring.sh` reloads a running Prometheus / Alertmanager (SIGHUP) so new rules load. Docs: `docs/alerts.md` (on-call section), `docs/metrics.md`. | Local: unit gate 913 passed / 17 skipped; integration 136 passed / 11 skipped (MinIO only). **Colab:** `start_monitoring.sh` "alertmanager / prometheus reloaded its configuration"; `promtool check rules` 5 rules; **`promtool test rules` SUCCESS**; `test_monitoring_unit.py` + `test_metrics_unit.py` **40 passed on Linux** (promtool included); live Prometheus: all 5 rules `ok`; **staging: injected shift -> alert `pending`, KS 0.497; control -> `inactive`, KS 0.0: DRIFT STAGING CHECK PASS**; Grafana dashboard 17 panels (version 2) with the 4 drift panels; web app `/metrics` exposes `cdi_fact_confidence` and `cdi_terminology_bindings_total`. |
+| 2026-09-24 | E10-S5 | **Blocked, on E2-S7 only (the gold-set metrics). Everything else is built and drill-checked on the Colab L4.** Migration 0006 (`model_version`, append-only `model_rollout` + audit); `cdi_adapter.modelops` (registry, per-document router with canary fallback, live `compare` + promotion gate, one-command `rollback`, `serve`); the gateway reports `version` on `/healthz` and loads the pinned revision; `extraction.model_version` is filled; 3 metrics + 2 dashboard panels; `.env` `CDI_MODEL_VERSION` / `CDI_VLM_MODEL_REVISION` / `CDI_MODEL_ROUTE_TTL_S`; `docs/model-rollout.md`, ARCHITECTURE, `docs/metrics.md`. | Local: unit 944 passed / 17 skipped; integration 143 passed / 11 skipped (MinIO only), including the 7-test drill. **Colab** (the VM was wiped, so it was rebuilt from the full source): alembic head 0006. **`model_rollout_drill.py`: MODEL ROLLOUT DRILL PASS.** Two gateways ran the Qwen2.5-VL-3B weights at pinned revision cc59489... as `drill-3b-a` / `drill-3b-b` (two 7B do not fit one L4), 16.3 GB on the GPU. Results: canary at 50 % split 8 documents 3 / 5, each answered by the version it was routed to. The canary rollback took 0.00 s, and every later document went to A. After the promotion, every document went to B. The promotion rollback took 0.04 s, back to A. With A's gateway stopped, the rollback started it again and switched in 1.1 s; the next documents went to A. `compare` blocked promotion (5 canary documents < 20). Then the site's 7B was registered as `qwen2.5-vl-7b-cc59489`, restarted with that version, and deployed as primary. The log refuses UPDATE (trigger); 16 audit rows. Found: most drill answers from the 3B were `_partial` (13 of 16 for A), a 3B quality point, not a rollout fault. My own mistake during the check: running `rollback` with no canary correctly returned the site to the previous primary (the drill 3B); it was put back at once (`deploy --force`, log #12-#13) and the drill gateway stopped. `test_gateway_healthz` assumed a stub `.env`; it now reads the host's settings. |
+| 2026-09-24 | E10-S6 | **Blocked on a second host, for losing a whole MinIO node (and a standby off the pod). The single-host parts are built and drill-checked on the Colab L4.** Built: `cdi_adapter.ha` (`pg`: standby, status, fenced failover, rejoin, drill; `minio`: erasure set on one host or one process per host, start and stop, migrate, drill); `db.engine_url` + `CDI_DATABASE_HOSTS` (the app connects to the writable server); multi-host `ObjectStore` failover; `bootstrap_pod.sh` fence guard plus opt-in standby and MinIO erasure or cluster; secret `cdi_replication_password`; 5 gauges; alerts `CdiPgReplicationLag`, `CdiPgStandbyDisconnected`, `CdiMinioDegraded`; dashboard 21 panels; `docs/ha.md`, `docs/alerts.md`, ARCHITECTURE §3.3 + §13 HA row, `.env.*`. Found on Colab and changed: (1) MinIO refuses loopback multi-node inside a container (`cmd/endpoint.go`, `/.dockerenv`), and §12 keeps services on loopback (owner: "select based on the architecture"), so on one host MinIO is one process over 4 drives, and node loss needs real hosts; (2) MinIO refuses erasure drives on the root disk: the drill on Colab uses MinIO's `MINIO_ROOTDISK_THRESHOLD_SIZE` (the pod's /workspace is not the root disk); (3) the standby's password file moved out of the root-only secrets folder (the postgres server reads it). | Local: unit 965 passed / 17 skipped (after the MinIO rework); integration 144 passed / 11 skipped (MinIO only), including the real Postgres failover drill (0 of 134 acknowledged commits lost, RTO 2.7 s). **Colab:** HA + ops unit tests 33 passed on Linux; **`pg drill`: PG FAILOVER DRILL PASS**: primary crashed with `stop -m immediate`, 141 acknowledged commits, **0 lost (RPO 0 s)**, **RTO 0.14 s**, lag before the crash 0.0015 s, old primary fenced then rejoined as a standby and received new rows. **MinIO drive-loss drill: PASS** (same steps as `minio_drill.py`, run in a notebook cell because the updated package was not uploaded yet): 4-drive erasure set on 127.0.0.1, 30 objects of 1 KB to 1.5 MB through the app's `ObjectStore`; drive 1 deleted while running, **30/30 read back identical**, still writable, 10 more written; the replacement drive **healed 40/40 in 16 s**; 40/40 intact. Observed: MinIO recreates and heals a deleted drive folder by itself (log: "Healing of drive ... is finished"), so its drive-offline gauge stayed 0. That gauge (and so `CdiMinioDegraded`'s drive trigger) moves on a real disk failure, which one host cannot simulate: it is covered by promtool cases only. |
+| 2026-09-24 | E10-S11 | **Built and drill-checked on the Colab L4; Blocked only on E1-S6 (golden-path `full` mode), E14-S5 and an off-pod backup location (the second host).** `cdi_adapter.dr`: the object backup (incremental, sha256-checked, safe paths, manifest), the backup status, the restore drill and the CLI (`backup | drill | status`). `snapshot.sh` now backs up objects too and records failures through `trap`; the weekly drill runs from cron; settings `CDI_BACKUP_DIR` and `CDI_DR_REPORT_DIR`; `DrCollector` (6 gauges); alerts `CdiBackupStale`, `CdiRestoreDrillFailed`, `CdiRestoreDrillOverdue`; dashboard 22 panels; `docs/dr.md` (targets, procedure, what is and is not reproducible); ARCHITECTURE §10.3; E14-S5's failure runs now include data-tier loss. `ha.pg.init_cluster` is shared with the E10-S6 failover drill, which passed again after the refactor. | Local: unit 982 passed / 17 skipped, integration 147 passed / 11 skipped (MinIO only); `test_dr_unit.py` 14 passed; `test_dr_integration.py` 3 passed with real PostgreSQL 16 (restored from `pg_dump` plus objects, 4/4 scans, golden path; a corrupted object and a truncated dump each fail the drill). **Colab, the live system:** `snapshot.sh` dumped 160 KB and backed up **72 objects** (3 MB, sha256-checked), status ok. **`python -m cdi_adapter.dr drill --minio-bin … --live`: RESTORE DRILL PASS**, with a new Postgres cluster and a new MinIO from the backup folder alone: `pg_restore` ok, schema at head, **72/72 objects restored (0 corrupt)**, **24/24 original scans byte-identical**, 24 documents, golden path ok; **RPO 38.6 s** (target 20 min), **RTO 8.5 s** (restore 6.2 s; target 30 min), 0 documents lost since the backup; `/metrics` gauges from the real status files: last backup ok, last drill ok, RPO 38.6, RTO 8.5. Monitoring stack installed on the new VM (pinned and sha256-checked): **`promtool check rules` 11 rules; `promtool test rules` SUCCESS** for all 11 alerts, including the 6 of E10-S6/S11 (their first promtool run); `test_monitoring_unit.py` 25 passed on Linux. Found by promtool and fixed: the `CdiRestoreDrillOverdue` test fed hourly samples, which go stale after 5 min between the 1-min evaluations, so `for: 1h` never held. The test now uses 5-min samples; the rule was right. |

@@ -25,12 +25,12 @@ import json
 from typing import Any, Literal
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
-from cdi_adapter import repo
+from cdi_adapter import repo, tracing
 from cdi_adapter.config import get_settings
 from cdi_adapter.db import session_scope
 from cdi_adapter.fhir.service import project_document, project_patient
@@ -105,7 +105,7 @@ async def create_job(files: list[UploadFile] = File(...), abha: str | None = For
             patient_id = str(registry.ensure_identity(c, reg))
     job = get_runner().create(payload, registry_patient=reg, patient_id=patient_id,
                               abha=(abha or None))  # fmt: skip
-    return {"job_id": job.id}
+    return {"job_id": job.id, "trace_id": job.trace_id}
 
 
 def _job(job_id: str):
@@ -167,11 +167,12 @@ class Edit(BaseModel):
 
 class GenerateBody(BaseModel):
     edits: list[Edit] = Field(default_factory=list)
-    reviewer: str = Field(default="job-editor", min_length=1, max_length=120)
+    # no reviewer field (E7-S1): the edits are recorded under the signed-in user
 
 
 @app.post("/api/jobs/{job_id}/generate")
-def generate(job_id: str, body: GenerateBody) -> dict[str, Any]:
+def generate(job_id: str, body: GenerateBody, request: Request) -> dict[str, Any]:
+    reviewer = auth.actor(request).username
     job = _job(job_id)
     if job.state != "review":
         raise HTTPException(409, f"job is {job.state}")
@@ -185,10 +186,9 @@ def generate(job_id: str, body: GenerateBody) -> dict[str, Any]:
             action: Literal["accept", "correct", "reject"] = (
                 ("correct" if e.corrections else "accept") if e.action == "keep" else "reject"
             )
-            decision = review.ReviewDecision(action=action, corrections=e.corrections,
-                                             reviewer=body.reviewer)  # fmt: skip
+            decision = review.ReviewDecision(action=action, corrections=e.corrections)
             try:
-                review.decide(c, e.fact_id, decision)
+                review.decide(c, e.fact_id, decision, reviewer)
             except review.ReviewError as err:
                 raise HTTPException(err.status, err.detail) from err
     return _fhir(job)
@@ -197,7 +197,10 @@ def generate(job_id: str, body: GenerateBody) -> dict[str, Any]:
 def _fhir(job) -> dict[str, Any]:
     if not job.patient_id:
         raise HTTPException(409, "job has no patient yet")
-    return project_patient(job.patient_id)
+    # a later request, but part of the job's trace (E10-S3): the bundle ends the document's path
+    parent = job.span.get_span_context() if job.span is not None else None
+    with tracing.span("fhir.project", {"cdi.job_id": job.id}, parent=parent):
+        return project_patient(job.patient_id)
 
 
 @app.get("/api/jobs/{job_id}/fhir")
@@ -306,8 +309,29 @@ def registry_upsert(body: RegistryBody) -> dict[str, Any]:
                   for k, v in row.items()}  # fmt: skip
 
 
+def start_metrics(port: int | None = None) -> None:
+    """Prometheus ``/metrics`` for the web app (backlog E10-S1) on its own port, bound to
+    127.0.0.1: the staff-facing app and the ingress never serve it (§12)."""
+    from prometheus_client import start_http_server
+
+    from cdi_adapter import metrics
+    from cdi_adapter.webapp.jobs import all_jobs
+
+    metrics.register_once("jobs", metrics.JobsCollector(all_jobs))
+    metrics.register_once("review_backlog", metrics.ReviewBacklogCollector())
+    metrics.register_once("pg_replication", metrics.PgReplicationCollector())  # E10-S6
+    metrics.register_once("minio_nodes", metrics.MinioNodesCollector())
+    metrics.register_once("minio_drives", metrics.MinioDrivesCollector())
+    metrics.register_once("dr", metrics.DrCollector())  # E10-S11
+    port = get_settings().metrics_port if port is None else port
+    if port:
+        start_http_server(port, addr="127.0.0.1")
+
+
 def main() -> None:
     import uvicorn
 
     configure()
+    tracing.setup_from_settings(tracing.WEBAPP)
+    start_metrics()
     uvicorn.run(app, host="0.0.0.0", port=get_settings().webapp_port)  # noqa: S104 - pod proxy

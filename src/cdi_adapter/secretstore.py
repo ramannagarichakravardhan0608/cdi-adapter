@@ -35,7 +35,10 @@ DEFAULT_DIR = Path.home() / ".cdi" / "secrets"
 
 # the Settings fields that are credentials (ARCHITECTURE §9)
 FIELDS = ("database_url", "redis_url", "s3_access_key", "s3_secret_key")
-NAMES = tuple(f"cdi_{f}" for f in FIELDS)
+# service credentials that are not Settings fields: Grafana admin (E10-S2), the Postgres
+# replication role the standby connects as (E10-S6)
+SERVICE_NAMES = ("cdi_grafana_admin_password", "cdi_replication_password")
+NAMES = tuple(f"cdi_{f}" for f in FIELDS) + SERVICE_NAMES
 
 # the well-known dev defaults in config.py / .env.example: never acceptable in a store
 DEV_PASSWORDS = frozenset({"cdi", "minioadmin", "postgres", "password", "changeme"})
@@ -103,7 +106,7 @@ def generate(name: str) -> str:
         return f"redis://:{_password()}@127.0.0.1:6379/0"
     if name == "cdi_s3_access_key":
         return "cdi-" + secrets.token_hex(8)
-    if name == "cdi_s3_secret_key":
+    if name in ("cdi_s3_secret_key", "cdi_grafana_admin_password", "cdi_replication_password"):
         return _password()
     raise KeyError(name)
 

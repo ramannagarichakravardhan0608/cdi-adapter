@@ -258,6 +258,15 @@ def current_user(request: Request) -> User | None:
     return user
 
 
+def actor(request: Request) -> User:
+    """The signed-in user a clinical decision is recorded under (backlog E7-S1): the reviewer
+    of a fact, a review item or a job's edits comes from the session, never from the client."""
+    user = current_user(request)
+    if user is None:  # authorize() ran; this is only reachable if a route lost its policy
+        raise HTTPException(401, "sign in required")
+    return user
+
+
 # ---------------------------------------------------------------- login / logout routes
 
 router = APIRouter()

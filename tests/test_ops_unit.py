@@ -108,6 +108,13 @@ def test_env_runpod_keys_are_all_real_settings():
     tunnel = (RUNPOD / "start_tunnel.sh").read_text(encoding="utf-8")
     script_only = {k for k in keys if k.startswith("CDI_INGRESS_")}
     assert script_only and all(f"${{{k}" in tunnel for k in script_only), script_only
+    # E10-S6: the data-tier HA keys are read by the bootstrap and the `cdi_adapter.ha` commands
+    boot = (RUNPOD / "bootstrap_pod.sh").read_text(encoding="utf-8")
+    ha_cli = (ROOT / "src" / "cdi_adapter" / "ha" / "__main__.py").read_text(encoding="utf-8")
+    ha_keys = {"CDI_PG_STANDBY_PORT", "CDI_MINIO_MODE", "CDI_MINIO_ADDRESSES", "CDI_MINIO_DRIVES"}
+    assert ha_keys <= set(keys)
+    assert all(f"${{{k}" in boot or f'"{k}"' in ha_cli for k in ha_keys), ha_keys
+    script_only |= ha_keys
     assert keys and set(keys) - script_only <= fields, set(keys) - script_only - fields
     env = dict(ln.split("=", 1) for ln in (ROOT / ".env.runpod").read_text().splitlines()
                if ln and not ln.startswith("#"))  # fmt: skip

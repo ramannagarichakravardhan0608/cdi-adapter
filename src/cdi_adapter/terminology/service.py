@@ -20,6 +20,7 @@ from uuid import UUID
 
 from sqlalchemy import text
 
+from cdi_adapter import metrics as prom
 from cdi_adapter import repo
 from cdi_adapter.config import get_settings
 from cdi_adapter.db import session_scope
@@ -155,6 +156,9 @@ def bind_document(document_id: UUID | str, *, actor: str = "system") -> dict[str
                 _update_fact(conn, f["id"], u)
                 bound += u["code_status"] == "bound"
             metrics = {"facts": len(facts), "bound": bound, "local_only": len(facts) - bound}
+            # E10-S4: the unmapped-code rate trend (E3-S3 minting keeps feeding the same counter)
+            prom.TERMINOLOGY.labels("bound").inc(bound)
+            prom.TERMINOLOGY.labels("local_only").inc(len(facts) - bound)
             repo.set_document_status(conn, document_id, "normalized")
             repo.finish_run(conn, run_id, metrics=metrics)
             detail = {"stage": "terminology", **metrics}

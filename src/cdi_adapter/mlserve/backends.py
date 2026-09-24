@@ -19,12 +19,24 @@ import re
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
+from cdi_adapter import metrics
 from cdi_adapter.config import Settings, get_settings
 from cdi_adapter.logging import get_logger
 
 log = get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class GenItem:
+    """One sequence of a batched call (backlog E2-S8): the same fields as one ``generate``."""
+
+    prompt: str
+    image_png: bytes | None = None
+    max_tokens: int = 1024
+    json_schema: dict[str, Any] | None = None
 
 
 class Backend:
@@ -45,6 +57,12 @@ class Backend:
         json_schema: dict[str, Any] | None = None,
     ) -> str:
         raise NotImplementedError
+
+    def generate_batch(self, items: list[GenItem]) -> list[str]:
+        """One text per item, in order. Every item is its own sequence with its own prompt,
+        image and schema: nothing is shared between them (E2-S8). The base runs them in turn."""
+        return [self.generate(i.prompt, i.image_png, max_tokens=i.max_tokens,
+                              json_schema=i.json_schema) for i in items]  # fmt: skip
 
 
 # =================================================================== stub
@@ -332,14 +350,26 @@ class StubBackend(Backend):
 # =================================================================== hf (Qwen2.5-VL)
 
 
+def _revision(model_id: str, settings: Settings) -> str | None:
+    """The registered version's pinned revision (E10-S5); it pins the primary model only."""
+    return (settings.vlm_model_revision or None) if model_id == settings.vlm_model_id else None
+
+
 def _default_loader(model_id: str, settings: Settings):  # pragma: no cover - needs a GPU pod
     import torch
     from transformers import AutoModelForImageTextToText, AutoProcessor
 
+    rev = _revision(model_id, settings)
     model = AutoModelForImageTextToText.from_pretrained(
-        model_id, torch_dtype=torch.bfloat16, attn_implementation="sdpa", device_map="cuda"
+        model_id,
+        revision=rev,
+        torch_dtype=torch.bfloat16,
+        attn_implementation="sdpa",
+        device_map="cuda",
     )
-    processor = AutoProcessor.from_pretrained(model_id, max_pixels=settings.vlm_max_pixels_ocr)
+    processor = AutoProcessor.from_pretrained(
+        model_id, revision=rev, max_pixels=settings.vlm_max_pixels_ocr
+    )
     return model, processor
 
 
@@ -367,6 +397,37 @@ def _default_runner(model, processor, prompt: str, image_png: bytes | None,
     return processor.batch_decode(trimmed, skip_special_tokens=True)[0]
 
 
+def _default_batch_runner(model, processor, items: list[GenItem]) -> list[str]:  # pragma: no cover
+    """One padded ``generate`` over every item (E2-S8): output tokens are produced for all
+    sequences in the same decode steps. Left padding, as batched decoder-only generation needs;
+    each row is cut to its own ``max_tokens`` (greedy, so that is the text it would stop at)."""
+    import torch
+    from PIL import Image
+    from qwen_vl_utils import process_vision_info
+
+    conversations = []
+    for it in items:
+        content: list[dict[str, Any]] = []
+        if it.image_png:
+            content.append(
+                {"type": "image", "image": Image.open(io.BytesIO(it.image_png)).convert("RGB")}
+            )
+        content.append({"type": "text", "text": it.prompt})
+        conversations.append([{"role": "user", "content": content}])
+    chats = [processor.apply_chat_template(c, tokenize=False, add_generation_prompt=True)
+             for c in conversations]  # fmt: skip
+    images, videos = process_vision_info(conversations)
+    processor.tokenizer.padding_side = "left"
+    inputs = processor(text=chats, images=images, videos=videos, padding=True,
+                       return_tensors="pt").to("cuda")  # fmt: skip
+    with torch.inference_mode():
+        out = model.generate(**inputs, max_new_tokens=max(it.max_tokens for it in items),
+                             do_sample=False)  # fmt: skip
+    trimmed = out[:, inputs.input_ids.shape[1] :]
+    return [processor.decode(row[: it.max_tokens], skip_special_tokens=True)
+            for row, it in zip(trimmed, items, strict=True)]  # fmt: skip
+
+
 class HFBackend(Backend):
     name = "hf"
     device = "cuda"
@@ -377,9 +438,10 @@ class HFBackend(Backend):
         *,
         loader: Callable[[str, Settings], tuple[Any, Any]] = _default_loader,
         runner: Callable[..., str] = _default_runner,
+        batch_runner: Callable[..., list[str]] = _default_batch_runner,
     ) -> None:
         self.settings = settings or get_settings()
-        self._loader, self._runner = loader, runner
+        self._loader, self._runner, self._batch_runner = loader, runner, batch_runner
         self._model = self._processor = None
         self.model = self.settings.vlm_model_id
         self._lock = threading.Lock()  # one forward pass at a time
@@ -398,6 +460,7 @@ class HFBackend(Backend):
         except Exception as exc:
             if not _is_oom(exc):
                 raise
+            metrics.VLM_OOM.labels("load").inc()
             log.warning("vlm_oom_fallback", primary=self.settings.vlm_model_id,
                         fallback=self.settings.vlm_fallback_model_id)  # fmt: skip
             self._free()
@@ -409,17 +472,38 @@ class HFBackend(Backend):
 
     def _free(self) -> None:
         self._model = self._processor = None
+        self._empty_cache()
+
+    def generate(self, prompt, image_png=None, *, max_tokens=1024, json_schema=None) -> str:
+        with self._lock:
+            self._ensure_loaded()
+            return self._runner(self._model, self._processor, prompt, image_png, max_tokens)
+
+    def generate_batch(self, items: list[GenItem]) -> list[str]:
+        """One batched forward pass for all items (E2-S8), still one pass at a time on the GPU.
+        A batch that does not fit (CUDA OOM) is run item by item instead, never dropped."""
+        if len(items) <= 1:
+            return super().generate_batch(items)
+        with self._lock:
+            self._ensure_loaded()
+            try:
+                return self._batch_runner(self._model, self._processor, items)
+            except Exception as exc:
+                if not _is_oom(exc):
+                    raise
+                metrics.VLM_OOM.labels("batch").inc()
+                log.warning("vlm_batch_oom_split", items=len(items))
+                self._empty_cache()
+        return super().generate_batch(items)
+
+    @staticmethod
+    def _empty_cache() -> None:
         try:  # pragma: no cover - only meaningful with torch + CUDA present
             import torch
 
             torch.cuda.empty_cache()
         except Exception:  # noqa: BLE001
             pass
-
-    def generate(self, prompt, image_png=None, *, max_tokens=1024, json_schema=None) -> str:
-        with self._lock:
-            self._ensure_loaded()
-            return self._runner(self._model, self._processor, prompt, image_png, max_tokens)
 
 
 # =================================================================== vllm (backlog E2-S1)
@@ -442,6 +526,7 @@ def _default_engine_factory(model_id: str, settings: Settings):  # pragma: no co
 
     args = AsyncEngineArgs(
         model=model_id,
+        revision=_revision(model_id, settings),
         dtype="bfloat16",
         gpu_memory_utilization=settings.vllm_gpu_memory_utilization,
         max_model_len=settings.vllm_max_model_len,
@@ -538,6 +623,7 @@ class VLLMBackend(Backend):
             except Exception as exc:
                 if not _is_oom(exc):
                     raise
+                metrics.VLM_OOM.labels("load").inc()
                 log.warning("vlm_oom_fallback", primary=self.settings.vlm_model_id,
                             fallback=self.settings.vlm_fallback_model_id)  # fmt: skip
                 engine = self._engine_factory(self.settings.vlm_fallback_model_id, self.settings)
@@ -547,15 +633,49 @@ class VLLMBackend(Backend):
             log.info("vlm_loaded", backend="vllm", model=self.model,
                      seconds=round(time.perf_counter() - t0, 1))  # fmt: skip
 
-    async def _run(self, request: dict[str, Any], params: Any, request_id: str) -> str:
+    async def _run(self, request: dict[str, Any], params: Any, request_id: str) -> Any:
         final = None
         async for out in self._engine.generate(request, params, request_id):
             final = out
         if final is None or not final.outputs:
             raise RuntimeError(f"vllm returned no output for {request_id}")
-        return str(final.outputs[0].text)
+        return final
+
+    def kv_cache_tokens(self) -> int:
+        """Tokens the engine's paged KV cache holds (blocks x block size), as sized by vLLM at
+        start-up from ``gpu_memory_utilization``. Used by the E2-S6 benchmark for slot counts."""
+        self._ensure_loaded()
+        cache = self._engine.vllm_config.cache_config
+        return int(cache.num_gpu_blocks or 0) * int(cache.block_size)
 
     def generate(self, prompt, image_png=None, *, max_tokens=1024, json_schema=None) -> str:
+        return self.generate_with_usage(prompt, image_png, max_tokens=max_tokens,
+                                        json_schema=json_schema)[0]  # fmt: skip
+
+    def generate_batch(self, items: list[GenItem]) -> list[str]:
+        """All items reach the engine together, so continuous batching decodes them in the same
+        steps (E2-S8); each keeps its own grammar lock."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        if len(items) <= 1:
+            return super().generate_batch(items)
+
+        def one(i: GenItem) -> str:
+            return self.generate(i.prompt, i.image_png, max_tokens=i.max_tokens,
+                                 json_schema=i.json_schema)  # fmt: skip
+
+        with ThreadPoolExecutor(max_workers=len(items), thread_name_prefix="vllm-batch") as pool:
+            return list(pool.map(one, items))
+
+    def generate_with_usage(
+        self,
+        prompt: str,
+        image_png: bytes | None = None,
+        *,
+        max_tokens: int = 1024,
+        json_schema: dict[str, Any] | None = None,
+    ) -> tuple[str, int, int]:
+        """``generate`` plus (prompt tokens incl. image tokens, generated tokens) (E2-S6)."""
         import asyncio
 
         from PIL import Image
@@ -575,7 +695,10 @@ class VLLMBackend(Backend):
         fut = asyncio.run_coroutine_threadsafe(
             self._run(request, self._sampling(max_tokens, grammar), request_id), self._loop
         )
-        return fut.result()
+        final = fut.result()
+        out = final.outputs[0]
+        return (str(out.text), len(getattr(final, "prompt_token_ids", None) or ()),
+                len(getattr(out, "token_ids", None) or ()))  # fmt: skip
 
 
 def make_backend(settings: Settings | None = None) -> Backend:

@@ -33,7 +33,7 @@ from uuid import UUID
 
 from sqlalchemy import Connection, text
 
-from cdi_adapter import repo
+from cdi_adapter import metrics, repo
 from cdi_adapter.config import Settings, get_settings
 from cdi_adapter.db import session_scope
 from cdi_adapter.logging import get_logger
@@ -174,6 +174,7 @@ def _validate(conn: Connection, doc_id: str, s: Settings) -> dict[str, Any]:
     held: list[dict[str, Any]] = []
     audit: list[str] = []
     n_auto = n_conflict = 0
+    confidences: list[tuple[str, float]] = []  # E10-S4: observed once the gate pass is done
     for f in facts:
         if f["review_state"] in HUMAN_STATES:
             continue
@@ -213,6 +214,7 @@ def _validate(conn: Connection, doc_id: str, s: Settings) -> dict[str, Any]:
                           s.gate_partial_penalty)  # fmt: skip
         gate_findings = [x for x in findings if x.severity != "info"]
         state = gate(f["fact_type"], conf, gate_findings, partial, s)
+        confidences.append((f["fact_type"], conf))
         note = {"findings": [x.as_json() for x in findings], "calibrated": conf,
                 "partial": partial}  # fmt: skip
         _set_state(conn, f["id"], state, conf, note)
@@ -230,6 +232,10 @@ def _validate(conn: Connection, doc_id: str, s: Settings) -> dict[str, Any]:
     if audit:
         _task(conn, doc_id, patient_id, "audit_sample", "low",
               [{"id": a, "findings": []} for a in audit])  # fmt: skip
+    for fact_type, c in confidences:  # E10-S4 drift input
+        metrics.FACT_CONFIDENCE.labels(metrics.fact_type_label(fact_type)).observe(c)
+    metrics.GATE_DECISIONS.labels("auto_accepted").inc(n_auto)
+    metrics.GATE_DECISIONS.labels("in_review").inc(len(held))
     return {"facts": len(facts), "auto_accepted": n_auto, "in_review": len(held),
             "audit_sampled": len(audit), "conflicts": n_conflict, "partial": partial}  # fmt: skip
 

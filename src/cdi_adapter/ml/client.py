@@ -16,16 +16,22 @@ import difflib
 import json
 import re
 import time
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
 
+from cdi_adapter import tracing
 from cdi_adapter.config import get_settings
 from cdi_adapter.logging import get_logger
+from cdi_adapter.mlserve.backends import GenItem
+
+if TYPE_CHECKING:
+    from cdi_adapter.modelops.router import Route
 
 log = get_logger(__name__)
 
@@ -250,6 +256,16 @@ def is_partial(payload: dict[str, Any]) -> bool:
     return bool(payload.get("_partial"))
 
 
+@dataclass(frozen=True)
+class JsonRequest:
+    """One document's structured-output request (``vlm_json`` arguments), for batching (E2-S8)."""
+
+    image_png: bytes | None
+    prompt: str
+    schema: str
+    max_tokens: int = 1024
+
+
 # ------------------------------------------------------------------ clients
 
 
@@ -258,6 +274,8 @@ class MLClient:
 
     backend = "base"
     model = "unknown"
+    version: str | None = None  # the registered model version serving it (backlog E10-S5)
+    role = "primary"  # "primary" or "canary" (E10-S5)
 
     def generate(
         self,
@@ -269,6 +287,28 @@ class MLClient:
     ) -> str:
         raise NotImplementedError
 
+    def generate_batch(self, items: list[GenItem]) -> list[str]:
+        """One text per item, in order (backlog E2-S8). The base calls ``generate`` in turn."""
+        return [self.generate(i.prompt, i.image_png, max_tokens=i.max_tokens,
+                              json_schema=i.json_schema) for i in items]  # fmt: skip
+
+    def vlm_json_batch(self, requests: list[JsonRequest]) -> list[dict[str, Any]]:
+        """``vlm_json`` for several documents with the first attempt in one batched call (E2-S8).
+
+        Every document is its own sequence with its own prompt, image and schema. A document whose
+        batched answer does not validate continues on exactly the single-call path (the same
+        re-ask with its errors, the same retries, the same ``_partial`` fallback).
+        """
+        items = [GenItem(r.prompt, r.image_png, r.max_tokens, bundled_schema(r.schema))
+                 for r in requests]  # fmt: skip
+        texts: list[str | None] = [None] * len(items)
+        if len(items) > 1:
+            texts = list(self.generate_batch(items))
+        return [
+            self.vlm_json(r.image_png, r.prompt, r.schema, max_tokens=r.max_tokens, first_text=t)
+            for r, t in zip(requests, texts, strict=True)
+        ]
+
     def vlm_json(
         self,
         image_png: bytes | None,
@@ -277,14 +317,19 @@ class MLClient:
         *,
         max_tokens: int = 1024,
         retries: int | None = None,
+        first_text: str | None = None,
     ) -> dict[str, Any]:
+        """``first_text``: the answer to the first attempt, already generated (by a batch)."""
         retries = get_settings().extract_retries if retries is None else retries
         grammar = bundled_schema(schema)
         best: dict[str, Any] | None = None
         errors: list[str] = []
         ask = prompt
         for attempt in range(retries + 1):
-            text = self.generate(ask, image_png, max_tokens=max_tokens, json_schema=grammar)
+            if attempt == 0 and first_text is not None:
+                text = first_text
+            else:
+                text = self.generate(ask, image_png, max_tokens=max_tokens, json_schema=grammar)
             try:
                 repaired = repair_payload(extract_json(text), schema)
             except ValueError as exc:
@@ -314,6 +359,7 @@ class HttpMLClient(MLClient):
     def __init__(self, base_url: str | None = None, *, timeout: float = 300.0,
                  transport: httpx.BaseTransport | None = None) -> None:  # fmt: skip
         self.base_url = (base_url or get_settings().mlserve_url).rstrip("/")
+        self._timeout, self._transport = timeout, transport
         self._http = httpx.Client(base_url=self.base_url, timeout=timeout, transport=transport)
         self.model = get_settings().vlm_model_id
 
@@ -325,12 +371,31 @@ class HttpMLClient(MLClient):
             "json_schema": json_schema,
         }
         t0 = time.perf_counter()
-        r = self._http.post("/vlm/generate", json=body)
+        # the gateway continues this trace (E10-S3)
+        r = self._http.post("/vlm/generate", json=body, headers=tracing.inject_headers({}))
         r.raise_for_status()
         data = r.json()
         self.model = data.get("model", self.model)
         log.info("vlm_generate", model=self.model, seconds=round(time.perf_counter() - t0, 2))
         return data["text"]
+
+    def generate_batch(self, items: list[GenItem]) -> list[str]:
+        body = {"items": [{"prompt": i.prompt,
+                           "image_b64": base64.b64encode(i.image_png).decode()
+                           if i.image_png else None,
+                           "max_tokens": i.max_tokens, "json_schema": i.json_schema}
+                          for i in items]}  # fmt: skip
+        t0 = time.perf_counter()
+        r = self._http.post("/vlm/generate_batch", json=body, headers=tracing.inject_headers({}))
+        r.raise_for_status()
+        data = r.json()
+        self.model = data.get("model", self.model)
+        texts: list[str] = data["texts"]
+        if len(texts) != len(items):
+            raise ValueError(f"gateway returned {len(texts)} texts for {len(items)} items")
+        log.info("vlm_generate_batch", model=self.model, items=len(items),
+                 seconds=round(time.perf_counter() - t0, 2))  # fmt: skip
+        return texts
 
     def healthz(self) -> dict[str, Any]:
         r = self._http.get("/healthz")
@@ -353,9 +418,77 @@ class StubMLClient(MLClient):
         return self._backend.generate(prompt, image_png, max_tokens=max_tokens,
                                       json_schema=json_schema)  # fmt: skip
 
+    def generate_batch(self, items: list[GenItem]) -> list[str]:
+        return self._backend.generate_batch(items)
 
-def get_client() -> MLClient:
-    """``stub`` backend -> in-process stub; anything else -> the HTTP gateway."""
+
+class RoutedClient(HttpMLClient):
+    """The gateway client for one route of the rollout (backlog E10-S5).
+
+    A canary that cannot answer (unreachable, or a 5xx) hands the document to the primary, so a
+    broken canary costs a retry, never a document. A 4xx (a refused grammar, E2-S3) is an answer
+    and is not retried elsewhere. ``version`` / ``role`` always name the side that answered last.
+    """
+
+    def __init__(self, route: Route, **kw: Any) -> None:
+        super().__init__(route.url, **kw)
+        if route.model_id:
+            self.model = route.model_id
+        self.version, self.role, self._fallback = route.version, route.role, route.fallback
+
+    def _falls_back(self, exc: Exception) -> bool:
+        if self._fallback is None:
+            return False
+        if isinstance(exc, httpx.HTTPStatusError):
+            return exc.response.status_code >= 500
+        return isinstance(exc, httpx.TransportError)
+
+    def _to_fallback(self, exc: Exception) -> None:
+        from cdi_adapter import metrics
+
+        fb = self._fallback
+        assert fb is not None
+        log.warning("canary_fallback", canary=self.version, primary=fb.version, error=str(exc))
+        metrics.CANARY_FALLBACKS.inc()
+        self._http.close()
+        self.base_url = fb.url
+        self._http = httpx.Client(base_url=fb.url, timeout=self._timeout,
+                                  transport=self._transport)  # fmt: skip
+        self.model = fb.model_id or self.model
+        self.version, self.role, self._fallback = fb.version, fb.role, None
+
+    def generate(self, prompt, image_png=None, *, max_tokens=1024, json_schema=None) -> str:
+        try:
+            return super().generate(prompt, image_png, max_tokens=max_tokens,
+                                    json_schema=json_schema)  # fmt: skip
+        except (httpx.HTTPStatusError, httpx.TransportError) as exc:
+            if not self._falls_back(exc):
+                raise
+            self._to_fallback(exc)
+            return super().generate(prompt, image_png, max_tokens=max_tokens,
+                                    json_schema=json_schema)  # fmt: skip
+
+    def generate_batch(self, items: list[GenItem]) -> list[str]:
+        try:
+            return super().generate_batch(items)
+        except (httpx.HTTPStatusError, httpx.TransportError) as exc:
+            if not self._falls_back(exc):
+                raise
+            self._to_fallback(exc)
+            return super().generate_batch(items)
+
+
+def client_for(route: Route) -> MLClient:
+    """``stub`` backend -> in-process stub; anything else -> the gateway of ``route``."""
     if get_settings().mlserve_backend == "stub":
         return StubMLClient()
-    return HttpMLClient()
+    return RoutedClient(route)
+
+
+def get_client(document_id: Any = None) -> MLClient:
+    """The client for ``document_id``'s side of the rollout: primary or canary (E10-S5)."""
+    if get_settings().mlserve_backend == "stub":
+        return StubMLClient()
+    from cdi_adapter.modelops import router
+
+    return client_for(router.route(document_id))

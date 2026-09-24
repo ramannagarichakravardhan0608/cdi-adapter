@@ -335,9 +335,13 @@ def test_gateway_rejects_bad_requests(gateway, body):
 
 
 def test_gateway_healthz(gateway):
+    from cdi_adapter.config import get_settings
+
+    s = get_settings()  # the host's .env may configure hf and a registered version (Colab, pod)
     h = gateway.get("/healthz").json()
     assert h == {"status": "ok", "backend": "stub", "model": "stub-keyword-responder",
-                 "device": "cpu", "loaded": True, "configured_backend": "stub"}  # fmt: skip
+                 "version": s.model_version or None, "device": "cpu", "loaded": True,
+                 "configured_backend": s.mlserve_backend}  # fmt: skip
 
 
 # ---------------------------------------------------------------- hf backend logic (no GPU)

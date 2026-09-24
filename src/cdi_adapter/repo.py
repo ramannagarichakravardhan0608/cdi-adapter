@@ -245,6 +245,18 @@ def get_ocr_blocks(conn: Connection, document_id: UUID | str) -> list[dict[str, 
     return [dict(r) for r in rows]
 
 
+def document_shape(conn: Connection, document_id: UUID | str) -> dict[str, int]:
+    """Page and OCR-block counts: how "short" a document is for extract batching (E2-S8)."""
+    row = conn.execute(
+        text(
+            "SELECT (SELECT count(*) FROM document_page WHERE document_id = :d) AS pages, "
+            "       (SELECT count(*) FROM ocr_block WHERE document_id = :d) AS blocks"
+        ),
+        {"d": document_id},
+    ).one()
+    return {"pages": int(row.pages), "blocks": int(row.blocks)}
+
+
 def insert_classification(
     conn: Connection,
     *,

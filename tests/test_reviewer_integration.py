@@ -1,4 +1,7 @@
-"""E0-S14: workbasket -> worklist -> promote -> canonical bundle, and /admin (real PostgreSQL)."""
+"""E0-S14: workbasket -> worklist -> promote -> canonical bundle, and /admin (real PostgreSQL).
+
+E7-S1: every action is recorded under the signed-in user; a client-sent reviewer is ignored, and
+only the reviewer who claimed an item (or an admin) may approve or reject it."""
 
 from __future__ import annotations
 
@@ -21,6 +24,18 @@ def client(db_env):
     from tests.helpers import signed_in
 
     return signed_in(app, "reviewer")  # E11-S1: the clinician role owns /reviewer
+
+
+@pytest.fixture
+def other(db_env):
+    from cdi_adapter.webapp.app import app
+    from tests.helpers import signed_in
+
+    return signed_in(app, "reviewer")  # a second clinician
+
+
+def _me(c) -> str:
+    return c.get("/api/me").json()["username"]
 
 
 @pytest.fixture
@@ -48,27 +63,25 @@ def _post(client, url, **body):
     return client.post(url, json=body)
 
 
-def test_full_workbasket_flow_promotes_and_builds_canonical_bundle(client):
+def test_full_workbasket_flow_promotes_and_builds_canonical_bundle(client, other):
     doc, item = _item_with_held_facts(["Tab Metformin 5000 mg 1-1-1", "Tab Amlodipine 5 mg OD",
                                        "BP: 138/86 mmHg"])  # fmt: skip
     wb = {i["id"]: i for i in client.get("/api/reviewer/workbasket").json()}
     assert wb[item]["held"] == 1 and wb[item]["elements"] == 5  # 2 dx, 2 meds, 1 BP
 
     # an item is claimed into a worklist before it is decided (§4.5)
-    assert (
-        _post(client, f"/api/reviewer/items/{item}/approve", reviewer="dr.sen").status_code == 409
-    )
-    assert _post(client, f"/api/reviewer/items/{item}/claim", reviewer="dr.sen").status_code == 200
+    assert _post(client, f"/api/reviewer/items/{item}/approve").status_code == 409
+    assert _post(client, f"/api/reviewer/items/{item}/claim").status_code == 200
     assert item not in {i["id"] for i in client.get("/api/reviewer/workbasket").json()}
-    worklist = client.get("/api/reviewer/worklist", params={"reviewer": "dr.sen"}).json()
+    worklist = client.get("/api/reviewer/worklist").json()
     assert [i["id"] for i in worklist] == [item]
-    assert _post(client, f"/api/reviewer/items/{item}/claim", reviewer="dr.rao").status_code == 409
+    assert _post(other, f"/api/reviewer/items/{item}/claim").status_code == 409  # already mine
 
     # the reviewer works the held fact (correct it), then approves
     els = client.get(f"/api/reviewer/items/{item}/elements").json()["elements"]
     held = next(e for e in els if e["state"] == "held")
     r = _post(client, f"/api/facts/{held['fact']['id']}/review", action="correct",
-              reviewer="dr.sen", corrections={"local_text": "Tab Metformin 500"})  # fmt: skip
+              corrections={"local_text": "Tab Metformin 500"})  # fmt: skip
     assert r.status_code == 200
     els = client.get(f"/api/reviewer/items/{item}/elements").json()["elements"]
     corrected = next(e for e in els if e["fact_id"] == held["fact_id"])
@@ -76,7 +89,7 @@ def test_full_workbasket_flow_promotes_and_builds_canonical_bundle(client):
         corrected["state"] == "corrected" and corrected["fact"]["local_text"] == "Tab Metformin 500"
     )
 
-    r = _post(client, f"/api/reviewer/items/{item}/approve", reviewer="dr.sen")
+    r = _post(client, f"/api/reviewer/items/{item}/approve")
     assert r.status_code == 200, r.text
     out = r.json()
     assert out["promoted"] == {"cn_condition": 2, "cn_medication": 2, "cn_vital_sign": 1}
@@ -102,15 +115,13 @@ def test_full_workbasket_flow_promotes_and_builds_canonical_bundle(client):
     types = [e["resource"]["resourceType"] for e in b["bundle"]["entry"]]
     assert types[0] == "Composition" and types.count("MedicationRequest") == 2
     assert b["status"] == "ready_to_share"
-    assert (
-        _post(client, f"/api/reviewer/items/{item}/approve", reviewer="dr.sen").status_code == 409
-    )
+    assert _post(client, f"/api/reviewer/items/{item}/approve").status_code == 409
 
 
 def test_approving_with_a_held_fact_never_promotes_it(client):
     _, item = _item_with_held_facts(["Tab Metformin 5000 mg 1-1-1", "Tab Amlodipine 5 mg OD"])
-    _post(client, f"/api/reviewer/items/{item}/claim", reviewer="dr.x")
-    r = _post(client, f"/api/reviewer/items/{item}/approve", reviewer="dr.y")  # §4.5: approve
+    _post(client, f"/api/reviewer/items/{item}/claim")
+    r = _post(client, f"/api/reviewer/items/{item}/approve")  # §4.5: approve
     assert r.status_code == 200
     assert r.json()["promoted"] == {"cn_condition": 2, "cn_medication": 1}  # held Metformin out
     with session_scope() as c:
@@ -135,8 +146,8 @@ def test_lab_item_promotes_into_cn_lab_result_test_code(client, admin):
         item = str(create_rv_item_for_document(c, doc))
         mpi = c.execute(text("SELECT mpi_id FROM patient_identity WHERE id = :p"),
                         {"p": out["patient_id"]}).scalar_one()  # fmt: skip
-    _post(client, f"/api/reviewer/items/{item}/claim", reviewer="dr.lab")
-    r = _post(client, f"/api/reviewer/items/{item}/approve", reviewer="dr.lab")
+    _post(client, f"/api/reviewer/items/{item}/claim")
+    r = _post(client, f"/api/reviewer/items/{item}/approve")
     assert r.json()["promoted"] == {"cn_lab_result": 2}
     page = admin.get("/admin", params={"mpi": mpi})  # patient_graph reads test_code (§4.5 fix)
     assert page.status_code == 200
@@ -145,8 +156,8 @@ def test_lab_item_promotes_into_cn_lab_result_test_code(client, admin):
 
 def test_reject_item(client):
     _, item = _item_with_held_facts(["Tab Metformin 5000 mg 1-1-1"])
-    _post(client, f"/api/reviewer/items/{item}/claim", reviewer="dr.x")
-    r = _post(client, f"/api/reviewer/items/{item}/reject", reviewer="dr.x", reason="wrong patient")
+    _post(client, f"/api/reviewer/items/{item}/claim")
+    r = _post(client, f"/api/reviewer/items/{item}/reject", reason="wrong patient")
     assert r.status_code == 200 and r.json()["status"] == "rejected"
     with session_scope() as c:
         n = c.execute(text("SELECT count(*) FROM cn_fhir_bundle WHERE rv_item_id = :i"),
@@ -157,7 +168,7 @@ def test_reject_item(client):
 def test_unknown_item_and_missing_bundle(client):
     zero = "00000000-0000-0000-0000-000000000000"
     assert client.get(f"/api/reviewer/items/{zero}/elements").status_code == 404
-    assert _post(client, f"/api/reviewer/items/{zero}/claim", reviewer="x").status_code == 404
+    assert _post(client, f"/api/reviewer/items/{zero}/claim").status_code == 404
     _, item = _item_with_held_facts(["Tab Metformin 500 mg BD"])
     assert client.get(f"/api/reviewer/items/{item}/bundle").status_code == 404
 
@@ -180,3 +191,54 @@ def test_pages_render(admin, path, marker):
     client = admin  # admin may open every page
     r = client.get(path)
     assert r.status_code == 200 and marker in r.text and "cdn" not in r.text.lower()
+
+
+# ------------------------------------------------------------------ E7-S1 (DoD-SEC misuse cases)
+
+
+def test_a_spoofed_reviewer_is_ignored_on_claim_and_worklist(client, other):
+    _, item = _item_with_held_facts(["Tab Metformin 500 mg BD"])
+    r = _post(client, f"/api/reviewer/items/{item}/claim", reviewer=_me(other))
+    assert r.status_code == 200 and r.json()["assigned_to"] == _me(client)  # not the spoofed one
+    # a worklist is always the caller's own, whatever reviewer the query names
+    assert item in [i["id"] for i in client.get("/api/reviewer/worklist").json()]
+    theirs = other.get("/api/reviewer/worklist", params={"reviewer": _me(client)}).json()
+    assert item not in [i["id"] for i in theirs]
+
+
+def test_only_the_claiming_reviewer_may_decide_an_item(client, other):
+    _, item = _item_with_held_facts(["Tab Metformin 500 mg BD"])
+    assert _post(client, f"/api/reviewer/items/{item}/claim").status_code == 200
+    for action in ("approve", "reject"):
+        r = _post(other, f"/api/reviewer/items/{item}/{action}", reviewer=_me(client))
+        assert r.status_code == 403 and _me(client) in r.json()["detail"]
+    with session_scope() as c:
+        status = c.execute(text("SELECT status FROM rv_item WHERE id = :i"),
+                           {"i": item}).scalar_one()  # fmt: skip
+    assert status == "claimed"  # untouched
+    assert _post(client, f"/api/reviewer/items/{item}/approve").status_code == 200
+
+
+def test_an_admin_may_decide_a_claimed_item_under_their_own_name(client, admin):
+    _, item = _item_with_held_facts(["Tab Metformin 500 mg BD"])
+    _post(client, f"/api/reviewer/items/{item}/claim")
+    r = _post(admin, f"/api/reviewer/items/{item}/reject", reviewer=_me(client), reason="dup")
+    assert r.status_code == 200 and r.json()["status"] == "rejected"
+    with session_scope() as c:
+        rows = c.execute(text("SELECT actor, action FROM rv_action WHERE rv_item_id = :i "
+                              "ORDER BY at"), {"i": item}).all()  # fmt: skip
+    assert [tuple(r) for r in rows][-1] == (_me(admin), "reject")
+
+
+def test_the_reviewer_console_needs_a_clinician_session(db_env):
+    from cdi_adapter.webapp.app import app
+    from tests.helpers import browser, signed_in
+
+    _, item = _item_with_held_facts(["Tab Metformin 500 mg BD"])
+    for c, status in ((browser(app), 401), (signed_in(app, "intake"), 403)):
+        assert c.get("/api/reviewer/worklist").status_code == status
+        for action in ("claim", "approve", "reject"):
+            assert _post(c, f"/api/reviewer/items/{item}/{action}").status_code == status
+    with session_scope() as c:
+        assert c.execute(text("SELECT status FROM rv_item WHERE id = :i"),
+                         {"i": item}).scalar_one() == "workbasket"  # fmt: skip
