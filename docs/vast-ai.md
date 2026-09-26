@@ -62,3 +62,4 @@ Snapshots taken so far:
 | File (data/vast-backup/) | Taken | Contents | sha256 |
 |---|---|---|---|
 | `vast-backup-20260926T232506Z.tar.gz` | 2026-09-27 04:55 IST, instance 52720078 | DB dump (9 MB, users incl. admin, all uploads' facts, catalogue, agent runs) + 50 scan objects | `781a44af8678213b1366aa8a59e83f4ac7d7732910020fb17e908b4883fb4275` |
+| **`vast-backup-20260926T233828Z.tar.gz`** (use this one) | 2026-09-27 05:11 IST, the last state of instance 52720078 before it was destroyed | the same plus the medication agent's runs (two dumps; `cdi.dump` is the newest) | `ecb5961af15410a5357c15bae712d5aefda928410a022dbcc1c8ba96cecd2da3` |
