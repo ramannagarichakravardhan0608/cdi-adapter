@@ -4,6 +4,7 @@
 |------------------------------------------|------------------------------------------------------|
 | GET  /                                   | upload page                                          |
 | GET  /healthz                            | {db, s3, mlserve}                                    |
+| GET  /readyz                             | can THIS instance take uploads (the E10-S9 balancer) |
 | POST /api/jobs                           | files[] (<=10) + abha? + patient_ref? -> 202 |
 | GET  /api/jobs/{id}                      | job + patient + per-document status                  |
 | GET  /api/jobs/{id}/facts                | facts grouped by document, page url + bbox           |
@@ -13,19 +14,26 @@
 | GET  /api/documents/{id}/bundle          | single-document bundle (non-persisting)              |
 | GET  /api/documents/{id}/evidence        | doc_type + OCR block count + facts table             |
 | GET  /api/documents/{id}/pages/{n}       | the normalised page PNG                              |
+| GET  /api/documents/{id}/original        | the scan exactly as uploaded                         |
 | GET  /api/registry/lookup?q= · POST /api/registry | patient registry                           |
 
 plus the S8 routes (``/review``, ``/api/review/*``, ``/api/facts/*/review``), the ``/reviewer``
 workbasket/worklist routes and the ``/admin`` inspector (§4.5).
+
+Stateless (backlog E10-S9): jobs are in PostgreSQL (``webapp.jobstore``), sessions too (E11-S1), so
+several instances run behind the balancer (``infra/runpod/Caddyfile.lb``) and any of them serves
+any request; an upload is acknowledged only once it is durable.
 """
 
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import Any, Literal
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -36,9 +44,9 @@ from cdi_adapter.db import session_scope
 from cdi_adapter.fhir.service import project_document, project_patient
 from cdi_adapter.logging import configure, get_logger
 from cdi_adapter.mpi import registry
+from cdi_adapter.mpi.service import patient_summary
 from cdi_adapter.storage import get_store
-from cdi_adapter.webapp import admin, auth, review, review_page, reviewer
-from cdi_adapter.webapp.jobs import get_runner
+from cdi_adapter.webapp import admin, auth, jobstore, monitor, review, review_page, reviewer
 from cdi_adapter.webapp.page import upload_page
 
 log = get_logger(__name__)
@@ -53,6 +61,7 @@ app.include_router(review.router)
 app.include_router(review_page.router)
 app.include_router(reviewer.router)
 app.include_router(admin.router)
+app.include_router(monitor.router)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -85,11 +94,39 @@ def healthz() -> JSONResponse:
                         status_code=200 if ok else 503)  # fmt: skip
 
 
+@app.get("/readyz")
+def readyz() -> JSONResponse:
+    """Whether this instance can take an upload now (E10-S9): the database and the object store
+    it makes an upload durable in, and the queue it dispatches to. Not the model gateway: an
+    upload is accepted while it is down, and waits. The balancer takes an instance out of
+    rotation when this is not 200 (or not answered)."""
+    checks: dict[str, Any] = {}
+    try:
+        with session_scope() as c:
+            c.execute(text("SELECT 1"))
+        checks["db"] = True
+    except Exception:  # noqa: BLE001
+        checks["db"] = False
+    checks["s3"] = get_store().healthy()
+    if get_settings().job_execution == "queue":
+        try:
+            import redis
+
+            checks["queue"] = bool(redis.Redis.from_url(get_settings().redis_url,
+                                                        socket_timeout=1).ping())  # fmt: skip
+        except Exception:  # noqa: BLE001
+            checks["queue"] = False
+    ok = all(checks.values())
+    return JSONResponse({"ready": ok, "instance": jobstore.instance_name(), **checks},
+                        status_code=200 if ok else 503)  # fmt: skip
+
+
 # ------------------------------------------------------------------ jobs
 
 
 @app.post("/api/jobs", status_code=202)
-async def create_job(files: list[UploadFile] = File(...), abha: str | None = Form(None),
+async def create_job(request: Request, files: list[UploadFile] = File(...),
+                     abha: str | None = Form(None),
                      patient_ref: str | None = Form(None)) -> dict[str, Any]:  # fmt: skip
     if not files or len(files) > MAX_FILES:
         raise HTTPException(422, f"upload 1 to {MAX_FILES} files")
@@ -103,13 +140,18 @@ async def create_job(files: list[UploadFile] = File(...), abha: str | None = For
             if reg is None:
                 raise HTTPException(404, "no registered patient matches patient_ref")
             patient_id = str(registry.ensure_identity(c, reg))
-    job = get_runner().create(payload, registry_patient=reg, patient_id=patient_id,
-                              abha=(abha or None))  # fmt: skip
+    try:  # 202 only once the files and the job are durable (E10-S9)
+        job = await run_in_threadpool(jobstore.submit, payload, actor=auth.actor(request).username,
+                                      registry_patient=reg, patient_id=patient_id,
+                                      abha=(abha or None))  # fmt: skip
+    except jobstore.NotAccepted as exc:
+        raise HTTPException(503, "the upload could not be stored and was NOT accepted; "
+                                 "send it again") from exc  # fmt: skip
     return {"job_id": job.id, "trace_id": job.trace_id}
 
 
 def _job(job_id: str):
-    job = get_runner().get(job_id)
+    job = jobstore.load(job_id)
     if job is None:
         raise HTTPException(404, "job not found")
     return job
@@ -121,10 +163,7 @@ def get_job(job_id: str) -> dict[str, Any]:
     out = job.as_json()
     if job.patient_id and job.state != "mismatch":
         with session_scope() as c:
-            p = c.execute(text("SELECT mpi_id, name, sex, birth_date, identity_confidence "
-                               "FROM patient_identity WHERE id = :p"),
-                          {"p": job.patient_id}).mappings().first()  # fmt: skip
-        out["patient"] = dict(p) if p else None
+            out["patient"] = patient_summary(c, job.patient_id)
     else:
         out["patient"] = None  # a mismatch never surfaces any identity
         out["patient_id"] = None
@@ -195,12 +234,32 @@ def generate(job_id: str, body: GenerateBody, request: Request) -> dict[str, Any
 
 
 def _fhir(job) -> dict[str, Any]:
+    """The FHIR record of THIS job: the patient's bundles, kept to the documents uploaded in the
+    job (the patient may have documents from earlier visits; those are not this upload's)."""
     if not job.patient_id:
         raise HTTPException(409, "job has no patient yet")
     # a later request, but part of the job's trace (E10-S3): the bundle ends the document's path
-    parent = job.span.get_span_context() if job.span is not None else None
-    with tracing.span("fhir.project", {"cdi.job_id": job.id}, parent=parent):
-        return project_patient(job.patient_id)
+    with tracing.span("fhir.project", {"cdi.job_id": job.id}, parent=job.trace_parent()):
+        out = project_patient(job.patient_id)
+    return job_bundles(out, [d.document_id for d in job.docs if d.document_id])
+
+
+def job_bundles(projection: dict[str, Any], document_ids: list[str]) -> dict[str, Any]:
+    mine = {str(d) for d in document_ids}
+    bundles = [b for b in projection["bundles"] if str(b["document_id"]) in mine]
+    return {**projection, "artifact_count": len(bundles), "bundles": bundles}
+
+
+def download_bundle(bundles: list[dict[str, Any]], job_id: str, timestamp: str) -> dict[str, Any]:
+    """What the download file holds: FHIR only. One document -> its document Bundle as is;
+    several -> a ``collection`` Bundle with one entry per document Bundle. The review state
+    (status, issues, held facts) stays in ``/api/jobs/{id}/fhir``: it is not FHIR."""
+    docs = [b["bundle"] for b in bundles]
+    if len(docs) == 1:
+        return docs[0]
+    return {"resourceType": "Bundle", "id": str(uuid5(NAMESPACE_URL, f"cdi:job:{job_id}")),
+            "type": "collection", "timestamp": timestamp,
+            "entry": [{"fullUrl": f"urn:uuid:{d['id']}", "resource": d} for d in docs]}  # fmt: skip
 
 
 @app.get("/api/jobs/{job_id}/fhir")
@@ -211,8 +270,12 @@ def job_fhir(job_id: str) -> dict[str, Any]:
 @app.get("/api/jobs/{job_id}/fhir/download")
 def job_fhir_download(job_id: str) -> Response:
     data = _fhir(_job(job_id))
+    if not data["bundles"]:
+        raise HTTPException(409, "no FHIR record for this job yet")
+    now = datetime.now(UTC).isoformat(timespec="seconds")
+    body = download_bundle(data["bundles"], job_id, now)
     disposition = f'attachment; filename="fhir_{job_id}.json"'
-    return Response(json.dumps(data, default=str, indent=2), media_type="application/fhir+json",
+    return Response(json.dumps(body, default=str, indent=2), media_type="application/fhir+json",
                     headers={"Content-Disposition": disposition})  # fmt: skip
 
 
@@ -270,6 +333,16 @@ def document_page(document_id: UUID, page_no: int) -> Response:
     return Response(get_store().get_bytes(key), media_type="image/png")
 
 
+@app.get("/api/documents/{document_id}/original")
+def document_original(document_id: UUID) -> Response:
+    """The scan exactly as uploaded (§5 S1 key ``documents/<sha[:2]>/<sha>/original.<ext>``): the
+    evidence a reviewer checks a fact against, beyond the normalised page images."""
+    with session_scope() as c:
+        d = _doc(c, document_id)
+    return Response(get_store().get_bytes(d["storage_key"]),
+                    media_type=d["mime_type"] or "application/octet-stream")  # fmt: skip
+
+
 # ------------------------------------------------------------------ registry
 
 
@@ -315,9 +388,10 @@ def start_metrics(port: int | None = None) -> None:
     from prometheus_client import start_http_server
 
     from cdi_adapter import metrics
-    from cdi_adapter.webapp.jobs import all_jobs
 
-    metrics.register_once("jobs", metrics.JobsCollector(all_jobs))
+    # from web_job (E10-S9): every instance reports the same numbers; dashboards and alerts
+    # take max() across instances
+    metrics.register_once("jobs", metrics.JobsCollector(lambda: jobstore.store().metric_rows()))
     metrics.register_once("review_backlog", metrics.ReviewBacklogCollector())
     metrics.register_once("pg_replication", metrics.PgReplicationCollector())  # E10-S6
     metrics.register_once("minio_nodes", metrics.MinioNodesCollector())
@@ -334,4 +408,10 @@ def main() -> None:
     configure()
     tracing.setup_from_settings(tracing.WEBAPP)
     start_metrics()
-    uvicorn.run(app, host="0.0.0.0", port=get_settings().webapp_port)  # noqa: S104 - pod proxy
+    s = get_settings()
+    if s.job_execution == "inprocess":  # this instance runs jobs: start its lease heartbeat and
+        from cdi_adapter.webapp.jobs import get_runner  # sweep now, not on the first upload
+
+        get_runner()
+    log.info("webapp_starting", instance=jobstore.instance_name(), execution=s.job_execution)
+    uvicorn.run(app, host=s.webapp_host, port=s.webapp_port, timeout_graceful_shutdown=30)

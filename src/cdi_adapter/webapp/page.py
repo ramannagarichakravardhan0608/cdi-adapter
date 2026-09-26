@@ -64,16 +64,33 @@ async function poll(id){
   }
   if (j.state === 'running'){ setTimeout(() => poll(id), 1500); return; }
   const p = j.patient || {};
-  $('#banner').innerHTML = `<div class=card style="background:var(--brand-weak)"><b>${esc(p.name || 'Unnamed patient')}</b> · ${esc(p.mpi_id)} · ${esc(p.sex)} · ${esc(p.birth_date)} · identity confidence ${p.identity_confidence ?? '—'}</div>`;
-  const held = j.documents.reduce((n, d) => n + d.in_review, 0);
-  $('#after').innerHTML = `<p>${held ? `<span class="pill warn">${held} fact(s) sent to the reviewer</span> — see <a href="/reviewer">Reviewer</a> or <a href="/review">Review</a>.` : '<span class="pill ok">All facts governed</span>'}</p>
-    <p><a href="/api/jobs/${id}/fhir/download">Download FHIR bundles</a></p>
-    <details><summary>Complete patient details</summary>
-      <p><input id=r_mobile placeholder=mobile> <input id=r_dob placeholder="YYYY-MM-DD"> <input id=r_addr placeholder=address> <input id=r_abha placeholder=ABHA>
-      <button onclick="saveReg('${esc(p.mpi_id)}','${esc(p.name)}')">Save</button> <span id=r_msg></span></p></details>`;
+  const age = p.age_text ? 'age ' + p.age_text : '';
+  $('#banner').innerHTML = `<div class=card style="background:var(--brand-weak)"><b>${esc(p.name || 'Unnamed patient')}</b> · ${[p.mpi_id, p.sex, age, p.birth_date].filter(Boolean).map(esc).join(' · ')} · identity confidence ${p.identity_confidence ?? '—'}</div>`;
+  const held = j.documents.reduce((n, d) => n + (d.in_review || 0), 0);
+  const facts = j.documents.reduce((n, d) => n + (d.facts || 0), 0);
+  // a document not recognised as a clinical type is skipped: say so, never "All facts governed"
+  const skipped = j.documents.filter(d => d.status === 'skipped' || d.status === 'error');
+  const notDone = skipped.map(d => `<p><span class="pill bad">not processed</span> <b>${esc(d.filename)}</b> — ${d.status === 'error' ? 'failed: ' + esc(d.error) : `read as "${esc(d.doc_type)}", not a clinical document type, so nothing was extracted and nothing goes to review`}.</p>`).join('');
+  const verdict = held ? `<span class="pill warn">${held} fact(s) sent to the reviewer</span> — see <a href="/reviewer">Reviewer</a> or <a href="/review">Review</a>.`
+    : facts ? '<span class="pill ok">All facts governed</span>' : '<span class="pill warn">No facts extracted</span>';
+  $('#after').innerHTML = `${notDone}<p>${verdict}</p>
+    <p><a href="/api/jobs/${id}/fhir/download">Download FHIR record</a> <small>(this upload only; it holds confirmed facts only${held ? ' — confirm the held facts first to include them' : ''})</small></p>
+    <details${p.name ? '' : ' open'}><summary>Complete patient details</summary>
+      <p><input id=r_name placeholder="name (required)" aria-label=name>
+      <select id=r_gender aria-label=gender><option value="">gender</option><option value=M>Male</option><option value=F>Female</option><option value=O>Other</option><option value=U>Unknown</option></select>
+      <input id=r_mobile placeholder="mobile (required)"> <input id=r_dob placeholder="date of birth YYYY-MM-DD (required)">
+      <input id=r_addr placeholder=address> <input id=r_abha placeholder=ABHA>
+      <button onclick="saveReg('${esc(p.mpi_id)}')">Save</button> <span id=r_msg></span></p>
+      ${age && !p.birth_date ? `<p class=muted>The document gives ${esc(age)} but no date of birth; the registry needs the date of birth.</p>` : ''}</details>`;
+  // prefilled with what the documents gave, editable: a document without a legible name must not
+  // leave the form unsaveable ("new registry patient needs name")
+  $('#r_name').value = p.name || '';
+  $('#r_gender').value = ['M', 'F', 'O', 'U'].includes(p.sex) ? p.sex : '';
+  $('#r_dob').value = p.birth_date || '';
 }
-async function saveReg(pid, name){
-  const body = {patient_id: pid, name, mobile: $('#r_mobile').value || null, dob: $('#r_dob').value || null,
+async function saveReg(pid){
+  const body = {patient_id: pid, name: $('#r_name').value.trim() || null, gender: $('#r_gender').value || null,
+                mobile: $('#r_mobile').value || null, dob: $('#r_dob').value || null,
                 address: $('#r_addr').value || null, abha_id: $('#r_abha').value || null};
   const r = await fetch('/api/registry', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
   $('#r_msg').textContent = r.ok ? 'Saved.' : 'Error: ' + JSON.stringify((await r.json()).detail);

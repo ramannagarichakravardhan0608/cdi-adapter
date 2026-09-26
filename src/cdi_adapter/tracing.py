@@ -32,6 +32,7 @@ from opentelemetry.trace import NonRecordingSpan, Span, SpanContext
 
 WEBAPP = "cdi-webapp"
 MLSERVE = "cdi-mlserve"
+WORKER = "cdi-worker"  # E10-S9: the Celery worker that runs web-app jobs
 
 _provider: TracerProvider | None = None
 _log_handler: logging.Handler | None = None
@@ -131,9 +132,20 @@ def span(name: str, attributes: Mapping[str, Any] | None = None,
         yield s
 
 
-def start_job(job_id: str) -> Span:
-    """The root span of a job; ended by the job runner when the job leaves ``running``."""
-    return tracer().start_span("job", attributes={"cdi.job_id": job_id})
+def start_job(job_id: str, parent: SpanContext | None = None) -> Span:
+    """The span of a job's run; ended by the job runner when the run ends. A stored job (E10-S9)
+    passes ``parent``, the upload's span, so the run continues the trace the upload started even
+    in another process (and a resumed run joins the same trace)."""
+    ctx = trace.set_span_in_context(NonRecordingSpan(parent)) if parent else None
+    return tracer().start_span("job", context=ctx, attributes={"cdi.job_id": job_id})
+
+
+def context_from_ids(trace_id: str | None, span_id: str | None) -> SpanContext | None:
+    """The stored ``trace_id`` / ``span_id`` (hex, as :func:`ids` gives them) as a parent."""
+    if not trace_id or not span_id:
+        return None
+    return SpanContext(int(trace_id, 16), int(span_id, 16), is_remote=True,
+                       trace_flags=trace.TraceFlags(trace.TraceFlags.SAMPLED))  # fmt: skip
 
 
 @contextmanager

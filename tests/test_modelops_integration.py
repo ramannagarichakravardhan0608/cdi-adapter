@@ -292,7 +292,7 @@ def test_serve_starts_a_real_gateway_process_for_a_version(rollout, tmp_path, mo
     procs = []
 
     def launch(version, u):
-        procs.append(ops.launch_gateway(version, u))
+        procs.extend(ops.launch_gateway(version, u))  # one process per replica (E10-S9)
 
     try:
         ops.serve(v, url, launch=launch, wait_s=90)

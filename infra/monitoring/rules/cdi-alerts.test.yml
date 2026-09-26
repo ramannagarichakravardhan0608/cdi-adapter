@@ -404,3 +404,64 @@ tests:
       - eval_time: 250h
         alertname: CdiRestoreDrillOverdue
         exp_alerts: []
+
+  # ---------------------------------------------------------------- app tier (E10-S9)
+  - name: webapp instance - one instance down for 2 minutes fires, a short blip does not
+    interval: 1m
+    input_series:
+      - series: up{job="cdi-webapp",instance="127.0.0.1:9464"}
+        values: "1 1 0 0 0 0 0"
+      - series: up{job="cdi-webapp",instance="127.0.0.1:9465"}
+        values: "1 0 1 1 1 1 1"            # down for one scrape only
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: CdiWebappInstanceDown
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: CdiWebappInstanceDown
+        exp_alerts:
+          - exp_labels: {severity: ticket, job: cdi-webapp, instance: "127.0.0.1:9464"}
+            exp_annotations:
+              summary: A web app instance is down.
+              description: One web app instance has not answered for 2 minutes; the balancer serves from the others, with less spare capacity.
+              runbook_url: docs/alerts.md#cdiwebappinstancedown
+
+  - name: webapp instance - all instances up stays quiet
+    interval: 1m
+    input_series:
+      - series: up{job="cdi-webapp",instance="127.0.0.1:9464"}
+        values: "1x10"
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: CdiWebappInstanceDown
+        exp_alerts: []
+
+  - name: orphaned jobs - not taken over for 2 minutes fires
+    interval: 1m
+    input_series:
+      - series: cdi_jobs_orphaned{job="cdi-webapp",instance="127.0.0.1:9464"}
+        values: "0 2 2 2 2 2"
+      - series: cdi_jobs_orphaned{job="cdi-webapp",instance="127.0.0.1:9465"}
+        values: "0 2 2 2 2 2"             # every instance reports the same web_job numbers
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: CdiJobsOrphaned
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: CdiJobsOrphaned
+        exp_alerts:
+          - exp_labels: {severity: page}
+            exp_annotations:
+              summary: Accepted jobs are not being processed.
+              description: Jobs whose runner died have not been taken over for 2 minutes; no job worker is alive to resume them.
+              runbook_url: docs/alerts.md#cdijobsorphaned
+
+  - name: orphaned jobs - taken over within a lease stays quiet
+    interval: 1m
+    input_series:
+      - series: cdi_jobs_orphaned{job="cdi-webapp"}
+        values: "0 1 0 0 1 0 0 0"          # a runner died, another took the job over at once
+    alert_rule_test:
+      - eval_time: 7m
+        alertname: CdiJobsOrphaned
+        exp_alerts: []

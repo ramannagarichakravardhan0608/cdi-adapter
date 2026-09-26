@@ -209,7 +209,7 @@
             "type": "prometheus",
             "uid": "cdi-prometheus"
           },
-          "expr": "sum by (state) (cdi_jobs)",
+          "expr": "max by (state) (cdi_jobs)",
           "legendFormat": "{{state}}"
         }
       ],
@@ -967,6 +967,75 @@
       "gridPos": {
         "x": 0,
         "y": 86,
+        "w": 24,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "App tier: instances and workers up, jobs without a runner, takeovers (1 h)",
+      "description": "E10-S9 (docs/ha.md Application tier). Instances / workers answering their /metrics; orphaned = accepted jobs whose runner died and nobody took over yet; resumed = jobs taken over; gateway failovers = model calls moved to another replica.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cdi-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cdi-prometheus"
+          },
+          "expr": "sum(up{job=\"cdi-webapp\"})",
+          "legendFormat": "web app instances up"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cdi-prometheus"
+          },
+          "expr": "sum(up{job=\"cdi-worker\"})",
+          "legendFormat": "job workers up"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cdi-prometheus"
+          },
+          "expr": "max(cdi_jobs_orphaned)",
+          "legendFormat": "jobs without a runner"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cdi-prometheus"
+          },
+          "expr": "sum(increase(cdi_job_resumes_total[1h]))",
+          "legendFormat": "jobs resumed (1 h)"
+        },
+        {
+          "refId": "E",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cdi-prometheus"
+          },
+          "expr": "sum(increase(cdi_mlserve_failovers_total[1h]))",
+          "legendFormat": "gateway failovers (1 h)"
+        }
+      ],
+      "id": 23,
+      "gridPos": {
+        "x": 0,
+        "y": 94,
         "w": 24,
         "h": 8
       }

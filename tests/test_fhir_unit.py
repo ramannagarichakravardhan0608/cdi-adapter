@@ -87,7 +87,9 @@ def test_medication_request_timing(fpd, timing):
                                 dose_num=1, dose_unit_ucum="{tbl}"), "urn:uuid:m", PAT, ENC,
                              PR)  # fmt: skip
     d = m["dosageInstruction"][0]
-    assert d["timing"]["repeat"] == timing
+    repeat = dict(d["timing"]["repeat"])
+    assert repeat.pop("boundsDuration")["value"] == 30.0  # "for 30 days", in the timing too
+    assert repeat == timing
     assert d["route"]["coding"][0]["code"] == "34206005"
     assert m["medicationCodeableConcept"]["coding"][0]["code"] == "372567009"
     assert m["dispenseRequest"]["expectedSupplyDuration"]["value"] == 30.0
@@ -141,7 +143,9 @@ def test_lint_catches_dangling_ref_missing_value_uncoded_condition_and_order():
     assert ("error", "composition-first") in {(i["severity"], i["code"]) for i in R._lint(b2)}
 
 
-def test_python_conformance_passes_clean_bundle_and_uses_python_engine():
+def test_python_conformance_passes_clean_bundle_and_uses_python_engine(monkeypatch):
+    # a host with the E6-S1 validator installed (the Colab pod) would otherwise run HAPI here
+    monkeypatch.setattr("cdi_adapter.fhir.validate_abdm.hapi_available", lambda: False)
     out = validate(_mini_bundle(), "PrescriptionRecord")
     assert out == {"engine": "python", "valid": True, "issues": []}
 
@@ -185,3 +189,39 @@ def test_scan_url_is_the_s3_location():
         "s3://cdi-documents/documents/ab/x/original.pdf"
     )
     assert R.INLINE_MAX_BYTES == 700_000  # §7.2
+
+
+def test_medication_request_carries_everything_read_from_the_line():
+    """2026-09-25: strength, duration and instructions were read but left out of the resource;
+    "after food" arrived as the route."""
+    from cdi_adapter.extract.facts import parse_medication
+
+    med = parse_medication(
+        {
+            "drug_name": "Aceclofenac",
+            "strength": "100 mg",
+            "frequency": "1-0-1",
+            "duration": "5 days",
+            "route": "after food",
+            "confidence": 1,
+        }
+    )
+    assert (med.route, med.instructions) == (None, "after food")  # when, not how
+    f = _f(fact_type="medication", local_text="Aceclofenac", **med.__dict__)
+    m = R.medication_request(f, "urn:uuid:m", PAT, ENC, PR)
+    assert m["medicationCodeableConcept"]["text"] == "Aceclofenac 100 mg"
+    d = m["dosageInstruction"][0]
+    assert d["text"] == "100 mg · 1-0-1 · for 5 days · after food"
+    assert d["patientInstruction"] == "after food" and "route" not in d
+    assert d["timing"]["repeat"]["boundsDuration"]["value"] == 5.0
+    kept = parse_medication({"drug_name": "Inj X", "route": "IV after food", "confidence": 1})
+    assert kept.route == "IV after food"  # a real route stays a route
+
+
+def test_no_null_or_empty_value_reaches_the_bundle():
+    b = R.bundle([("urn:uuid:m", {"resourceType": "MedicationRequest", "authoredOn": None,
+                                  "note": [], "dosageInstruction": [{"text": "x", "route": {}}],
+                                  "status": "active", "flag": False})], "2026-09-25")  # fmt: skip
+    res = b["entry"][0]["resource"]
+    assert res == {"resourceType": "MedicationRequest", "dosageInstruction": [{"text": "x"}],
+                   "status": "active", "flag": False}  # fmt: skip

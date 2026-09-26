@@ -51,6 +51,26 @@ class Settings(BaseSettings):
 
     # web app (the RunPod-proxied port)
     webapp_port: int = 8888
+    # E10-S9: with several instances each binds 127.0.0.1:<own port> and the balancer
+    # (infra/runpod/Caddyfile.lb) holds the public port; a single instance keeps 0.0.0.0
+    webapp_host: str = "0.0.0.0"  # noqa: S104 - the pod proxy / balancer reaches it
+    # names this process in /readyz, logs and web_job.accepted_by; empty = <hostname>:<port>
+    instance_name: str = ""
+
+    # durable jobs (backlog E10-S9, E9-S1 core; docs/ha.md "Application tier"): an upload is staged
+    # in the object store and written to web_job before it is acknowledged. "queue" = the job runs
+    # on a Celery worker (queue cdi-web, infra/runpod/start_worker.sh); "inprocess" = on the web app
+    # instance that took the upload (dev / tests). Either way a job whose runner dies (its lease
+    # runs out) is claimed and resumed by another runner.
+    job_execution: Literal["inprocess", "queue"] = "inprocess"
+    job_lease_s: float = Field(default=30.0, ge=3)
+    # a job never claimed this long after its upload (its queue message lost) is claimed anyway
+    job_unclaimed_s: float = Field(default=120.0, ge=5)
+    job_max_attempts: int = Field(default=3, ge=1)
+    # Prometheus /metrics of a Celery web-job worker (127.0.0.1 only; 0 = off)
+    worker_metrics_port: int = Field(default=9470, ge=0, le=65535)
+    # E10-S9: a model gateway replica that refused a connection is skipped this long
+    mlserve_down_s: float = Field(default=15.0, ge=0)
     # Prometheus /metrics of the web app (backlog E10-S1): its own port, bound to 127.0.0.1 only,
     # so the staff-facing app and the ingress never serve it; 0 = off
     metrics_port: int = Field(default=9464, ge=0, le=65535)
@@ -59,7 +79,8 @@ class Settings(BaseSettings):
     otel_traces_endpoint: str = ""  # e.g. http://127.0.0.1:4318/v1/traces
     otel_logs_endpoint: str = ""  # e.g. http://127.0.0.1:3100/otlp/v1/logs
 
-    # model gateway
+    # model gateway. E10-S9: several replicas of the same model, comma separated; a call goes to
+    # the next replica when one refuses the connection or answers 5xx
     mlserve_url: str = "http://127.0.0.1:8077"
     mlserve_port: int = 8077
     mlserve_backend: Literal["stub", "hf", "vllm"] = "stub"
@@ -72,6 +93,10 @@ class Settings(BaseSettings):
     model_version: str | None = None
     model_route_ttl_s: float = Field(default=5.0, ge=0)
     vlm_max_pixels_ocr: int = 2_000_000
+    # hf backend weights: "" = bf16 (ARCHITECTURE §3.4, the pod). "8bit" = bitsandbytes
+    # LLM.int8, only for a test host below the 24 GB bar (docs/fallback-host.md): the 7B's bf16
+    # weights (~16 GB) do not fit a 15 GB T4. start_mlserve.sh installs the pinned bitsandbytes.
+    vlm_quantize: Literal["", "8bit"] = ""
     # vllm backend (backlog E2-S1, §3.4): 32 GB = ~15 GB weights + ~12-14 GB KV cache
     # -> 3-4 concurrent page extractions
     vllm_gpu_memory_utilization: float = Field(default=0.88, gt=0, le=0.98)
@@ -82,6 +107,11 @@ class Settings(BaseSettings):
 
     # pipeline behaviour
     fast_classify: bool = True
+    # the rule-based fast path is for cleanly printed pages only: a page whose OCR is less sure than
+    # this on average (handwriting read by a print OCR) goes to the VLM, which can say "handwritten"
+    # and so send it through the VLM handwriting pass (2026-09-26: a printed letterhead with a
+    # handwritten Rx, mean OCR 0.80, was taken as printed and its drugs extracted as gibberish)
+    fast_classify_min_ocr_conf: float = Field(default=0.88, ge=0, le=1)
     extract_retries: int = Field(default=1, ge=0)
     job_max_workers: int = Field(default=6, ge=1)
     # Phase-2 extractions in flight at once (backlog E2-S2, §7.2): 0 = auto, i.e.

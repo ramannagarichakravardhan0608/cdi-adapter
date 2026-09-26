@@ -230,11 +230,66 @@ def _timing(fpd: float | None) -> dict[str, Any] | None:
     return {"repeat": {"frequency": 1, "period": round(1 / fpd), "periodUnit": "d"}}
 
 
+def _num(x: Any) -> str:
+    v = float(x)
+    return str(int(v)) if v.is_integer() else f"{v:g}"
+
+
+# a fact text that is a written dosage line, not just a drug name: it has a strength ("500 mg"),
+# a dose-slot pattern ("1-0-1") or a duration ("x 30 days"). "Vitamin D3" is a name.
+_A_DOSAGE_LINE = re.compile(r"\b\d+(?:\.\d+)?\s*(?:mg|mcg|µg|g|gm|ml|iu|units?)\b"
+                            r"|\b\d-\d-\d\b|\bx\s*\d+", re.I)  # fmt: skip
+
+
+def _times_a_day(fpd: float | None) -> str | None:
+    """The frequency in words when only the per-day count is known (no written code)."""
+    if not fpd:
+        return None
+    words = {1: "once daily", 2: "twice daily", 3: "three times daily", 4: "four times daily"}
+    if fpd >= 1:
+        return words.get(round(fpd), f"{_num(round(fpd))} times daily")
+    return f"once every {round(1 / fpd)} days"
+
+
+def _med_parts(f: dict[str, Any]) -> tuple[str | None, str | None, str | None]:
+    """(strength, dose, duration) as a reader writes them: "100 mg", "1 tab", "5 days"."""
+    strength = (f"{_num(f['strength_num'])} {f.get('strength_unit') or ''}".strip()
+                if f.get("strength_num") is not None else None)  # fmt: skip
+    dose = None
+    if f.get("dose_num") is not None:
+        unit = str(f.get("dose_unit_ucum") or "").strip("{}")
+        dose = f"{_num(f['dose_num'])} {'tab' if unit == 'tbl' else unit}".strip()
+    duration = f"{_num(f['duration_days'])} days" if f.get("duration_days") else None
+    return strength, dose, duration
+
+
 def medication_request(f, ref, pat, enc, practitioner_ref) -> dict[str, Any]:
-    med = codeable({**f, "local_text": f.get("drug_text") or f.get("local_text")})
-    dosage: dict[str, Any] = {"text": " ".join(str(x) for x in (
-        f.get("local_text"), f.get("frequency_code"), f.get("instructions")) if x)}  # fmt: skip
-    if t := _timing(f.get("frequency_per_day")):
+    """The prescribed medicine with everything read from the line (2026-09-25: strength,
+    duration and instructions were read and stored but left out of the resource): the name
+    with its strength ("Aceclofenac 100 mg"), a complete dosage line ("100 mg · 1-0-1 · for 5
+    days · after food"), the timing with its bounds, and the supply duration."""
+    name = f.get("drug_text") or f.get("local_text")
+    strength, dose, duration = _med_parts(f)
+    med = codeable({**f, "local_text": f"{name} {strength}" if strength else name})
+    sig = [strength, dose, f.get("frequency_code") or _times_a_day(f.get("frequency_per_day")),
+           f"for {duration}" if duration else None, f.get("instructions")]  # fmt: skip
+    # the line as written, when the fact carries it ("Tab Metformin 500 mg 1-0-1 x 30 days"),
+    # is the most faithful text; a bare drug name gets the line rebuilt from its parts
+    written = str(f.get("local_text") or "")
+    as_written = written if _A_DOSAGE_LINE.search(written) else None
+    dosage: dict[str, Any] = {
+        "text": as_written or " · ".join(str(x) for x in sig if x) or str(name)
+    }
+    if as_written and f.get("instructions") and f["instructions"] not in as_written:
+        dosage["text"] += f" · {f['instructions']}"
+    if f.get("instructions"):
+        dosage["patientInstruction"] = str(f["instructions"])
+    t = _timing(f.get("frequency_per_day"))
+    if f.get("duration_days"):
+        bounds = {"value": float(f["duration_days"]), "unit": "days", "system": UCUM, "code": "d"}
+        t = t or {"repeat": {}}
+        t["repeat"]["boundsDuration"] = bounds
+    if t:
         dosage["timing"] = t
     if f.get("prn"):
         dosage["asNeededBoolean"] = True
@@ -363,12 +418,23 @@ def composition(ref, doc_type, pat, enc, author, custodian, sections: dict[str, 
     }  # fmt: skip
 
 
+def prune(x: Any) -> Any:
+    """FHIR JSON has no ``null`` and no empty array or object: drop them, at every depth (a
+    missing date used to come out as ``"authoredOn": null``)."""
+    if isinstance(x, dict):
+        out = {k: prune(v) for k, v in x.items()}
+        return {k: v for k, v in out.items() if v is not None and v != [] and v != {}}
+    if isinstance(x, list):
+        return [v for v in (prune(i) for i in x) if v is not None and v != [] and v != {}]
+    return x
+
+
 def bundle(entries: list[tuple[str, dict[str, Any]]], timestamp: str) -> dict[str, Any]:
     return {
         "resourceType": "Bundle", "id": str(uuid.uuid4()), "meta": _meta("DocumentBundle"),
         "identifier": {"system": BUNDLE_ID_SYSTEM, "value": str(uuid.uuid4())},
         "type": "document", "timestamp": timestamp,
-        "entry": [{"fullUrl": url, "resource": res} for url, res in entries],
+        "entry": [{"fullUrl": url, "resource": prune(res)} for url, res in entries],
     }  # fmt: skip
 
 

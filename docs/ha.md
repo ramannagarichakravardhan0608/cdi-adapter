@@ -1,4 +1,4 @@
-# Data-tier HA: Postgres standby and erasure-coded MinIO (backlog E10-S6)
+# HA: the data tier (backlog E10-S6) and the application tier (backlog E10-S9)
 
 Before E10-S6 the only copy of the database was a `pg_dump` every 15 minutes (RPO 15 min), and the
 scans lived on one MinIO process. Now:
@@ -138,3 +138,82 @@ Both run on throwaway servers (their own folders and ports), never the app's dat
 
 `tests/test_ha_integration.py` runs the Postgres drill with real PostgreSQL 16 servers, and
 `tests/test_ha_unit.py` covers the rest.
+
+## Application tier: several web app instances, durable jobs (backlog E10-S9)
+
+Before E10-S9 there was one web app process, and each upload's job lived in its memory: killing
+it lost every job it was running, and a second copy could not see the first one's jobs. Now:
+
+```
+RunPod proxy / E1-S9 tunnel --> Caddy balancer :8888 (infra/runpod/Caddyfile.lb)
+    --> web app web1 127.0.0.1:8881, web2 127.0.0.1:8882, ...   stateless: any one serves any request
+          upload: files -> MinIO uploads/<job>/<n>, job -> web_job, THEN 202, then dispatch
+    --> Redis queue cdi-web --> job workers worker1, worker2 (Celery, threads pool)
+          claim the job with a lease, run the pipeline, save each step to web_job
+    --> model gateways: one or more replicas per model version (CDI_MLSERVE_URL, comma separated)
+```
+
+| What dies | What happens | Lost |
+|---|---|---|
+| A web app instance | The balancer takes it out on the first failed connection (passive check) or the next `/readyz` check (every 2 s, 2 s timeout), whichever comes first. A request whose connection fails goes to another instance. | Only an upload that was still being sent to it: not acknowledged, so the counter sees an error and sends it again. **An acknowledged upload is already in MinIO + PostgreSQL.** |
+| A job worker | Its leases stop being renewed. After `CDI_JOB_LEASE_S` (30 s) another worker's sweep (every 10 s) claims each of its jobs and resumes it: finished documents stay, a document past extraction continues from there, the others run again from the staged files. | Nothing. At most the one stage each document was in runs again. |
+| A model gateway replica | The next call to it fails to connect; the call goes to the next replica, and the dead one is skipped for `CDI_MLSERVE_DOWN_S` (15 s). | Nothing: the document's call is answered by another replica. |
+| The queue message (Redis restarted) | A job nobody claimed `CDI_JOB_UNCLAIMED_S` (120 s) after its upload is claimed by a sweep. | Nothing. |
+
+Start, repair, look:
+
+```bash
+bash infra/runpod/start_apptier.sh           # starts what is down (start_all.sh calls it)
+bash infra/runpod/start_apptier.sh status    # each instance, worker, and the balancer's upstreams
+python scripts/app_ha_drill.py               # the kill-instance drill under load (below)
+```
+
+Settings (`.env.runpod`): `CDI_WEBAPP_INSTANCES` (2), `CDI_WEBAPP_BASE_PORT` (8881),
+`CDI_JOB_EXECUTION=queue`, `CDI_WORKERS` (2), `CDI_WORKER_CONCURRENCY` (0 = the GPU extraction
+slots, E2-S2), `CDI_JOB_LEASE_S` (30), `CDI_JOB_UNCLAIMED_S` (120), `CDI_JOB_MAX_ATTEMPTS` (3),
+`CDI_MLSERVE_DOWN_S` (15). Several gateway replicas: list them in `CDI_MLSERVE_URL`, or give a
+rollout side several URLs (`python -m cdi_adapter.modelops serve <version> --url
+http://127.0.0.1:8077,http://127.0.0.1:8078`, E10-S5); every replica must serve the version.
+
+How the pieces were chosen (from the architecture; owner delegated the choice):
+
+- **Caddy as the balancer.** It is already the architecture's ingress (E1-S9), pinned at the same
+  release (`CADDY_VERSION`, checksum-verified). Native process, no Docker (§3.3). The instances bind
+  127.0.0.1 only; the balancer holds the one public port the single web app used to hold (§12).
+- **Celery + Redis for the jobs** (the architecture's queue, §13 / §14 #8; the core of E9-S1),
+  with the job itself in PostgreSQL. The queue message only says "run job X", so a lost or
+  duplicated message changes nothing: the claim decides who runs a job.
+- **A lease, not a lock held by a connection.** A lease survives a database failover (E10-S6); a
+  runner that cannot renew it stops at its next step boundary and never finishes the job twice.
+- **Ingest is one-at-a-time per file hash** (a transaction-scoped advisory lock), so a resumed
+  job and a second upload of the same scan cannot render its pages at the same moment, and a
+  document an interrupted ingest left without pages is rendered again.
+
+Limits (what this block does not cover):
+
+- **A frozen runner.** A process that is stopped (not killed) for longer than a lease, then
+  continues, can finish the one stage it was in before it notices the take-over at its next step
+  boundary. OCR and extraction replace their earlier output, so the document's results stay
+  single, but its review item may have to be rebuilt. A killed or crashed process has no such
+  window. Fencing every stage's own writes is not in this block.
+- **The same upload sent twice** (the counter retries after a timeout that did get through)
+  makes two jobs; the documents are shared (ingest dedupes by SHA-256). Idempotency keys are E9-S3.
+- **Losing the whole host.** Every instance and worker runs on the pod; losing the pod is the
+  data tier's "second host" (above) plus E1-S3.
+
+### Drill (backlog E10-S9 "Tests": kill-instance drill under load)
+
+`python scripts/app_ha_drill.py` (on the pod / fallback host, app tier up) uploads 12 synthetic
+patients (the E1-S7 corpus) through the balancer over 20 s. Mid-burst it SIGKILLs web app instance
+1, then job worker 1 while it runs jobs (`--kill-gateway`: also one model gateway replica). Then it
+checks from PostgreSQL: **zero lost acknowledged uploads** (every 202 job finished, no document left
+unprocessed), the killed instance **left rotation within the health-check window** (the
+balancer's own log line, interval + timeout = 4 s), no document processed twice (one extraction row
+and one open review item per document), and which jobs were taken over. Finally it restarts what it
+killed and checks the instance is back in rotation. Report: `$WS/logs/ha/last-app-drill.json`.
+
+Tests: `tests/test_apptier_unit.py` (lease, resume, take-over, the sweep, replica failover,
+`/readyz`, the balancer config); `tests/test_apptier_integration.py` (the lease rules on
+PostgreSQL; an upload MinIO cannot store is refused with 503 and leaves nothing; a runner killed
+inside an extraction is taken over on real PostgreSQL + MinIO with no loss and no doubles; the
+ingest re-render).

@@ -41,6 +41,8 @@ def header(active: str = "") -> str:
         f'<a href="{h}"{" aria-current=page" if h == active else ""}>{escape(t)}</a>'
         for h, t in links
     )
+    # the Pipeline Monitor is its own microsite (webapp/monitor_page.py): it opens in a new tab
+    nav += '<a href="/monitor" target=_blank rel=noopener>Pipeline monitor ↗</a>'
     signout = (
         '<form method=post action="/logout" style="margin-left:auto">'
         "<button type=submit>Sign out</button></form>"

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import base64
 import json
+import re
+import weakref
 
 import httpx
 import pytest
@@ -374,6 +376,55 @@ def test_hf_falls_back_7b_to_3b_on_oom():
     be = HFBackend(_settings(), loader=loader, runner=lambda *a: "ok")
     assert be.generate("x") == "ok"
     assert be.model == "Qwen/Qwen2.5-VL-3B-Instruct"
+
+
+def test_hf_fallback_loads_only_after_the_failed_primary_is_released():
+    """Colab T4, 2026-09-26: the half-built 7B was still held by the caught error's traceback
+    while the 3B loaded, so the 3B ran out of memory too and no model was served at all."""
+
+    class HalfLoaded:  # the 7B weights materialised before the OOM
+        pass
+
+    held = []
+
+    def loader(mid, s):
+        if "7B" in mid:
+            weights = HalfLoaded()
+            weights.graph = weights  # module graphs hold reference cycles
+            held.append(weakref.ref(weights))
+            raise OutOfMemoryError("CUDA out of memory")
+        assert held[0]() is None, "the failed 7B is still alive while the 3B loads"
+        return ("M3", "P3")
+
+    be = HFBackend(_settings(), loader=loader, runner=lambda *a: "ok")
+    assert be.generate("x") == "ok"
+    assert be.loaded and be.model == "Qwen/Qwen2.5-VL-3B-Instruct"
+
+
+def test_hf_loads_bf16_by_default_and_int8_only_when_asked():
+    from cdi_adapter.mlserve.backends import _load_kwargs
+
+    plain = _load_kwargs("Qwen/Qwen2.5-VL-7B-Instruct", _settings())
+    assert str(plain["torch_dtype"]) == "torch.bfloat16" and "quantization_config" not in plain
+    eight = Settings(_env_file=None, mlserve_backend="hf", vlm_quantize="8bit")
+    q = _load_kwargs("Qwen/Qwen2.5-VL-7B-Instruct", eight)
+    assert q["quantization_config"].load_in_8bit and not q["quantization_config"].load_in_4bit
+    assert {k: v for k, v in q.items() if k != "quantization_config"} == plain
+    with pytest.raises(ValueError):
+        Settings(_env_file=None, vlm_quantize="4bit")  # only what a host has been checked with
+
+
+def test_start_mlserve_installs_the_pinned_bitsandbytes_only_for_8bit():
+    from pathlib import Path
+
+    runpod = Path(__file__).resolve().parents[1] / "infra" / "runpod"
+    start = (runpod / "start_mlserve.sh").read_text(encoding="utf-8")
+    pins = (runpod / "versions.env").read_text(encoding="utf-8")
+    assert '[ "${CDI_VLM_QUANTIZE:-}" = "8bit" ]' in start
+    assert "--no-deps --require-hashes" in start
+    assert "bitsandbytes==$BITSANDBYTES_VERSION --hash=sha256:$BITSANDBYTES_SHA256" in start
+    assert "\nBITSANDBYTES_VERSION=0.50.2\n" in pins
+    assert re.search(r"\nBITSANDBYTES_SHA256=[0-9a-f]{64}\n", pins)
 
 
 def test_hf_non_oom_load_error_is_raised():

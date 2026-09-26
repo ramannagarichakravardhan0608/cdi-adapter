@@ -54,6 +54,7 @@ _ADMIN = frozenset({_A})
 # (method, route path) -> who may call it. §7.1 endpoint table + §4.5 routes + the login routes.
 POLICY: dict[tuple[str, str], frozenset[str]] = {
     ("GET", "/healthz"): PUBLIC,  # monitors + the E1-S9 ingress: component booleans only
+    ("GET", "/readyz"): PUBLIC,  # the E10-S9 balancer's health check: booleans + instance name
     ("GET", "/login"): PUBLIC,
     ("POST", "/login"): PUBLIC,
     ("POST", "/logout"): _ANY_STAFF,
@@ -73,6 +74,7 @@ POLICY: dict[tuple[str, str], frozenset[str]] = {
     ("GET", "/api/documents/{document_id}/bundle"): _CLINICAL,
     ("GET", "/api/documents/{document_id}/evidence"): _CLINICAL,
     ("GET", "/api/documents/{document_id}/pages/{page_no}"): _CLINICAL,
+    ("GET", "/api/documents/{document_id}/original"): _CLINICAL,
     ("GET", "/review"): _CLINICAL,
     ("GET", "/api/review/tasks"): _CLINICAL,
     ("GET", "/api/review/facts/{fact_id}"): _CLINICAL,
@@ -85,6 +87,12 @@ POLICY: dict[tuple[str, str], frozenset[str]] = {
     ("POST", "/api/reviewer/items/{item_id}/reject"): _CLINICAL,
     ("GET", "/api/reviewer/items/{item_id}/elements"): _CLINICAL,
     ("GET", "/api/reviewer/items/{item_id}/bundle"): _CLINICAL,
+    ("GET", "/api/reviewer/items/{item_id}/bundle/download"): _CLINICAL,
+    ("GET", "/api/reviewer/approved"): _CLINICAL,
+    # the Pipeline Monitor microsite (stages, OCR lines, facts): clinical content
+    ("GET", "/monitor"): _CLINICAL,
+    ("GET", "/api/monitor/items"): _CLINICAL,
+    ("GET", "/api/monitor/documents/{document_id}"): _CLINICAL,
     # data inspector over every table: admin only
     ("GET", "/admin"): _ADMIN,
 }

@@ -33,7 +33,11 @@ MAX_TOKENS = {
 
 GUIDANCE = {
     "prescription": "List EVERY medication line - usually 5-15 drugs - do not stop early. "
-    "Keep strength, dose, the dose-slot pattern (e.g. 1-0-1), route and duration as written.",
+    "A medication is a named drug (Tab / Cap / Syp / Inj / a brand or generic name); keep its "
+    "strength, dose, dose-slot pattern, route and duration exactly as written, and leave any of "
+    "them empty when the line does not state it - never fill in a typical value. Instructions "
+    "that are not a drug (gargles, steam inhalation, fluids / ORS, rest, diet, follow-up) are "
+    "advice, not medications.",
     "lab_report": "List EVERY test row with its result, unit and reference range.",
     "vitals_sheet": "List every vital sign that has a number. Record allergies if written.",
     "radiology": "Copy EVERY finding line into findings_list; put the impression separately.",
@@ -63,8 +67,11 @@ def build_extraction_prompt(
         f"the schema {schema}.\n"
         f"{GUIDANCE.get(doc_type, '')}\n"
         "Rules: copy values exactly as written; never infer or guess a value that is not on the "
-        'page; for every item give `evidence` as the list of block ids (e.g. ["b3"]) it came '
-        "from and a `confidence` between 0 and 1. Omit anything you cannot read.\n"
+        "page, and never copy an example from the schema as a value; for every item give "
+        '`evidence` as the list of block ids (e.g. ["b3"]) it came from and a `confidence` '
+        "between 0 and 1 that is lower where the writing is hard to read. The OCR text can be "
+        "wrong, above all on handwriting: read the words from the image and spell them as "
+        "written there, not as the OCR garbled them. Omit anything you cannot read.\n"
         "OCR blocks of the page, in reading order:\n"
         "<document>\n" + "\n".join(lines) + "\n</document>"
     )

@@ -115,6 +115,12 @@ def test_env_runpod_keys_are_all_real_settings():
     assert ha_keys <= set(keys)
     assert all(f"${{{k}" in boot or f'"{k}"' in ha_cli for k in ha_keys), ha_keys
     script_only |= ha_keys
+    # E10-S9: how many instances / workers, and the balancer: read by start_apptier.sh only
+    apptier = (RUNPOD / "start_apptier.sh").read_text(encoding="utf-8")
+    app_keys = {"CDI_WEBAPP_INSTANCES", "CDI_WEBAPP_BASE_PORT", "CDI_WORKERS",
+                "CDI_WORKER_CONCURRENCY", "CDI_LB_ADMIN_PORT"}  # fmt: skip
+    assert app_keys <= set(keys) and all(f"${{{k}" in apptier for k in app_keys), app_keys
+    script_only |= app_keys
     assert keys and set(keys) - script_only <= fields, set(keys) - script_only - fields
     env = dict(ln.split("=", 1) for ln in (ROOT / ".env.runpod").read_text().splitlines()
                if ln and not ln.startswith("#"))  # fmt: skip

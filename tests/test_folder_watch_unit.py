@@ -59,6 +59,7 @@ def test_task_names_queue_and_delivery_guarantees():
         "cdi.ocr_document",
         "cdi.extract_document",
         "cdi.bind_document",
+        "cdi.web_job",  # E10-S9: a web-app job, on its own queue cdi-web
     }  # fmt: skip  (TECH_STACK §5)
     conf = worker.celery_app.conf
     assert conf.task_default_queue == "cdi" and conf.task_acks_late is True

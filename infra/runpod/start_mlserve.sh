@@ -14,6 +14,13 @@ fi
 # the vllm backend runs from its own venv (backlog E2-S1: vLLM on torch 2.8 needs transformers < 5)
 PY=$REPO/.venv/bin/python
 if [ "${CDI_MLSERVE_BACKEND:-stub}" = "vllm" ]; then PY=$REPO/.venv-vllm/bin/python; fi
+# 8-bit weights on a test host below the 24 GB bar (CDI_VLM_QUANTIZE=8bit): the pinned
+# bitsandbytes, hash-checked, never resolved
+if [ "${CDI_VLM_QUANTIZE:-}" = "8bit" ] && ! "$PY" -c "import bitsandbytes" 2>/dev/null; then
+  . "$REPO/infra/runpod/versions.env"
+  "$PY" -m pip install -q --no-deps --require-hashes -r <(
+    echo "bitsandbytes==$BITSANDBYTES_VERSION --hash=sha256:$BITSANDBYTES_SHA256")
+fi
 # Background the command itself, not a `cd && ...` list: a backgrounded list runs in a subshell that
 # keeps this script's stdout open for the server's lifetime, so a caller reading our output (a
 # notebook cell, `$(...)`, a pipe) never sees EOF and hangs.

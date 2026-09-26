@@ -6,8 +6,9 @@ the payload to ``write_extraction``, which does all the database work in one tra
 
 * **Re-extraction supersedes** — ``purge_document_facts`` clears the prior attempt first.
 * ``extraction`` row: the payload verbatim + ``evidence_map`` (bN -> ocr_block uuid) + ``_partial``.
-* Identity: a ``patient_id`` passed in by the web-app job is used; otherwise the payload's
-  ``patient`` block goes through ``resolve_identity``. Every reading is stored as an alias.
+* Identity: a ``patient_id`` passed in by the web-app job is used; otherwise a document extracted
+  again keeps the patient it was filed under; otherwise the payload's ``patient`` block goes
+  through ``resolve_identity``. Every reading is stored as an alias.
 * **Existing-patient mismatch guard** — when the job was started against a registry patient,
   the extracted name / DOB must match (``names_match``, ``dob_match``); on a mismatch this
   document's facts are purged and :class:`IdentityMismatch` is raised (the job stops).
@@ -27,7 +28,7 @@ from datetime import UTC, date, datetime, time
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Connection
+from sqlalchemy import Connection, text
 
 from cdi_adapter import metrics, repo
 from cdi_adapter.config import get_settings
@@ -115,6 +116,9 @@ def write_extraction(
     model_name: str | None = None,
     model_version: str | None = None,
 ) -> dict[str, Any]:
+    # the patient this document was already filed under (an earlier extraction of the same bytes)
+    prior = conn.execute(text("SELECT patient_id FROM source_document WHERE id = :d"),
+                         {"d": str(document_id)}).scalar_one_or_none()  # fmt: skip
     repo.purge_document_facts(conn, document_id)
     partial = is_partial(payload)
     extraction_id = repo.insert_extraction(
@@ -128,6 +132,11 @@ def write_extraction(
         repo.purge_document_facts(conn, document_id)
         raise IdentityMismatch(document_id, expected_patient, cand)
     how = "given"
+    if patient_id is None and prior is not None:
+        # the same document uploaded again stays with its patient: a name-only reading never
+        # matches (no birth year / ABHA), so it used to mint a second record for the same person
+        # every time (2026-09-25: one image, two "Rahul"s). Re-filing is an MPI merge, not this.
+        patient_id, how = prior, "document"
     if patient_id is None:
         patient_id, how = mpi.resolve_identity(conn, cand)
     if cand.name or cand.sex or cand.dob or cand.age_text:

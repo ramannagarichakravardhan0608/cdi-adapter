@@ -69,6 +69,27 @@ def test_resolve_mints_then_matches_by_abha_then_fuzzy(db_env):
         assert how == "minted" and other != pid
 
 
+def test_the_summary_shows_the_printed_age_and_never_an_estimated_birth_date(db_env):
+    """Colab, 2026-09-26: a prescription printed "25 years" only; the minted identity keeps
+    2001-01-01 for matching, and the page showed and prefilled it as the date of birth."""
+    uniq = uuid.uuid4().hex[:6]
+    with session_scope() as c:
+        aged = _cand(name=f"Aged {uniq} Rao", sex="M", age_text="25 years", birth_year=2001)
+        pid, _ = mpi.resolve_identity(c, aged)
+        mpi.add_alias(c, pid, None, aged)
+        s = mpi.patient_summary(c, pid)
+        assert str(mpi.get_patient(c, pid)["birth_date"]) == "2001-01-01"  # kept for matching
+        assert s["birth_date"] is None and s["age_text"] == "25 years" and s["name"] == aged.name
+        # a date the document printed in full is known
+        dated = _cand(name=f"Dated {uniq} Rao", dob=date(1990, 5, 17), birth_year=1990)
+        did, _ = mpi.resolve_identity(c, dated)
+        mpi.add_alias(c, did, None, dated)
+        assert str(mpi.patient_summary(c, did)["birth_date"]) == "1990-05-17"
+        # so is the registry's
+        reg = registry.ensure_identity(c, registry.lookup(c, "CFP-2025-900002"))
+        assert str(mpi.patient_summary(c, reg)["birth_date"]) == "1985-07-02"
+
+
 def test_minted_ids_are_sequential(db_env):
     with session_scope() as c:
         a, _ = mpi.resolve_identity(c, _cand(name=f"Seq {uuid.uuid4().hex[:8]}"))

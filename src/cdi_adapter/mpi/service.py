@@ -259,3 +259,27 @@ def get_patient(conn: Connection, patient_id: UUID | str) -> dict[str, Any] | No
         text("SELECT * FROM patient_identity WHERE id = :p"), {"p": patient_id}
     ).mappings().first()  # fmt: skip
     return dict(row) if row else None
+
+
+def patient_summary(conn: Connection, patient_id: UUID | str) -> dict[str, Any] | None:
+    """The identity as staff see it after an upload. ``age_text`` is the age as printed on the
+    patient's latest document that states one. ``birth_date`` is given only when it is known: a
+    document printed that full date, or the registry holds it. A minted identity with only an
+    age keeps 1 January of the estimated year for matching (``_mint``); shown or prefilled, that
+    estimate would be saved into the registry as if it were the real date of birth."""
+    row = conn.execute(
+        text(
+            "SELECT i.mpi_id, i.name, i.sex, i.identity_confidence, "
+            "  CASE WHEN EXISTS (SELECT 1 FROM patient_identity_alias a "
+            "                    WHERE a.patient_id = i.id AND a.birth_date = i.birth_date) "
+            "         OR EXISTS (SELECT 1 FROM patient_registry r "
+            "                    WHERE r.patient_id = i.mpi_id AND r.dob = i.birth_date) "
+            "       THEN i.birth_date END AS birth_date, "
+            "  (SELECT a.age_text FROM patient_identity_alias a "
+            "   WHERE a.patient_id = i.id AND a.age_text IS NOT NULL "
+            "   ORDER BY a.created_at DESC LIMIT 1) AS age_text "
+            "FROM patient_identity i WHERE i.id = :p"
+        ),
+        {"p": patient_id},
+    ).mappings().first()  # fmt: skip
+    return dict(row) if row else None

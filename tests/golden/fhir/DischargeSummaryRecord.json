@@ -293,6 +293,12 @@
             "text": "Tab Paracetamol 650 mg SOS x 5 days",
             "timing": {
               "repeat": {
+                "boundsDuration": {
+                  "code": "d",
+                  "system": "http://unitsofmeasure.org",
+                  "unit": "days",
+                  "value": 5.0
+                },
                 "frequency": 3,
                 "period": 1,
                 "periodUnit": "d"

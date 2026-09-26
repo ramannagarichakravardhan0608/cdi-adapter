@@ -7,6 +7,8 @@
 | POST /api/reviewer/items/{id}/claim|approve|reject | move / decide an item (approve promotes)  |
 | GET  /api/reviewer/items/{id}/elements          | the item's facts (current versions)         |
 | GET  /api/reviewer/items/{id}/bundle            | the generated canonical FHIR bundle         |
+| GET  /api/reviewer/items/{id}/bundle/download   | that bundle as a FHIR file (fhir+json)      |
+| GET  /api/reviewer/approved                     | the latest approved items (to download)     |
 
 Held facts inside an item are decided with the S8 endpoint (``POST /api/facts/{id}/review``).
 The reviewer is the signed-in user (backlog E7-S1): a ``reviewer`` sent by the client is ignored.
@@ -16,11 +18,12 @@ item, recorded under the admin's own name. The Customer-360 read model is backlo
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
@@ -99,11 +102,40 @@ def item_elements(item_id: UUID) -> dict[str, Any]:
         item = canon.get_item(c, item_id)
         if item is None:
             raise HTTPException(404, "review item not found")
-        return {"item": item, "elements": canon.elements(c, item_id)}
+        els = canon.elements(c, item_id)
+        for e in els:  # a medication's detail: what the page shows and its Edit form fills
+            f = e["fact"]
+            e["medication"] = None
+            if f and f["fact_type"] == "medication":
+                m = c.execute(text("SELECT * FROM medication_detail WHERE fact_id = :i"),
+                              {"i": str(f["id"])}).mappings().first()  # fmt: skip
+                e["medication"] = dict(m) if m else None
+        return {"item": item, "elements": els}
 
 
-@router.get("/api/reviewer/items/{item_id}/bundle")
-def item_bundle(item_id: UUID) -> dict[str, Any]:
+APPROVED_SHOWN = 20
+
+
+@router.get("/api/reviewer/approved")
+def approved() -> list[dict[str, Any]]:
+    """The latest approved items, newest first: an approved item leaves the worklist, and this is
+    where its FHIR bundle is downloaded from afterwards."""
+    with session_scope() as c:
+        latest: dict[Any, dict[str, Any]] = {}
+        # one line per document: its latest approval (the same document uploaded again and
+        # approved again is the newer record of it, not a second one)
+        for i in canon.list_items(c, status="approved", limit=APPROVED_SHOWN * 3):
+            latest.setdefault(i["source_document_id"] or i["id"], i)
+        items = list(latest.values())[:APPROVED_SHOWN]
+        for i in items:  # the bundle's own status: ready_to_share, or draft (validation failed)
+            i["bundle_status"] = c.execute(
+                text("SELECT status FROM cn_fhir_bundle WHERE rv_item_id = :i "
+                     "ORDER BY created_at DESC LIMIT 1"), {"i": str(i["id"])}
+            ).scalar_one_or_none()  # fmt: skip
+    return items
+
+
+def _latest_bundle(item_id: UUID) -> dict[str, Any]:
     with session_scope() as c:
         row = c.execute(text("SELECT * FROM cn_fhir_bundle WHERE rv_item_id = :i "
                              "ORDER BY created_at DESC LIMIT 1"), {"i": str(item_id)}
@@ -111,3 +143,19 @@ def item_bundle(item_id: UUID) -> dict[str, Any]:
     if row is None:
         raise HTTPException(404, "no bundle yet — approve the item first")
     return dict(row)
+
+
+@router.get("/api/reviewer/items/{item_id}/bundle")
+def item_bundle(item_id: UUID) -> dict[str, Any]:
+    return _latest_bundle(item_id)
+
+
+@router.get("/api/reviewer/items/{item_id}/bundle/download")
+def item_bundle_download(item_id: UUID) -> Response:
+    """The approved item's canonical FHIR Bundle as a file: the Bundle itself, nothing around it
+    (its status and validation stay in ``/bundle``)."""
+    row = _latest_bundle(item_id)
+    disposition = f'attachment; filename="fhir_{row["artifact_type"]}_{str(item_id)[:8]}.json"'
+    return Response(json.dumps(row["bundle"], default=str, indent=2),
+                    media_type="application/fhir+json",
+                    headers={"Content-Disposition": disposition})  # fmt: skip

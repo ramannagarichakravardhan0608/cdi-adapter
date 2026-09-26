@@ -61,9 +61,11 @@ def test_every_pin_is_exact() -> None:
 
 def test_apt_pins_cover_the_packages_the_bootstrap_needs() -> None:
     need = {"postgresql-16", "postgresql-client-16", "redis-server", "cron", "git", "curl",
-            "libgl1", "libglib2.0-0t64", "python3-venv", "autossh",
+            "libcurl4t64", "libgl1", "libglib2.0-0t64", "python3-venv", "autossh",
             "openjdk-21-jre-headless"}  # fmt: skip
     assert set(pm.apt_pins(VERSIONS)) == need
+    # curl needs its library at exactly its own version; an image with a newer one held it back
+    assert pm.apt_pins(VERSIONS)["libcurl4t64"] == pm.apt_pins(VERSIONS)["curl"]
     assert pm.apt_pins(VERSIONS)["postgresql-16"].startswith("16.")  # PostgreSQL 16 (App. B)
     assert pm.apt_pins(VERSIONS)["redis-server"].startswith("5:7.")  # Redis 7 (App. B)
 

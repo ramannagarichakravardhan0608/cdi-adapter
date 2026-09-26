@@ -36,6 +36,8 @@ def test_upload_page(client):
     assert "Intelligent OCR driven Agentic EMR generation" in r.text
     assert "type=file" in r.text and "name=sex" not in r.text  # identity is read, not typed
     assert "cdn" not in r.text.lower()
+    # the registry form lets staff type what the documents did not give (a name is required)
+    assert "id=r_name" in r.text and "id=r_gender" in r.text and "p.age_text" in r.text
 
 
 def test_healthz_reports_each_dependency(client):
@@ -108,9 +110,14 @@ def test_unknown_job_is_404(client):
     assert client.get("/api/jobs/nope/fhir").status_code == 404
 
 
-def test_end_to_end_job_needs_minio(app_env):
+def test_end_to_end_job_needs_minio(app_env, monkeypatch):
+    from cdi_adapter.config import get_settings
+    from cdi_adapter.webapp import jobstore
+
+    # this process runs the job (a pod .env says queue, and no worker runs during the tests)
+    monkeypatch.setenv("CDI_JOB_EXECUTION", "inprocess")
+    get_settings.cache_clear()
     from cdi_adapter.webapp.app import app
-    from cdi_adapter.webapp.jobs import get_runner
     from tests.helpers import make_pdf, signed_in
 
     c = signed_in(app, "admin")
@@ -118,7 +125,28 @@ def test_end_to_end_job_needs_minio(app_env):
     job_id = c.post("/api/jobs", files=[("files", ("rx.pdf", pdf, "application/pdf"))]).json()[
         "job_id"
     ]
-    get_runner().wait(job_id)
+    jobstore.wait(job_id)  # E10-S9: the job is in web_job, run by this instance
     j = c.get(f"/api/jobs/{job_id}").json()
     assert j["state"] == "review" and j["documents"][0]["status"] == "done"
+    assert j["patient"]["age_text"] == "48 Y"  # as printed ("Age/Sex: 48 Y / F")
     assert c.get(f"/api/jobs/{job_id}/fhir").json()["artifact_count"] == 1
+    # the evidence behind every fact, read back from MinIO: the page image and the scan as sent
+    doc = j["documents"][0]["document_id"]
+    facts = c.get(f"/api/jobs/{job_id}/facts").json()["documents"][0]["facts"]
+    assert facts and all(f["page_image_url"] == f"/api/documents/{doc}/pages/1" for f in facts)
+    page = c.get(f"/api/documents/{doc}/pages/1")
+    assert page.status_code == 200 and page.headers["content-type"] == "image/png"
+    assert page.content.startswith(b"\x89PNG")
+    original = c.get(f"/api/documents/{doc}/original")
+    assert original.status_code == 200 and original.content == pdf
+    assert original.headers["content-type"] == "application/pdf"
+    assert c.get(f"/api/documents/{doc}/pages/9").status_code == 404
+    counter = signed_in(app, "intake")  # the counter hands over bundles, never the evidence
+    assert counter.get(f"/api/documents/{doc}/original").status_code == 403
+    # the download is FHIR itself: this upload's document Bundle, no wrapper
+    dl = c.get(f"/api/jobs/{job_id}/fhir/download")
+    assert dl.headers["content-type"].startswith("application/fhir+json")
+    body = dl.json()
+    assert body["resourceType"] == "Bundle" and body["type"] == "document"
+    assert body["entry"][0]["resource"]["resourceType"] == "Composition"
+    assert "bundles" not in body and "held_facts" not in body

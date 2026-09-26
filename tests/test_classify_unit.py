@@ -97,3 +97,12 @@ def test_prompt_lists_11_types_and_wraps_hint():
     assert len(DOC_TYPES) == 11 and all(t in p for t in DOC_TYPES)
     assert "<document>\nhello world\n</document>" in p
     assert len(build_classification_prompt("x" * 10_000)) < 6_000  # hint is capped
+
+
+def test_only_a_confidently_ocrd_page_may_take_the_fast_path():
+    assert cs.ocr_looks_printed([0.95, 0.93, 0.97], 0.88)  # a printed page
+    assert not cs.ocr_looks_printed([0.95, 0.70, 0.75, 0.80], 0.88)  # mean 0.80: handwriting
+    assert cs.ocr_looks_printed([], 0.88)  # nothing read is not evidence of handwriting
+    from cdi_adapter.config import Settings
+
+    assert Settings(_env_file=None).fast_classify_min_ocr_conf == 0.88

@@ -29,7 +29,12 @@ class WorkflowError(Exception):
         self.status, self.detail = status, detail
 
 
-def _item(conn: Connection, item_id) -> dict[str, Any]:
+def _item(conn: Connection, item_id, *, lock: bool = False) -> dict[str, Any]:
+    if lock:
+        # a decision holds the item's row until it commits: a second approve (a double click, or
+        # the other web instance) waits, then sees "approved" and is refused. 2026-09-25: approve
+        # runs the validator for seconds, and 5 clicks promoted the same item 5 times
+        conn.execute(text("SELECT 1 FROM rv_item WHERE id = :i FOR UPDATE"), {"i": str(item_id)})
     item = canon.get_item(conn, item_id)
     if item is None:
         raise WorkflowError(404, "review item not found")
@@ -67,7 +72,7 @@ def _assert_claimed(item: dict[str, Any], reviewer: str, override: bool = False)
 
 def reject_item(conn: Connection, item_id, reviewer: str, reason: str | None, *,
                 override: bool = False) -> dict[str, Any]:  # fmt: skip
-    item = _item(conn, item_id)
+    item = _item(conn, item_id, lock=True)
     _assert_claimed(item, reviewer, override)
     conn.execute(text("UPDATE rv_item SET status = 'rejected', decided_at = now() WHERE id = :i"),
                  {"i": str(item_id)})  # fmt: skip
@@ -161,7 +166,7 @@ def _promote_fact(conn: Connection, f: dict[str, Any], item_id, reviewer: str) -
 
 def promote_review_item(conn: Connection, rv_item_id: UUID | str, reviewer: str, *,
                         override: bool = False) -> dict[str, Any]:  # fmt: skip
-    item = _item(conn, rv_item_id)
+    item = _item(conn, rv_item_id, lock=True)
     _assert_claimed(item, reviewer, override)
     els = canon.elements(conn, rv_item_id)
 

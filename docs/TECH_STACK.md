@@ -571,8 +571,8 @@ this repo today; the block IDs are in `backlog 1.md` (features) and `backlog inf
 | Carrier SIP trunk, SBC pair, voice orchestrator, ASR, fast-path + semantic cache, Qwen, TTS | Separate Voice project | Not in this repo |
 | OPD front desk: web upload | FastAPI `POST /api/jobs` | **Active** |
 | OPD front desk: WhatsApp upload | WhatsApp Business API | Planned (E15-S1) |
-| Canonical intake API: validate, persist, enqueue, ACK | FastAPI + MinIO + Postgres | Partly built: persists and ACKs today, but jobs run on an in-process pool (E9-S1, E9-S3, E1-S9) |
-| Object storage + queue | MinIO / boto3; Celery + Redis | MinIO **Active**; Celery/Redis only on the folder-watch path (E9-S1) |
+| Canonical intake API: validate, persist, enqueue, ACK | FastAPI + MinIO + Postgres | **Active** for the web upload (E10-S9): files staged in MinIO and the job in `web_job` before the 202, then queued; idempotency keys and dead-letter queues are E9-S3 |
+| Object storage + queue | MinIO / boto3; Celery + Redis | **Active**: web-app jobs on the Celery queue `cdi-web` (E10-S9, the core of E9-S1), plus the folder-watch path |
 | CDI CPU workers: preprocess + OCR | PyMuPDF, OpenCV, RapidOCR, ONNX Runtime | **Active** |
 | CDI CPU workers: extract | Deterministic/template parser | Planned (E2-S9) |
 | Confidence gate 1 | Per-field OCR/extract confidence, per-class thresholds | Planned (E2-S9, thresholds E4-S3) |

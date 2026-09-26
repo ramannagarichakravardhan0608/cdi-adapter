@@ -174,10 +174,13 @@ def test_gateway_metrics_endpoint_times_calls_and_counts_outcomes():
 # ------------------------------------------------------------------ web app exposure
 
 
-def test_web_app_metrics_are_on_a_loopback_port_and_not_on_the_staff_app():
+def test_web_app_metrics_are_on_a_loopback_port_and_not_on_the_staff_app(monkeypatch):
     import socket
 
     from cdi_adapter.webapp.app import app, start_metrics
+    from cdi_adapter.webapp.jobstore import PgJobStore
+
+    monkeypatch.setattr(PgJobStore, "metric_rows", lambda self: [])  # no database here
 
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))

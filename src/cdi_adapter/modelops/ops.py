@@ -7,6 +7,10 @@ rollout row plus an ``audit_log`` row. ``rollback`` is the one-command undo:
 - with a canary deployed: drop it; every document goes back to the primary at once
 - without one: return to the previous primary version, starting its gateway first when it no
   longer runs (``serve``), and switch only once it answers with that version
+
+A side of the rollout may be served by several replicas (backlog E10-S9): ``--url`` lists them
+comma separated, e.g. ``http://127.0.0.1:8077,http://127.0.0.1:8078``. Every check then applies to
+every replica (all must serve the version), and ``serve`` starts each replica that is not up.
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ import httpx
 
 from cdi_adapter import repo
 from cdi_adapter.db import session_scope
+from cdi_adapter.ml.client import split_urls
 from cdi_adapter.modelops import compare as cmp
 from cdi_adapter.modelops import registry, router
 from cdi_adapter.modelops.registry import RolloutError, RolloutState
@@ -35,13 +40,29 @@ Health = Callable[[str], dict[str, Any] | None]
 Launch = Callable[[dict[str, Any], str], Any]
 
 
-def gateway_health(url: str) -> dict[str, Any] | None:
+def _one_health(url: str) -> dict[str, Any] | None:
     try:
         r = httpx.get(f"{url.rstrip('/')}/healthz", timeout=5.0)
         r.raise_for_status()
         return dict(r.json())
     except (httpx.HTTPError, ValueError):
         return None
+
+
+def gateway_health(url: str) -> dict[str, Any] | None:
+    """``/healthz`` of the gateway, or of every replica of a comma-separated list: the first
+    replica's answer when they all agree on status, version, model and backend; ``None`` when
+    any replica does not answer; ``status: mixed`` when they disagree."""
+    hs = [_one_health(u) for u in split_urls(url)]
+    if any(h is None for h in hs):
+        return None
+    key = ("status", "version", "model", "backend")
+    first = hs[0]
+    assert first is not None
+    if any(tuple(h.get(k) for k in key) != tuple(first.get(k) for k in key)
+           for h in hs if h is not None):  # fmt: skip
+        return {"status": "mixed", "replicas": hs}
+    return {**first, "replicas": len(hs)}
 
 
 def serves(health: dict[str, Any] | None, version: dict[str, Any]) -> bool:
@@ -80,8 +101,13 @@ def gateway_env(version: dict[str, Any], port: int) -> dict[str, str]:
     return env
 
 
-def launch_gateway(version: dict[str, Any], url: str) -> subprocess.Popen[bytes]:
-    """Start a gateway process for ``version`` on ``url``'s loopback port, detached."""
+def launch_gateway(version: dict[str, Any], url: str) -> list[subprocess.Popen[bytes]]:
+    """Start a gateway process for ``version`` on the loopback port of each replica in ``url``
+    that does not answer yet, detached."""
+    return [_launch_one(version, u) for u in split_urls(url) if _one_health(u) is None]
+
+
+def _launch_one(version: dict[str, Any], url: str) -> subprocess.Popen[bytes]:
     port = _loopback_port(url)
     py = sys.executable
     vllm_py = ROOT / ".venv-vllm" / "bin" / "python"
@@ -167,7 +193,7 @@ def canary(version: str, url: str, percent: int, *, actor: str, reason: str | No
         if st.canary_version is not None and st.canary_version != version:
             raise RolloutError(f"{st.canary_version} is already the canary: `promote` or "
                                "`rollback` it first")  # fmt: skip
-        if url.rstrip("/") == st.primary_url:
+        if ",".join(split_urls(url)) == st.primary_url:
             raise RolloutError("the canary needs its own gateway, not the primary's")
         v = _version(conn, version)
         _require_serving(url, v, health)

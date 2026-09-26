@@ -7,6 +7,12 @@ classifier falls back to a one-off RapidOCR hint, §5 S2), then OCR runs with th
 classification picks.
 
     celery -A cdi_adapter.worker.celery_app worker -Q cdi
+
+It also runs the web app's jobs (backlog E10-S9, the core of E9-S1): task ``cdi.web_job`` on queue
+``cdi-web``, started by ``infra/runpod/start_worker.sh`` as a *threads* pool, so all of a worker's
+jobs share one runner and its GPU extraction slots (E2-S2)::
+
+    celery -A cdi_adapter.worker.celery_app worker -Q cdi-web --pool threads --concurrency <n>
 """
 
 from __future__ import annotations
@@ -14,7 +20,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from celery import Celery, chain
+from celery import Celery, chain, signals
 
 from cdi_adapter.config import get_settings
 from cdi_adapter.logging import get_logger
@@ -31,6 +37,7 @@ celery_app.conf.update(
     task_serializer="json",
     result_serializer="json",
     accept_content=["json"],
+    task_routes={"cdi.web_job": {"queue": "cdi-web"}},
 )
 
 MAX_RETRIES = 3
@@ -117,3 +124,38 @@ def submit_document(document_id: str):
     """Queue an already-ingested document (the ingest API) through the rest of the pipeline."""
     return chain(classify_document.s(document_id), ocr_document.s(), extract_document.s(),
                  bind_document.s()).apply_async()  # fmt: skip
+
+
+# ------------------------------------------------------------------ web-app jobs (E10-S9)
+
+
+@celery_app.task(name="cdi.web_job", acks_late=True, ignore_result=True)
+def web_job(job_id: str) -> str:
+    """Run (or resume) one stored web-app job to its end. The message only says "run this job":
+    the job itself is the ``web_job`` row plus its staged uploads, and the claim decides who runs
+    it, so a duplicated or redelivered message is a no-op and a lost one is covered by the sweep."""
+    from cdi_adapter.webapp.jobs import get_runner
+
+    return get_runner().run_stored(job_id)
+
+
+@signals.worker_init.connect
+def _start_web_runner(sender: Any = None, **_: Any) -> None:
+    """A worker that consumes ``cdi-web`` starts its runner with the lease heartbeat and the
+    orphan sweep at once (not on its first task), plus its tracing and ``/metrics`` port."""
+    queues = getattr(getattr(getattr(sender, "app", None), "amqp", None), "queues", None)
+    if queues is None or "cdi-web" not in (queues.consume_from or {}):
+        return
+    from cdi_adapter import tracing
+    from cdi_adapter.logging import configure
+    from cdi_adapter.webapp.jobs import get_runner
+
+    configure()
+    tracing.setup_from_settings(tracing.WORKER)
+    port = get_settings().worker_metrics_port
+    if port:
+        from prometheus_client import start_http_server
+
+        start_http_server(port, addr="127.0.0.1")
+    runner = get_runner()
+    log.info("web_runner_started", runner=runner.owner, slots=runner.extract_slots)

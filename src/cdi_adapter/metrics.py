@@ -91,6 +91,10 @@ MODEL_EXTRACTIONS = Counter("cdi_model_extractions_total", "S4 extractions per s
 CANARY_FALLBACKS = Counter("cdi_model_canary_fallbacks_total",
                            "Failed canary calls sent to the primary instead")  # fmt: skip
 CANARY_PERCENT = Gauge("cdi_model_canary_percent", "Share of documents routed to the canary (%)")
+# E10-S9: a job taken over after its runner died (lease ran out), and gateway replica failover
+JOB_RESUMES = Counter("cdi_job_resumes_total", "Stored jobs resumed by another run")
+MLSERVE_FAILOVERS = Counter("cdi_mlserve_failovers_total",
+                            "Model gateway calls moved to another replica")  # fmt: skip
 
 # every label value is known up front, so each series exists (at 0) from the first scrape
 for _s in STAGES:
@@ -145,9 +149,11 @@ def fact_type_label(fact_type: str | None) -> str:
 
 
 class JobsCollector(Collector):
-    """``cdi_jobs{state}`` from the web app's in-memory job runner (E9-S1 makes it durable), and
-    ``cdi_job_oldest_running_seconds``: a job breaching the SLA shows while it is still running,
-    not only once it ends (E10-S2)."""
+    """``cdi_jobs{state}`` and ``cdi_job_oldest_running_seconds``: a job breaching the SLA shows
+    while it is still running, not only once it ends (E10-S2). Since E10-S9 read from ``web_job``
+    (unfinished jobs + the last day's), so every web-app instance reports the same numbers, plus
+    ``cdi_jobs_orphaned``: unfinished jobs whose runner's lease ran out (none alive to take them
+    over when it stays above zero). A failed read yields nothing rather than wrong numbers."""
 
     STATES = ("running", "review", "mismatch", "error")
 
@@ -155,19 +161,28 @@ class JobsCollector(Collector):
         self._jobs, self._clock = jobs, clock
 
     def collect(self) -> Iterator[GaugeMetricFamily]:
+        try:
+            jobs = list(self._jobs())
+        except Exception:  # noqa: BLE001 - never break the scrape; absent, not zero
+            return
         g = GaugeMetricFamily("cdi_jobs", "Web-app jobs by state", labels=["state"])
         counts = dict.fromkeys(self.STATES, 0)
         oldest = 0.0
+        orphaned = 0
         now = self._clock()
-        for job in list(self._jobs()):
+        for job in jobs:
             counts[job.state] = counts.get(job.state, 0) + 1
             if job.state == "running":
                 oldest = max(oldest, now - job.started_at)
+            orphaned += int(bool(getattr(job, "orphaned", False)))
         for state, n in counts.items():
             g.add_metric([state], n)
         yield g
         yield GaugeMetricFamily("cdi_job_oldest_running_seconds",
                                 "Age of the oldest job still running", value=oldest)  # fmt: skip
+        yield GaugeMetricFamily(
+            "cdi_jobs_orphaned", "Unfinished jobs whose runner's lease ran out", value=orphaned
+        )
 
 
 BACKLOG_SQL = (

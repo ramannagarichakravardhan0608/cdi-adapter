@@ -11,7 +11,16 @@
   chosen on the form arms the mismatch guard: a document for someone else stops the job with
   ``state = mismatch`` and its facts purged.
 
-Job state is in memory (``_jobs``); moving it onto the durable queue is backlog E9-S1.
+**Durable jobs (backlog E10-S9, with the core of E9-S1).** A runner built with a
+:class:`JobStore` (``webapp.jobstore.PgJobStore``: the ``web_job`` table + the staged uploads) runs
+*stored* jobs: :meth:`JobRunner.run_stored` claims a job with a lease, saves the job at every step
+boundary, and renews the lease from a background thread while it runs. A runner that dies stops
+renewing; once the lease runs out, any other runner's sweep claims the job and resumes it:
+documents that finished stay as they are, a document past extraction continues from there, and
+any other document runs again from its staged upload (ingest is idempotent by SHA-256; OCR and
+extraction replace their earlier output). A runner that finds its lease taken over stops at its
+next step boundary (:class:`LeaseLost`), so two runners never both finish a job. Without a
+store (unit tests) jobs live only in ``_jobs``, as before.
 """
 
 from __future__ import annotations
@@ -22,7 +31,7 @@ import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from cdi_adapter import metrics, tracing
 from cdi_adapter.config import Settings, get_settings
@@ -31,6 +40,13 @@ from cdi_adapter.logging import get_logger
 log = get_logger(__name__)
 
 STEPS = ("ingest", "ocr", "classify", "extract", "terminology", "validate")
+UNFINISHED = ("pending", "running")
+
+
+class LeaseLost(BaseException):  # noqa: N818 - a signal, not an error
+    """This runner's lease on a job ran out and another runner claimed it (E10-S9). A
+    BaseException on purpose: the per-document ``except Exception`` handlers must not turn it
+    into a document error; it unwinds the whole run, which then writes nothing more."""
 
 
 def extract_slots(settings: Settings | None = None) -> int:
@@ -145,9 +161,22 @@ class Job:
     # projection are spans of this one trace
     span: Any = field(default=None, repr=False)
     trace_id: str | None = None
+    # the upload's span (E10-S9): a stored job's run, in another process, continues its trace
+    span_id: str | None = field(default=None, repr=False)
+    attempts: int = field(default=0, repr=False)  # runs started so far (stored jobs)
     # set when the job's run has fully ended: a mismatch changes `state` while other documents
     # may still be extracting, so `state` alone does not mean "finished"
     finished: threading.Event = field(default_factory=threading.Event, repr=False)
+    # a save is a snapshot of the whole job: one at a time, so a later snapshot is never
+    # overwritten by an earlier one (E10-S9)
+    save_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
+
+    def trace_parent(self) -> Any:
+        """The span a later request continues (the FHIR projection, E10-S3): the run's own span
+        in this process, else the stored upload span."""
+        if self.span is not None:
+            return self.span.get_span_context()
+        return tracing.context_from_ids(self.trace_id, self.span_id)
 
     def as_json(self) -> dict[str, Any]:
         return {"job_id": self.id, "state": self.state, "patient_id": self.patient_id,
@@ -155,11 +184,43 @@ class Job:
                 "documents": [d.__dict__ for d in self.docs]}  # fmt: skip
 
 
+class JobStore(Protocol):
+    """Where stored jobs live (E10-S9); ``webapp.jobstore.PgJobStore`` in production."""
+
+    def claim(self, job_id: str, owner: str, lease_s: float) -> Job | None:
+        """Take the job if it is unfinished and nobody holds a live lease; attempts + 1."""
+
+    def save(self, job: Job, owner: str) -> bool:
+        """Write the job; False when ``owner`` no longer holds its lease."""
+
+    def finish(self, job: Job, owner: str) -> None:
+        """Write the final state, release the lease and drop the staged uploads."""
+
+    def files(self, job: Job, indices: list[int]) -> dict[int, tuple[str, bytes, str | None]]:
+        """The staged uploads of those documents; a missing one is left out."""
+
+    def release(self, job_id: str, owner: str) -> None:
+        """Give the lease up at once (the run could not start), so a sweep retries the job."""
+
+    def heartbeat(self, owner: str, lease_s: float) -> int:
+        """Renew every lease ``owner`` holds on an unfinished job."""
+
+    def orphans(self, unclaimed_s: float, limit: int) -> list[str]:
+        """Unfinished jobs whose lease ran out, or never claimed ``unclaimed_s`` after upload."""
+
+
 class JobRunner:
     def __init__(self, stages: Stages | None = None, max_workers: int | None = None,
                  extract_concurrency: int | None = None, batch_max: int | None = None,
-                 batch_max_blocks: int | None = None) -> None:  # fmt: skip
+                 batch_max_blocks: int | None = None, *, store: JobStore | None = None,
+                 owner: str | None = None) -> None:  # fmt: skip
         self.stages = stages or Stages.real()
+        # E10-S9: stored jobs, claimed under this owner's lease
+        self.store = store
+        self.owner = owner or f"runner-{uuid.uuid4().hex[:12]}"
+        self._starting: set[str] = set()  # stored jobs handed to the pool, not claimed yet
+        self._bg: threading.Thread | None = None
+        self._stop = threading.Event()
         # E2-S8: up to batch_max short documents of one doc_type share one model call (1 = off)
         self.batch_max = batch_max or get_settings().extract_batch_max
         self.batch_max_blocks = batch_max_blocks or get_settings().extract_batch_max_blocks
@@ -186,8 +247,105 @@ class JobRunner:
         job.span = tracing.start_job(job.id)
         job.trace_id = tracing.ids(job.span).get("trace_id")
         self._jobs[job.id] = job
-        self._job_pool.submit(self._run, job, files)
+        self._job_pool.submit(self._run, job, list(files))
         return job
+
+    # ---------------------------------------------------------------- stored jobs (E10-S9)
+
+    def run_stored(self, job_id: str) -> str:
+        """Claim the stored job and run (or resume) it to its end, in this thread. Returns the
+        final state, or ``not_claimed`` when it is finished or another runner holds it."""
+        assert self.store is not None, "run_stored needs a JobStore"
+        s = get_settings()
+        try:
+            job = self.store.claim(job_id, self.owner, s.job_lease_s)
+        finally:
+            self._starting.discard(job_id)
+        if job is None:
+            return "not_claimed"
+        self._jobs[job.id] = job
+        if job.attempts > 1:
+            metrics.JOB_RESUMES.inc()
+            log.warning("job_resumed", job=job.id, attempt=job.attempts, runner=self.owner)
+        if job.attempts > s.job_max_attempts:  # it kept killing its runner: stop retrying it
+            for d in job.docs:
+                if d.status in UNFINISHED:
+                    d.status, d.step = "error", None
+                    d.error = f"gave up after {s.job_max_attempts} attempts"
+            job.state = "error"
+            log.error("job_gave_up", job=job.id, attempts=job.attempts)
+            self._finish(job)
+            job.finished.set()
+            return job.state
+        todo = [i for i, d in enumerate(job.docs)
+                if d.status in UNFINISHED and "extract" not in d.steps_done]  # fmt: skip
+        try:
+            staged = self.store.files(job, todo)
+        except Exception:  # the object store is down: let a later sweep retry the job
+            self.store.release(job.id, self.owner)
+            self._jobs.pop(job.id, None)
+            raise
+        files = [staged.get(i) for i in range(len(job.docs))]
+        job.span = tracing.start_job(
+            job.id, parent=tracing.context_from_ids(job.trace_id, job.span_id)
+        )
+        self._run(job, files)
+        return job.state
+
+    def submit_stored(self, job_id: str) -> None:
+        """Run the stored job on this runner's pool (in-process execution; the sweep)."""
+        if job_id in self._starting:
+            return
+        self._starting.add(job_id)
+        self._job_pool.submit(self._run_stored_logged, job_id)
+
+    def _run_stored_logged(self, job_id: str) -> None:
+        try:
+            self.run_stored(job_id)
+        except Exception as exc:  # a pool thread: nobody reads the future
+            log.error("job_run_failed", job=job_id, error=f"{type(exc).__name__}: {exc}")
+
+    def sweep(self) -> list[str]:
+        """Claim-and-run every orphaned stored job (its runner died, or its queue message was
+        lost). Any runner may do this: the claim decides who gets each job."""
+        assert self.store is not None
+        s = get_settings()
+        ids = [j for j in self.store.orphans(s.job_unclaimed_s, limit=20)
+               if j not in self._starting]  # fmt: skip
+        for job_id in ids:
+            log.warning("job_orphan_claiming", job=job_id, runner=self.owner)
+            self.submit_stored(job_id)
+        return ids
+
+    def start_background(self) -> None:
+        """The lease heartbeat + the orphan sweep, every third of a lease, in a daemon thread."""
+        if self.store is None or self._bg is not None:
+            return
+
+        def loop() -> None:
+            store = self.store
+            assert store is not None
+            while not self._stop.wait(get_settings().job_lease_s / 3):
+                try:
+                    store.heartbeat(self.owner, get_settings().job_lease_s)
+                    self.sweep()
+                except Exception as exc:  # noqa: BLE001 - the database may be failing over
+                    log.warning("job_heartbeat_failed", runner=self.owner, error=str(exc))
+
+        self._bg = threading.Thread(target=loop, name="job-lease", daemon=True)
+        self._bg.start()
+
+    def stop_background(self) -> None:
+        self._stop.set()
+
+    def _save(self, job: Job) -> None:
+        """Write the job to the store (no-op without one). Raises :class:`LeaseLost` when another
+        runner has taken the job over."""
+        if self.store is None:
+            return
+        with job.save_lock:
+            if not self.store.save(job, self.owner):
+                raise LeaseLost(job.id)
 
     def wait(self, job_id: str, timeout: float = 600) -> Job:
         """Block until the job's run has fully ended (every document done, skipped or failed)."""
@@ -198,16 +356,21 @@ class JobRunner:
 
     # ---------------------------------------------------------------- pipeline
 
-    def _phase1(self, job: Job, i: int, raw: bytes, filename: str, mime: str | None) -> None:
+    def _phase1(self, job: Job, i: int, raw: bytes | None, filename: str,
+                mime: str | None) -> None:  # fmt: skip
         d, s = job.docs[i], self.stages
         d.status = "running"
         try:
+            if raw is None:  # a stored job whose staged upload is gone
+                raise FileNotFoundError("the staged upload is missing")
             d.step = "ingest"
+            self._save(job)
             with metrics.stage("ingest"):
                 res = s.ingest(raw, filename, mime, patient_id=job.patient_id)
             d.document_id = str(res.document_id)
             d.steps_done.append("ingest")
             d.step = "ocr"
+            self._save(job)
             with metrics.stage("ocr", d.document_id):
                 s.ocr(d.document_id, force_engine="rapidocr")
             d.steps_done.append("ocr")
@@ -223,6 +386,7 @@ class JobRunner:
         except Exception as exc:  # one bad document never sinks the job
             d.status, d.error = "error", f"{type(exc).__name__}: {exc}"
             log.error("job_doc_failed", job=job.id, filename=filename, error=d.error)
+        self._save(job)
 
     def _groups(self, docs: list[DocState]) -> list[list[DocState]]:
         """E2-S8: short documents (one page, at most ``batch_max_blocks`` OCR blocks) of the same
@@ -262,9 +426,11 @@ class JobRunner:
             for d in group:
                 d.status, d.step = "skipped", None
             self._dequeue(job, len(group))
+            self._save(job)
             return
         for d in group:
             d.step = "extract"
+        self._save(job)
         s = self.stages
         extract_batch = s.extract_batch
         assert extract_batch is not None
@@ -294,8 +460,10 @@ class JobRunner:
         if stopped:
             d.status, d.step = "skipped", None
             self._dequeue(job, 1)
+            self._save(job)
             return
         d.step = "extract"
+        self._save(job)
         out: Any
         try:  # the only GPU-bound step
             out = self._with_slot(job, 1, lambda: self._timed_extract(job, d))
@@ -328,7 +496,6 @@ class JobRunner:
         """The rest of Phase 2 for one document, given its extraction result or exception."""
         from cdi_adapter.extract.service import IdentityMismatch
 
-        s = self.stages
         try:
             if isinstance(out, Exception):
                 raise out
@@ -338,18 +505,8 @@ class JobRunner:
             d.steps_done.append("extract")
             if out.get("skipped"):
                 d.status, d.step = "skipped", None
+                self._save(job)
                 return
-            d.step = "terminology"
-            with metrics.stage("terminology", d.document_id):
-                s.terminology(d.document_id)
-            d.steps_done.append("terminology")
-            d.step = "validate"
-            with metrics.stage("validate", d.document_id):
-                s.validate(d.document_id)
-            d.steps_done.append("validate")
-            s.enqueue(str(d.document_id), job.id)
-            d.__dict__.update(s.counts(str(d.document_id)))
-            d.status, d.step = "done", None
         except IdentityMismatch as exc:
             d.status, d.step = "mismatch", None
             with job.lock:
@@ -357,23 +514,72 @@ class JobRunner:
                 job.mismatch = {"filename": d.filename,
                                "selected": (job.registry_patient or {}).get("name"),
                                "document_name": exc.found.name}  # fmt: skip
+            self._save(job)
+            return
         except Exception as exc:
             d.status, d.error = "error", f"{type(exc).__name__}: {exc}"
             log.error("job_doc_failed", job=job.id, filename=d.filename, error=d.error)
+            self._save(job)
+            return
+        self._save(job)  # extracted, and the job's patient fixed: a resumed run starts after this
+        self._post_extract(job, d)
+
+    def _post_extract(self, job: Job, d: DocState) -> None:
+        """terminology -> validate -> the workbasket. A step already in ``steps_done`` (a resumed
+        run, E10-S9) is not repeated; filing for review is idempotent per document."""
+        s = self.stages
+        try:
+            for step, fn in (("terminology", s.terminology), ("validate", s.validate)):
+                if step in d.steps_done:
+                    continue
+                d.step = step
+                with metrics.stage(step, d.document_id):
+                    fn(d.document_id)
+                d.steps_done.append(step)
+            self._save(job)
+            s.enqueue(str(d.document_id), job.id)
+            d.__dict__.update(s.counts(str(d.document_id)))
+            d.status, d.step = "done", None
+        except Exception as exc:
+            d.status, d.error = "error", f"{type(exc).__name__}: {exc}"
+            log.error("job_doc_failed", job=job.id, filename=d.filename, error=d.error)
+        self._save(job)
+
+    def _resume(self, job: Job) -> list[int]:
+        """The documents to run from the start: all of them for a new job. A resumed stored job
+        (E10-S9) keeps its finished documents, takes a document past extraction on from there,
+        and starts every other unfinished document again from its staged upload."""
+        redo = []
+        for i, d in enumerate(job.docs):
+            if d.status not in UNFINISHED:
+                continue
+            if "extract" in d.steps_done:
+                d.status = "running"
+                self._post_extract(job, d)
+            else:
+                job.docs[i] = DocState(filename=d.filename)
+                redo.append(i)
+        return redo
 
     def _in_job(self, job: Job, fn: Callable[..., Any], *args: Any) -> Any:
         """Run ``fn`` in a pool thread inside the job's trace (threads do not inherit it)."""
         with tracing.attached(job.span):
             return fn(*args)
 
-    def _run(self, job: Job, files: list[tuple[str, bytes, str | None]]) -> None:
+    def _run(self, job: Job, files: list[tuple[str, bytes, str | None] | None]) -> None:
         with tracing.attached(job.span):
             self._run_traced(job, files)
 
-    def _run_traced(self, job: Job, files: list[tuple[str, bytes, str | None]]) -> None:
+    def _phase1_file(self, job: Job, i: int, f: tuple[str, bytes, str | None] | None) -> None:
+        name, raw, mime = f if f is not None else (job.docs[i].filename, None, None)
+        self._phase1(job, i, raw, name, mime)
+
+    def _run_traced(self, job: Job, files: list[tuple[str, bytes, str | None] | None]) -> None:
+        lost = False
         try:
-            futures = [self._pool.submit(self._in_job, job, self._phase1, job, i, raw, name, mime)
-                       for i, (name, raw, mime) in enumerate(files)]  # fmt: skip
+            redo = self._resume(job)
+            futures = [self._pool.submit(self._in_job, job, self._phase1_file, job, i, files[i])
+                       for i in redo]  # fmt: skip
             for f in futures:
                 f.result()
             ready = [d for d in job.docs if d.status == "running"]
@@ -392,17 +598,31 @@ class JobRunner:
                 self.stages.merge_identity(job.patient_id)
             if job.state == "running":
                 job.state = "review"
+        except LeaseLost:  # another runner took the job over: it finishes the job, not this one
+            lost = True
+            log.warning("job_lease_lost", job=job.id, runner=self.owner)
         except Exception as exc:  # pragma: no cover - defensive
             job.state = "error"
             log.error("job_failed", job=job.id, error=str(exc))
         finally:
             self._dequeue(job, job.extract_queued)  # nothing of this job is left waiting
-            metrics.JOB_SECONDS.observe(time.time() - job.started_at)
             if job.span is not None:
                 job.span.set_attribute("cdi.job_state", job.state)
                 job.span.end()
+            if not lost:
+                metrics.JOB_SECONDS.observe(time.time() - job.started_at)
+                self._finish(job)
             job.finished.set()
-        log.info("job_finished", job=job.id, state=job.state)
+        log.info("job_finished", job=job.id, state=job.state, lease_lost=lost)
+
+    def _finish(self, job: Job) -> None:
+        if self.store is None:
+            return
+        try:
+            with job.save_lock:
+                self.store.finish(job, self.owner)
+        except Exception as exc:  # noqa: BLE001 - the lease runs out; a sweep finishes it again
+            log.error("job_finish_failed", job=job.id, error=str(exc))
 
     @staticmethod
     def _queue(job: Job, n: int) -> None:
@@ -421,13 +641,13 @@ class JobRunner:
 _runner: JobRunner | None = None
 
 
-def all_jobs() -> list[Job]:
-    """Every job of this process, without starting a runner (read by ``/metrics``, E10-S1)."""
-    return list(_runner._jobs.values()) if _runner is not None else []
-
-
 def get_runner() -> JobRunner:
+    """This process's runner of stored jobs (E10-S9): the ``web_job`` table + staged uploads,
+    with its lease heartbeat and orphan sweep running."""
     global _runner
     if _runner is None:
-        _runner = JobRunner()
+        from cdi_adapter.webapp.jobstore import OWNER, PgJobStore
+
+        _runner = JobRunner(store=PgJobStore(), owner=OWNER)
+        _runner.start_background()
     return _runner

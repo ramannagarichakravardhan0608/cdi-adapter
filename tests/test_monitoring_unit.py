@@ -42,6 +42,8 @@ ALERTS = (
     "CdiBackupStale",
     "CdiRestoreDrillFailed",
     "CdiRestoreDrillOverdue",
+    "CdiWebappInstanceDown",
+    "CdiJobsOrphaned",
 )
 
 
@@ -83,7 +85,8 @@ def test_exactly_the_alerts_of_the_blocks():
                    "CdiConfidenceDrift": "ticket", "CdiPgReplicationLag": "page",
                    "CdiPgStandbyDisconnected": "ticket", "CdiMinioDegraded": "ticket",
                    "CdiBackupStale": "page", "CdiRestoreDrillFailed": "page",
-                   "CdiRestoreDrillOverdue": "ticket"}  # fmt: skip
+                   "CdiRestoreDrillOverdue": "ticket", "CdiWebappInstanceDown": "ticket",
+                   "CdiJobsOrphaned": "page"}  # fmt: skip
 
 
 def test_the_sla_rule_uses_the_adr_0002_window():
@@ -141,7 +144,7 @@ def test_promtool_checks_the_rules():
         pytest.skip("promtool not here (pod / Colab: set CDI_PROMTOOL)")
     r = subprocess.run([tool, "check", "rules", str(RULES)], capture_output=True, text=True)
     assert r.returncode == 0, r.stdout + r.stderr
-    assert "11 rules found" in r.stdout
+    assert f"{len(ALERTS)} rules found" in r.stdout
 
 
 def test_promtool_fires_each_alert_on_its_synthetic_trigger():
@@ -177,10 +180,14 @@ def test_the_dashboard_is_provisioned_against_the_local_prometheus():
 
 def test_prometheus_scrapes_both_processes_and_alerts_via_alertmanager():
     cfg = yaml.safe_load((MON / "prometheus.yml").read_text(encoding="utf-8"))
-    targets = {c["job_name"]: c["static_configs"][0]["targets"] for c in cfg["scrape_configs"]}
-    assert targets["cdi-webapp"] == ["127.0.0.1:9464"] and targets["cdi-mlserve"] == [
-        "127.0.0.1:8077"
-    ]
+    targets = {c["job_name"]: c["static_configs"][0]["targets"] for c in cfg["scrape_configs"]
+               if "static_configs" in c}  # fmt: skip
+    assert targets["cdi-mlserve"] == ["127.0.0.1:8077"]
+    # E10-S9: every instance / worker, from the target files start_apptier.sh writes
+    sd = {c["job_name"]: c["file_sd_configs"][0]["files"] for c in cfg["scrape_configs"]
+          if "file_sd_configs" in c}  # fmt: skip
+    assert sd == {"cdi-webapp": ["/workspace/monitoring/targets/cdi-webapp.json"],
+                  "cdi-worker": ["/workspace/monitoring/targets/cdi-worker.json"]}  # fmt: skip
     assert cfg["rule_files"] == ["rules/cdi-alerts.yml"]
     assert cfg["alerting"]["alertmanagers"][0]["static_configs"][0]["targets"] == ["127.0.0.1:9093"]
     am = yaml.safe_load((MON / "alertmanager.yml").read_text(encoding="utf-8"))

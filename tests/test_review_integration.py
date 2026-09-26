@@ -121,7 +121,8 @@ def test_correct_supersedes_and_reject_closes_the_task(client):
     meds = [e["resource"] for e in out["bundle"]["entry"]
             if e["resource"]["resourceType"] == "MedicationRequest"]  # fmt: skip
     assert out["status"] == "ready_to_share"
-    assert [m["medicationCodeableConcept"]["text"] for m in meds] == ["Metformin"]
+    # the reviewer's corrected strength shows in the prescribed medicine (2026-09-25)
+    assert [m["medicationCodeableConcept"]["text"] for m in meds] == ["Metformin 5000 mg"]
 
 
 @pytest.mark.parametrize(
@@ -191,7 +192,8 @@ def test_job_generate_edits_are_signed_by_the_session_user(client):
     """The Generate EMR edits (keep / drop / correct) are clinical decisions too (§7.2)."""
     import uuid
 
-    from cdi_adapter.webapp.jobs import DocState, Job, get_runner
+    from cdi_adapter.webapp.jobs import DocState, Job
+    from cdi_adapter.webapp.jobstore import PgJobStore
 
     doc = _held_doc()
     with session_scope() as c:
@@ -199,7 +201,10 @@ def test_job_generate_edits_are_signed_by_the_session_user(client):
     fid, patient = str(facts[0]["id"]), str(facts[0]["patient_id"])
     job = Job(id=uuid.uuid4().hex, docs=[DocState(filename="rx.pdf", document_id=doc)],
               state="review", patient_id=patient)  # fmt: skip
-    get_runner()._jobs[job.id] = job
+    st = PgJobStore()  # E10-S9: jobs live in web_job; this one has finished at review
+    st.insert(job, [], actor="counter1", accepted_by="test")
+    st.claim(job.id, "test", 30)
+    st.finish(job, "test")
     edits = [{"fact_id": fid, "action": "keep", "corrections": {"local_text": "Tab X 1 mg"}}]
     r = client.post(f"/api/jobs/{job.id}/generate",
                     json={"edits": edits, "reviewer": "dr.mallory"})  # fmt: skip

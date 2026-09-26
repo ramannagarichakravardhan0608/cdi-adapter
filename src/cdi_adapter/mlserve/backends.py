@@ -9,6 +9,10 @@
 * ``hf`` — transformers ``AutoModelForImageTextToText`` running Qwen2.5-VL-7B in bf16 with sdpa
   attention and a ``max_pixels`` cap (VRAM bound). Lazy-loads on the first request (~35 s on the
   pod) and falls back 7B -> 3B on CUDA out-of-memory. One forward pass at a time (a lock).
+  ``hf`` cannot lock decoding to a grammar (that is ``vllm``, E2-S3), so a request's
+  ``json_schema`` is shown to the model instead: :func:`with_schema` appends the schema's exact
+  key layout to the prompt. Without it the model invents its own key names and wrappers, and the
+  schema check then throws correctly read values away.
 """
 
 from __future__ import annotations
@@ -37,6 +41,93 @@ class GenItem:
     image_png: bytes | None = None
     max_tokens: int = 1024
     json_schema: dict[str, Any] | None = None
+
+
+def _branch(node: dict[str, Any]) -> dict[str, Any]:
+    """The object branch of an ``anyOf`` (else its first branch); the node itself otherwise."""
+    alts = node.get("anyOf")
+    if not alts:
+        return node
+    return next((a for a in alts if a.get("type") == "object"), alts[0])
+
+
+# what to write in a field, where the key name alone invites a guess (round 2 of the 2026-09-25
+# check: with bare types the 7B split "1-0-1" into a numeric dose plus a shifted frequency, and
+# "110/70" into value 110 + unit "/70 mmHg")
+# Round 3: dose and route get NO example: with "e.g. 1 tab" / "e.g. oral" the model wrote
+# dose "1 tab" and route "oral" onto medicines whose line says neither (a guess, §5 S6).
+_HINTS = {
+    "strength": "as written, e.g. 500 mg",
+    "dose": "only if a dose is written on the page",
+    "frequency": "as written, e.g. 1-0-1, BD, OD, SOS",
+    "route": "only if a route is written on the page",
+    "duration": "as written, e.g. 30 days",
+    "instructions": "as written, e.g. after food",
+    "value": "as written, e.g. 138/86 or 72",
+    "unit": "as written, e.g. mmHg",
+    "encounter_date": "as written",
+}
+
+
+def _is_quantity(node: dict[str, Any]) -> bool:
+    """A value the schema also accepts as plain text (``"500 mg"``, ``"138/86"``): shown as
+    text, so the model copies it as written instead of splitting it into number + unit."""
+    alts = node.get("anyOf") or []
+    obj = next((a for a in alts if a.get("type") == "object"), None)
+    plain = any("string" in (a.get("type") if isinstance(a.get("type"), list)
+                             else [a.get("type")]) for a in alts)  # fmt: skip
+    return bool(obj and plain and "value" in obj.get("properties", {}))
+
+
+def _shape(node: dict[str, Any], depth: int = 0, key: str | None = None) -> Any:
+    if _is_quantity(node):
+        return _HINTS.get(key or "", "text, as written")
+    node = _branch(node)
+    t = node.get("type")
+    types = set(t) if isinstance(t, list) else {t}
+    if "object" in types and node.get("properties"):
+        if depth > 3:
+            return {}
+        props = node["properties"]
+        if "text" in props and "code" in props:  # coded text: the model copies the words; the
+            props = {k: v for k, v in props.items()  # codes come from S5, never from the model
+                     if k in ("text", "evidence", "confidence")}  # fmt: skip
+        return {k: _shape(v, depth + 1, k) for k, v in props.items()}
+    if "array" in types:
+        if key == "evidence":
+            return ["b3"]
+        return [_shape(node.get("items") or {}, depth + 1)]
+    if "enum" in node:
+        return " | ".join(str(e) for e in node["enum"])
+    if key == "confidence":
+        return "number 0-1"
+    if types & {"number", "integer"}:
+        return "number"
+    return _HINTS.get(key or "", "text")
+
+
+def schema_outline(json_schema: dict[str, Any]) -> str:
+    """The key layout of a (bundled, ``$ref``-free) JSON schema as a JSON skeleton, e.g.
+    ``{"medications": [{"drug_name": "text", ...}], "confidence": "number"}``."""
+    return json.dumps(_shape(json_schema), separators=(", ", ": "))
+
+
+def with_schema(prompt: str, json_schema: dict[str, Any] | None) -> str:
+    """The prompt plus the schema's exact keys, for a backend that cannot enforce the schema."""
+    if not json_schema or not json_schema.get("properties"):
+        return prompt
+    required = ", ".join(json_schema.get("required", [])) or "none"
+    return (
+        f"{prompt}\n\n"
+        "Answer with ONE JSON object in exactly this shape. Use these key names exactly: do not "
+        "rename them and do not wrap the object in another key. Fill EVERY key whose "
+        "information is on the page, not only the required ones; leave out only keys with "
+        "nothing on the page. Copy each value exactly as written and never split one written "
+        "value across two keys. Never add a value that is not written on the page, even one "
+        "that is usually true. A list holds one item per entry on the page (every medicine "
+        f"is its own item). Always include: {required}.\n"
+        f"{schema_outline(json_schema)}"
+    )
 
 
 class Backend:
@@ -355,18 +446,30 @@ def _revision(model_id: str, settings: Settings) -> str | None:
     return (settings.vlm_model_revision or None) if model_id == settings.vlm_model_id else None
 
 
-def _default_loader(model_id: str, settings: Settings):  # pragma: no cover - needs a GPU pod
+def _load_kwargs(model_id: str, settings: Settings) -> dict[str, Any]:
+    """``from_pretrained`` arguments: bf16 + sdpa on the GPU; with ``vlm_quantize="8bit"`` the
+    linear layers are stored as int8 (bitsandbytes LLM.int8), the rest stays bf16."""
     import torch
+
+    kwargs: dict[str, Any] = {
+        "revision": _revision(model_id, settings),
+        "torch_dtype": torch.bfloat16,
+        "attn_implementation": "sdpa",
+        "device_map": "cuda",
+    }
+    if settings.vlm_quantize == "8bit":
+        from transformers import BitsAndBytesConfig
+
+        kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
+    return kwargs
+
+
+def _default_loader(model_id: str, settings: Settings):  # pragma: no cover - needs a GPU pod
     from transformers import AutoModelForImageTextToText, AutoProcessor
 
     rev = _revision(model_id, settings)
-    model = AutoModelForImageTextToText.from_pretrained(
-        model_id,
-        revision=rev,
-        torch_dtype=torch.bfloat16,
-        attn_implementation="sdpa",
-        device_map="cuda",
-    )
+    kwargs = _load_kwargs(model_id, settings)
+    model = AutoModelForImageTextToText.from_pretrained(model_id, **kwargs)
     processor = AutoProcessor.from_pretrained(
         model_id, revision=rev, max_pixels=settings.vlm_max_pixels_ocr
     )
@@ -375,6 +478,40 @@ def _default_loader(model_id: str, settings: Settings):  # pragma: no cover - ne
 
 def _is_oom(exc: BaseException) -> bool:
     return type(exc).__name__ == "OutOfMemoryError" or "out of memory" in str(exc).lower()
+
+
+def _release_cuda() -> None:
+    """Collect unreachable objects, then hand the cached CUDA blocks back. Model graphs hold
+    reference cycles, so their tensors are freed only by the collector, not by dropping a name."""
+    import gc
+
+    gc.collect()
+    try:  # pragma: no cover - only meaningful with torch + CUDA present
+        import torch
+
+        torch.cuda.empty_cache()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _load_with_fallback(load: Callable[[str], Any], settings: Settings,
+                        release: Callable[[], None]) -> tuple[Any, str]:  # fmt: skip
+    """``load`` the primary model, or the fallback on CUDA out-of-memory -> (loaded, model id).
+
+    The fallback loads only after the ``except`` block has ended: until then the caught error's
+    traceback holds the loader's frames, and with them the half-built primary's weights, so
+    nothing can be freed (Colab T4, 2026-09-26: the 7B took 14.4 of 14.6 GiB, and the 3B then
+    ran out of memory on what the failed 7B still held)."""
+    primary, fallback = settings.vlm_model_id, settings.vlm_fallback_model_id
+    try:
+        return load(primary), primary
+    except Exception as exc:
+        if not _is_oom(exc):
+            raise
+    metrics.VLM_OOM.labels("load").inc()
+    log.warning("vlm_oom_fallback", primary=primary, fallback=fallback)
+    release()
+    return load(fallback), fallback
 
 
 def _default_runner(model, processor, prompt: str, image_png: bytes | None,
@@ -454,20 +591,9 @@ class HFBackend(Backend):
         if self._model is not None:
             return
         t0 = time.perf_counter()
-        try:
-            self._model, self._processor = self._loader(self.settings.vlm_model_id, self.settings)
-            self.model = self.settings.vlm_model_id
-        except Exception as exc:
-            if not _is_oom(exc):
-                raise
-            metrics.VLM_OOM.labels("load").inc()
-            log.warning("vlm_oom_fallback", primary=self.settings.vlm_model_id,
-                        fallback=self.settings.vlm_fallback_model_id)  # fmt: skip
-            self._free()
-            self._model, self._processor = self._loader(
-                self.settings.vlm_fallback_model_id, self.settings
-            )
-            self.model = self.settings.vlm_fallback_model_id
+        (self._model, self._processor), self.model = _load_with_fallback(
+            lambda mid: self._loader(mid, self.settings), self.settings, self._free
+        )
         log.info("vlm_loaded", model=self.model, seconds=round(time.perf_counter() - t0, 1))
 
     def _free(self) -> None:
@@ -475,6 +601,7 @@ class HFBackend(Backend):
         self._empty_cache()
 
     def generate(self, prompt, image_png=None, *, max_tokens=1024, json_schema=None) -> str:
+        prompt = with_schema(prompt, json_schema)  # hf cannot lock decoding: show the keys
         with self._lock:
             self._ensure_loaded()
             return self._runner(self._model, self._processor, prompt, image_png, max_tokens)
@@ -484,6 +611,8 @@ class HFBackend(Backend):
         A batch that does not fit (CUDA OOM) is run item by item instead, never dropped."""
         if len(items) <= 1:
             return super().generate_batch(items)
+        items = [GenItem(with_schema(i.prompt, i.json_schema), i.image_png, i.max_tokens,
+                         None) for i in items]  # fmt: skip
         with self._lock:
             self._ensure_loaded()
             try:
@@ -498,12 +627,7 @@ class HFBackend(Backend):
 
     @staticmethod
     def _empty_cache() -> None:
-        try:  # pragma: no cover - only meaningful with torch + CUDA present
-            import torch
-
-            torch.cuda.empty_cache()
-        except Exception:  # noqa: BLE001
-            pass
+        _release_cuda()
 
 
 # =================================================================== vllm (backlog E2-S1)
@@ -617,17 +741,9 @@ class VLLMBackend(Backend):
             loop = asyncio.new_event_loop()
             threading.Thread(target=loop.run_forever, name="vllm-engine", daemon=True).start()
             t0 = time.perf_counter()
-            try:
-                engine = self._engine_factory(self.settings.vlm_model_id, self.settings)
-                self.model = self.settings.vlm_model_id
-            except Exception as exc:
-                if not _is_oom(exc):
-                    raise
-                metrics.VLM_OOM.labels("load").inc()
-                log.warning("vlm_oom_fallback", primary=self.settings.vlm_model_id,
-                            fallback=self.settings.vlm_fallback_model_id)  # fmt: skip
-                engine = self._engine_factory(self.settings.vlm_fallback_model_id, self.settings)
-                self.model = self.settings.vlm_fallback_model_id
+            engine, self.model = _load_with_fallback(
+                lambda mid: self._engine_factory(mid, self.settings), self.settings, _release_cuda
+            )
             self._build = self._prompt_builder(self.model)
             self._loop, self._engine = loop, engine
             log.info("vlm_loaded", backend="vllm", model=self.model,

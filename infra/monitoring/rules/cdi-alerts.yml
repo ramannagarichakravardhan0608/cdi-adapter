@@ -161,3 +161,29 @@ groups:
           summary: No restore drill for 8 days.
           description: The weekly restore drill has not finished for more than 8 days; the backups are untested.
           runbook_url: docs/alerts.md#cdirestoredrilloverdue
+
+      # E10-S9: a web app instance's /metrics has not answered for 2 minutes. The balancer already
+      # sends its traffic to the other instances (/readyz), so staff see nothing yet, but one more
+      # loss leaves no spare. Restart it: bash infra/runpod/start_apptier.sh.
+      - alert: CdiWebappInstanceDown
+        expr: up{job="cdi-webapp"} == 0
+        for: 2m
+        labels:
+          severity: ticket
+        annotations:
+          summary: A web app instance is down.
+          description: One web app instance has not answered for 2 minutes; the balancer serves from the others, with less spare capacity.
+          runbook_url: docs/alerts.md#cdiwebappinstancedown
+
+      # E10-S9: accepted jobs that no runner holds: their runner died and no other runner has
+      # taken them over (every job worker down, or the database refusing the takeover). The
+      # uploads are safe in PostgreSQL + MinIO, but nothing is processing them.
+      - alert: CdiJobsOrphaned
+        expr: max(cdi_jobs_orphaned) > 0
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: Accepted jobs are not being processed.
+          description: Jobs whose runner died have not been taken over for 2 minutes; no job worker is alive to resume them.
+          runbook_url: docs/alerts.md#cdijobsorphaned

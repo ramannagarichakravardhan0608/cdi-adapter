@@ -153,6 +153,19 @@ def test_prescription_handler_counts_like_the_worked_example():
     assert all(f.medication for f in out if f.fact_type == "medication")
 
 
+def test_a_diagnosis_line_naming_two_diseases_becomes_two_conditions():
+    p = {"diagnoses": [{"text": "Type 2 diabetes mellitus, Hypertension", "evidence": ["b3"],
+                        "confidence": 0.8}]}  # fmt: skip
+    out = [f for f in fx.facts_from_payload("prescription", p) if f.fact_type == "condition"]
+    assert [f.local_text for f in out] == ["Type 2 diabetes mellitus", "Hypertension"]
+    assert all(f.evidence == ["b3"] and f.confidence_extract == 0.8 for f in out)
+    # one disease written with a comma, or a part that codes to nothing: left as written
+    for one in ("Diabetes mellitus, type 2", "Fracture, left radius", "Heart failure"):
+        assert fx.split_joined("condition", one) == [one]
+    assert fx.split_joined("condition", "Heart failure and hypertension") == [
+        "Heart failure", "hypertension"]  # fmt: skip
+
+
 def test_radiology_handler_emits_findings_dx_report_procedure():
     p = {"findings_list": ["LAD 90% stenosis", {"text": "LCX mild plaque"}],
          "impression_concepts": ["Single vessel CAD"], "study": "Coronary angiogram",
@@ -217,3 +230,14 @@ def test_prompt_block_ids_budget_and_guidance():
 )
 def test_check_mismatch(found, mismatch):
     assert check_mismatch({"name": "Anjali Das", "dob": "1978-01-01"}, found) is mismatch
+
+
+def test_the_prompt_forbids_filled_in_values_and_keeps_advice_out_of_medications():
+    """2026-09-26, handwritten Rx on the 7B: every drug got "1-0-1" and route "oral" (the schema's
+    examples), gargles / steam inhalation / fluids came back as medications, and drug names were
+    the print OCR's garble."""
+    prompt, _ = build_extraction_prompt("prescription", [{"id": "x", "text": "Tab PCM 650 SOS"}])
+    assert "never fill in a typical value" in prompt
+    assert "never copy an example from the schema as a value" in prompt
+    assert "steam inhalation" in prompt and "are advice, not medications" in prompt
+    assert "read the words from the image" in prompt  # the OCR text is not the truth

@@ -22,7 +22,7 @@ from tests.test_classify_unit import CARDIO_RX
 pytestmark = pytest.mark.integration
 
 
-def _doc_with_ocr(lines: list[str]) -> str:
+def _doc_with_ocr(lines: list[str], conf: float = 0.98) -> str:
     with session_scope() as c:
         sha = hashlib.sha256(uuid.uuid4().bytes).hexdigest()
         doc = repo.insert_source_document(c, sha256=sha, filename="rx.pdf",
@@ -34,7 +34,7 @@ def _doc_with_ocr(lines: list[str]) -> str:
         repo.set_document_status(c, doc, "ocr_done")
         repo.insert_ocr_blocks(c, [
             {"document_id": doc, "page_id": page, "block_type": "line", "text": t,
-             "bbox": [10, 10 + 30 * i, 900, 35 + 30 * i], "polygon": None, "ocr_conf": 0.98,
+             "bbox": [10, 10 + 30 * i, 900, 35 + 30 * i], "polygon": None, "ocr_conf": conf,
              "reading_order": i, "engine": "rapidocr", "pipeline_run_id": None}
             for i, t in enumerate(lines)
         ])  # fmt: skip
@@ -73,3 +73,28 @@ def test_vlm_fallback_for_ambiguous_page(app_env):
     ocr_document(res.document_id, force_engine="rapidocr")
     out = classify_document(res.document_id)  # stub VLM
     assert out["method"] == "vlm"
+
+
+def test_an_unsure_ocr_page_skips_the_fast_path_and_the_vlm_can_call_it_handwritten(db_env):
+    """2026-09-26: a printed letterhead + handwritten Rx (mean OCR 0.80) was taken by the rule-based
+    fast path, which never says "handwritten", so the drugs were extracted from print-OCR garble."""
+    calls = []
+
+    class HandwritingVLM:
+        model = "vlm-under-test"
+
+        def vlm_json(self, png, prompt, schema, **k):
+            calls.append(schema)
+            return {"doc_type": "prescription", "is_handwritten": True, "languages": ["en"],
+                    "confidence": 0.9}  # fmt: skip
+
+    class Store:
+        def get_bytes(self, key):
+            return b"page-1-png"
+
+    doc = _doc_with_ocr(CARDIO_RX.splitlines(), conf=0.80)  # the same text, unsure OCR
+    res = classify_document(doc, client=HandwritingVLM(), store=Store())
+    assert calls == ["classification.v1"] and res["method"] == "vlm"
+    with session_scope() as c:
+        row = repo.get_latest_classification(c, doc)
+    assert row["is_handwritten"] is True and row["method"] == "vlm"  # -> the VLM handwriting pass

@@ -977,6 +977,7 @@ Postgres.
 | `CDI_DATABASE_HOSTS` | empty | E10-S6: primary and standby, e.g. `127.0.0.1:5432,127.0.0.1:5433`; the app connects to the writable one (libpq `target_session_attrs=read-write`), so a failover needs no config change (`docs/ha.md`) |
 | `CDI_PG_STANDBY_PORT` / `CDI_MINIO_MODE` | empty / `single` | E10-S6: opt-in hot standby (built by the bootstrap); MinIO `erasure` (one host, `CDI_MINIO_DRIVES` drives) or `cluster` (one process per host of `CDI_MINIO_ADDRESSES`; `CDI_S3_ENDPOINT_URL` then lists every host) |
 | `CDI_VLM_MAX_PIXELS_OCR` | 2 000 000 | processor cap (VRAM bound) |
+| `CDI_VLM_QUANTIZE` | empty (bf16) | `8bit` = bitsandbytes LLM.int8 weights, **test hosts below 24 GB only** (a 15 GB T4 cannot hold the 7B's ~16 GB bf16 weights); the pod stays bf16. `start_mlserve.sh` installs the pinned `BITSANDBYTES_VERSION` (versions.env) when set (`docs/fallback-host.md`) |
 | `CDI_FAST_CLASSIFY` | `true` | S2 scored heuristic first; VLM only on ambiguous/handwritten |
 | `CDI_EXTRACT_RETRIES` | `1` | S4 VLM re-tries on schema failure (schemas relaxed → rare) |
 | `CDI_JOB_MAX_WORKERS` | 6 | Phase-1 documents in flight concurrently |

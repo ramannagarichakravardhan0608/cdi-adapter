@@ -1,4 +1,4 @@
-# Alerts and on-call responses (backlog E10-S2, E10-S4, E10-S6, E10-S11)
+# Alerts and on-call responses (backlog E10-S2, E10-S4, E10-S6, E10-S9, E10-S11)
 
 Eleven alert rules in `infra/monitoring/rules/cdi-alerts.yml`, evaluated by the local Prometheus
 every 15 s and routed by Alertmanager (`infra/monitoring/alertmanager.yml`). The Grafana dashboard
@@ -207,6 +207,36 @@ untested (backlog E10-S11).
 1. `crontab -l`: the `cdi_adapter.dr drill` line (the bootstrap installs it).
 2. `tail -50 $WS/logs/dr.log`: did it start, and where did it stop?
 3. Run it now: `python -m cdi_adapter.dr drill`.
+
+## CdiWebappInstanceDown
+
+A web app instance has not answered its `/metrics` for 2 minutes (backlog E10-S9). Staff are not
+affected yet: the balancer stopped sending it traffic within one health check (`/readyz`, every
+2 s), and every job and session is in PostgreSQL, so the other instances serve everything. But
+there is one spare less.
+
+1. `bash $REPO/infra/runpod/start_apptier.sh status`: which instance (`webN`) is not ready.
+2. `tail -50 $WS/logs/webapp-N.log`: why it stopped (a crash trace, `Killed` = out of memory).
+3. Start it again: `bash $REPO/infra/runpod/start_apptier.sh` (starts only what is down; the
+   balancer puts it back after two passing checks).
+4. Every instance down at once, or it keeps dying: `/readyz` names the failing dependency
+   (`db`, `s3`, `queue`); follow that dependency's alert.
+
+## CdiJobsOrphaned
+
+Accepted uploads are not being processed (backlog E10-S9). Their runner died and no other runner
+took them over for 2 minutes. The uploads are safe (the files in MinIO under `uploads/`, the job in
+`web_job`); nothing is lost, but the SLA clock is running.
+
+1. `bash $REPO/infra/runpod/start_apptier.sh status`: are the job workers (`workerN`) up?
+2. All down: `bash $REPO/infra/runpod/start_apptier.sh` starts them. Each new worker's sweep takes
+   the orphaned jobs over at once (`job_orphan_claiming` in `$WS/logs/worker-N.log`) and resumes
+   them: finished documents are kept, the rest run again from the staged files.
+3. Workers are up but do not take the jobs: `grep job_heartbeat_failed $WS/logs/worker-*.log`
+   (the database is refusing them: see `CdiPgReplicationLag` / the database's own state).
+4. A job that keeps killing its worker is stopped after `CDI_JOB_MAX_ATTEMPTS` (3) runs: its
+   documents show `gave up after 3 attempts`. Send the file to the EMR team; do not re-upload
+   it in a loop.
 
 ## Tests (synthetic triggers)
 

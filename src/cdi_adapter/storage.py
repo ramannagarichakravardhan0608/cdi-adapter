@@ -118,6 +118,10 @@ class ObjectStore:
     def get_bytes(self, key: str) -> bytes:
         return self._call(lambda c: c.get_object(Bucket=self.bucket, Key=key)["Body"].read())
 
+    def delete(self, key: str) -> None:
+        """Remove one object (a no-op when it is already gone)."""
+        self._call(lambda c: c.delete_object(Bucket=self.bucket, Key=key))
+
     def exists(self, key: str) -> bool:
         try:
             self._call(lambda c: c.head_object(Bucket=self.bucket, Key=key))

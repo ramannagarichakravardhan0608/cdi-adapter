@@ -61,6 +61,14 @@ _SCHEDULE = re.compile(
     re.I,
 )
 _DURATION_IN_TEXT = re.compile(r"(?:x|for)\s*\d+\s*\w+", re.I)
+# when to take it, not how it enters the body: a model that writes "after food" / "empty stomach"
+# as the route has put an instruction in the wrong field (2026-09-25 check); it moves to
+# instructions unless the text also names a real route
+_WHEN_TO_TAKE = re.compile(r"\b(food|meals?|breakfast|lunch|dinner|supper|stomach|bed ?time|"
+                           r"night|morning|evening|milk|water)\b", re.I)  # fmt: skip
+_A_ROUTE = re.compile(r"\b(oral|orally|p\.?o\.?|i\.?v\.?|i\.?m\.?|s\.?c\.?|subcut\w*|topical|"
+                      r"local|inhal\w*|nebul\w*|nasal|sublingual|rectal|vaginal|transdermal|"
+                      r"eye|ear)\b", re.I)  # fmt: skip
 _DOSE_UNITS = ("mg", "mcg", "µg", "g", "gm", "iu", "unit", "units")
 
 
@@ -161,12 +169,30 @@ def _items(payload: dict[str, Any], key: str) -> list[Any]:
 # ------------------------------------------------------------------ builders
 
 
+_JOINED = re.compile(r"\s*(?:[,;+/]|\band\b)\s*", re.I)
+
+
+def split_joined(fact_type: str, t: str) -> list[str]:
+    """One written line naming several diagnoses ("Type 2 diabetes mellitus, Hypertension") ->
+    one text per diagnosis, but only when the whole line codes to nothing and EVERY part codes
+    on its own (so "Diabetes mellitus, type 2" or "Fracture, left radius" stay one text). One
+    uncoded Condition for two diseases was what the download carried (2026-09-25)."""
+    from cdi_adapter.terminology.service import bind_text  # the seed lookup only, no I/O
+
+    parts = [p for p in _JOINED.split(t) if p]
+    if len(parts) < 2 or bind_text(fact_type, t) is not None:
+        return [t]
+    return parts if all(bind_text(fact_type, p) for p in parts) else [t]
+
+
 def _coded_facts(payload, key: str, fact_type: str, default: float) -> list[FactDraft]:
     out = []
     for item in _items(payload, key):
         t = _coded_text(item)
-        if t:
-            out.append(FactDraft(fact_type, t, _conf(item, default), _ev(item), value_kind=None))
+        for part in split_joined(fact_type, t) if t and fact_type == "condition" else [t]:
+            if part:
+                out.append(FactDraft(fact_type, part, _conf(item, default), _ev(item),
+                                     value_kind=None))  # fmt: skip
     return out
 
 
@@ -285,6 +311,10 @@ def parse_medication(item: dict[str, Any]) -> MedDraft:
     freq_text = item.get("frequency") or None
     fpd = freq_per_day(freq_text) if freq_text else freq_per_day(text_all)
     route = item.get("route")
+    instructions = item.get("instructions") or None
+    if isinstance(route, str) and _WHEN_TO_TAKE.search(route) and not _A_ROUTE.search(route):
+        instructions = "; ".join(x for x in (instructions, route.strip()) if x)
+        route = None
     if not route and (form in ("injection", "pen") or re.search(r"\b(pen|insulin)\b", raw_name,
                                                                 re.I)):  # fmt: skip
         route = (
@@ -307,7 +337,7 @@ def parse_medication(item: dict[str, Any]) -> MedDraft:
             duration_days(dm.group(0)) if (dm := _DURATION_IN_TEXT.search(text_all)) else None
         ),
         prn=is_prn(text_all),
-        instructions=item.get("instructions"),
+        instructions=instructions,
     )  # fmt: skip
 
 

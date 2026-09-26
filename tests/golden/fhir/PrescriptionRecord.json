@@ -322,6 +322,12 @@
             "text": "Tab Metformin 500 mg 1-0-1 x 30 days",
             "timing": {
               "repeat": {
+                "boundsDuration": {
+                  "code": "d",
+                  "system": "http://unitsofmeasure.org",
+                  "unit": "days",
+                  "value": 30.0
+                },
                 "frequency": 2,
                 "period": 1,
                 "periodUnit": "d"
@@ -395,6 +401,12 @@
             "text": "Tab Amlodipine 5 mg OD x 30 days",
             "timing": {
               "repeat": {
+                "boundsDuration": {
+                  "code": "d",
+                  "system": "http://unitsofmeasure.org",
+                  "unit": "days",
+                  "value": 30.0
+                },
                 "frequency": 1,
                 "period": 1,
                 "periodUnit": "d"

@@ -33,7 +33,7 @@ scrape_configs:
 | `cdi_stage_failures_total{stage}` | counter | Stage runs that raised |
 | `cdi_extract_waiting` | gauge | **Queue depth:** documents that finished Phase 1 and are waiting to start extraction |
 | `cdi_extract_in_flight` | gauge | Extraction calls holding a GPU slot (a batched call, E2-S8, counts once) |
-| `cdi_jobs{state}` | gauge | Web-app jobs by state: `running`, `review`, `mismatch`, `error` |
+| `cdi_jobs{state}` | gauge | Web-app jobs by state: `running`, `review`, `mismatch`, `error`. Since E10-S9 read from `web_job` (unfinished jobs and the last day's), so every web app instance reports the same numbers: take `max`, never `sum` |
 | `cdi_review_backlog{queue}` | gauge | Open human work, read from PostgreSQL at scrape time: `held_fact_tasks`, `audit_tasks`, `workbasket`, `claimed` |
 | `cdi_gate_decisions_total{decision}` | counter | S6 gate per fact: `auto_accepted` vs `in_review` |
 | `cdi_review_decisions_total{action}` | counter | **Reviewer throughput** on held facts: `accept`, `correct`, `reject` |
@@ -53,6 +53,9 @@ scrape_configs:
 | `cdi_pg_standbys_streaming`, `cdi_pg_replication_lag_seconds`, `cdi_pg_replication_slots_inactive` | gauge | E10-S6: replication as the primary sees it, read at scrape time (nothing on a standby) |
 | `cdi_minio_nodes`, `cdi_minio_nodes_online` | gauge | E10-S6: MinIO nodes listed in `CDI_S3_ENDPOINT_URL` and how many answer (only with a cluster) |
 | `cdi_minio_drives`, `cdi_minio_drives_offline` | gauge | E10-S6: MinIO's own drive gauges (its loopback `/minio/v2/metrics/cluster`), with an erasure set |
+| `cdi_jobs_orphaned` | gauge | E10-S9: accepted jobs whose runner's lease ran out and that no runner has taken over yet (alert `CdiJobsOrphaned`) |
+| `cdi_job_resumes_total` | counter | E10-S9: stored jobs taken over and resumed after their runner died |
+| `cdi_mlserve_failovers_total` | counter | E10-S9: model gateway calls moved to another replica (one refused the connection, dropped it, or answered 502/503/504) |
 | `cdi_terminology_bindings_total{outcome}` | counter | E10-S4: S5 terminology per fact, `bound` (a standard code) or `local_only` (unmapped). The unmapped-code rate on the dashboard |
 
 Plus the client library's own `process_*` and `python_*` metrics.
@@ -104,6 +107,8 @@ The four alert rules and their on-call responses: `docs/alerts.md`. Traces and c
 
 ## Not in this block
 
-- The Celery worker and folder-watch path (`cdi_adapter.worker`, unused by the web app today) has
-  no metrics endpoint of its own; its gate counts are not scraped. It moves onto the durable queue
-  in E9-S1, which will expose it.
+- Since E10-S9 the web app's jobs run on Celery workers (queue `cdi-web`). Each such worker serves
+  its own `/metrics` on `127.0.0.1:CDI_WORKER_METRICS_PORT + i - 1` (the pipeline's stage, queue
+  and gate metrics now come from there), and each web app instance on `CDI_METRICS_PORT + i - 1`.
+  `start_apptier.sh` writes both lists to `$WS/monitoring/targets/`, which Prometheus reads
+  (`file_sd_configs`). A folder-watch worker (queue `cdi`) still has no metrics endpoint.

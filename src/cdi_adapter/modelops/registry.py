@@ -141,6 +141,11 @@ def lock(conn: Connection) -> None:
     conn.execute(text("LOCK TABLE model_rollout IN SHARE ROW EXCLUSIVE MODE"))
 
 
+def _urls(url: str) -> str:
+    """One gateway or several replicas (E10-S9), normalised: no trailing slash, no spaces."""
+    return ",".join(u.strip().rstrip("/") for u in url.split(",") if u.strip())
+
+
 def append(conn: Connection, *, actor: str, action: str, primary_version: str, primary_url: str,
            canary_version: str | None = None, canary_url: str | None = None,
            canary_percent: int = 0, reason: str | None = None) -> RolloutState:  # fmt: skip
@@ -158,8 +163,8 @@ def append(conn: Connection, *, actor: str, action: str, primary_version: str, p
         text("INSERT INTO model_rollout (actor, action, primary_version, primary_url, "
              "canary_version, canary_url, canary_percent, reason) VALUES (:a, :act, :pv, :pu, "
              ":cv, :cu, :cp, :r) RETURNING *"),
-        {"a": actor, "act": action, "pv": primary_version, "pu": primary_url.rstrip("/"),
-         "cv": canary_version, "cu": canary_url.rstrip("/") if canary_url else None,
+        {"a": actor, "act": action, "pv": primary_version, "pu": _urls(primary_url),
+         "cv": canary_version, "cu": _urls(canary_url) if canary_url else None,
          "cp": canary_percent if canary_version else 0, "r": reason},
     ).mappings().one()  # fmt: skip
     return _state(row)

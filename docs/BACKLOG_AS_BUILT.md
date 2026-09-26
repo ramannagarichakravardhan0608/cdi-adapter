@@ -135,7 +135,7 @@
 
 | Limit (where in the code) | Plan block |
 |---|---|
-| Job state is in memory (`webapp/jobs.py` `_jobs`); a restart loses running jobs | E9-S1 |
+| ~~Job state is in memory (`webapp/jobs.py` `_jobs`); a restart loses running jobs~~ Removed by E10-S9: jobs in `web_job`, run on the `cdi-web` queue with a lease, resumed after a crash | E9-S1 (E10-S9) |
 | No login: the reviewer id comes from the request body (`review.py`, `reviewer.py`) | E11-S1, E7-S1 |
 | Seed terminology codes are not verified against licensed releases (`terminology/seed.py`) | E3-S1…S5 |
 | Conformance uses Python checks until Java + the HL7 jar are deployed (`fhir/validate_abdm.py`) | E6-S1, E6-S2 |

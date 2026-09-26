@@ -43,7 +43,9 @@ def test_every_route_has_an_explicit_policy_and_no_policy_is_stale() -> None:
 
 def test_only_health_and_sign_in_are_public() -> None:
     public = sorted(k for k, v in auth.POLICY.items() if v is auth.PUBLIC)
-    assert public == [("GET", "/healthz"), ("GET", "/login"), ("POST", "/login")]
+    # /readyz: the E10-S9 balancer's health check (booleans + instance name, like /healthz)
+    assert public == [("GET", "/healthz"), ("GET", "/login"), ("GET", "/readyz"),
+                      ("POST", "/login")]  # fmt: skip
     for roles in auth.POLICY.values():
         assert roles is auth.PUBLIC or roles <= set(auth.ROLES)
 
