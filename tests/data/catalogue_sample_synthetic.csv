@@ -15,3 +15,6 @@ id,name,price(₹),Is_discontinued,manufacturer_name,type,pack_size_label,short_
 14,Uprise-D3 60K Capsule,290.0,FALSE,Test Pharma K,allopathy,strip of 8 capsules,Vitamin D3 (60000IU),
 15,Sompraz 40 Tablet,139.0,FALSE,Test Pharma H,allopathy,strip of 15 tablets,Esomeprazole (40mg),
 16,T-98 Tablet,50.0,FALSE,Test Pharma L,allopathy,strip of 10 tablets,Test Salt (10mg),
+17,Thyronorm 62.5mcg Tablet,208.0,FALSE,Test Pharma M,allopathy,bottle of 120 tablets,Thyroxine (62.5mcg),
+18,Meronorm 1gm Injection,900.0,FALSE,Test Pharma N,allopathy,vial of 1 Injection,Meropenem (1000mg),
+19,Saaz Tablet,68.0,FALSE,Test Pharma O,allopathy,strip of 10 tablets,Sulfasalazine (500mg),

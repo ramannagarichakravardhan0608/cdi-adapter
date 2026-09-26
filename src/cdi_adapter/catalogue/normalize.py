@@ -36,6 +36,7 @@ _FOLD = (("rn", "m"), ("vv", "w"), ("cl", "d"), ("0", "o"), ("1", "l"), ("5", "s
 def split_name(text: str | None) -> tuple[str, tuple[float, ...]]:
     """(brand key, strengths) of a medicine name as written or as catalogued."""
     t = _THOUSANDS.sub("", (text or "").lower())
+    t = re.sub(r"#\s*\d+", " ", t)  # "(#5)": a quantity to dispense, not a strength
     t = re.sub(r"[^a-z0-9.%]+", " ", t)
     strengths = tuple(float(m.group(1)) * (1000 if m.group(2) == "k" else 1)
                       for m in _STRENGTH.finditer(t))  # fmt: skip
@@ -98,6 +99,23 @@ def ingredients(composition: str | None) -> list[tuple[str, str]]:
         if letters(key) >= MIN_KEY_LETTERS:
             out.append((key, name))
     return out
+
+
+_COMP_STRENGTH = re.compile(r"\(\s*(\d+(?:\.\d+)?)\s*(mg|mcg|gm|g|ml|iu|%)?", re.I)
+
+
+def composition_strengths(composition: str | None) -> tuple[float, ...]:
+    """The strength of each ingredient of a composition: "Sulfasalazine (500mg)" -> (500,),
+    "Vitamin D3 (60000IU)" -> (60000,); "(NA)" states none."""
+    return tuple(float(m.group(1)) for m in _COMP_STRENGTH.finditer(composition or ""))
+
+
+def nearness(query: str, candidate: str) -> float:
+    """How near two keys look, for ranking the closest products a reviewer is shown (never for
+    accepting a match): ``score``, or the share of matching characters after folding, which
+    also ranks short names ("shaz" / "saaz")."""
+    ratio = difflib.SequenceMatcher(None, fold(query), fold(candidate)).ratio()
+    return round(max(score(query, candidate), ratio), 4)
 
 
 def letters(key: str) -> int:

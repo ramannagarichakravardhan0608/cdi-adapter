@@ -234,3 +234,22 @@ def test_a_mismatch_in_parallel_skips_the_documents_not_yet_started():
     assert [d.status for d in job.docs[2:]] == ["skipped"] * 3
     assert not any(c[0] == "extract" and c[1] in ("doc-c", "doc-d", "doc-e") for c in rec.calls)
     assert not any(c[0] == "merge" for c in rec.calls)
+
+
+def test_the_medication_agent_is_queued_for_each_filed_document_and_never_blocks():
+    """Backlog E12-S4: once a document is filed for review its agent is queued (advisory, beside
+    the review); a queueing failure never fails the document or the job."""
+    rec = Recorder(skip={"b"})
+    stages = rec.stages()
+    queued: list[str] = []
+
+    def agent(doc):
+        queued.append(doc)
+        if doc == "doc-c":
+            raise ConnectionError("broker down")
+
+    stages.agent = agent
+    runner = JobRunner(stages)
+    job = runner.wait(runner.create(_files("a", "b", "c")).id)
+    assert sorted(queued) == ["doc-a", "doc-c"]  # b was skipped: nothing to check
+    assert job.state == "review" and [d.status for d in job.docs] == ["done", "skipped", "done"]

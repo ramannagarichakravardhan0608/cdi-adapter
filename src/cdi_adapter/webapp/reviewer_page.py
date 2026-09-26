@@ -95,7 +95,7 @@ const COLS = {
     ['Frequency', e => [(e.medication || {}).frequency_code, (e.medication || {}).prn ? 'as needed' : ''].filter(Boolean).join(' · ')],
     ['Duration', e => (e.medication || {}).duration_days != null ? num(e.medication.duration_days) + ' days' : ''],
     ['Route', e => (e.medication || {}).route], ['Instructions', e => (e.medication || {}).instructions],
-    ['Catalogue (Tata 1mg)', e => catalogueText(e.catalogue)]],
+    ['Catalogue (Tata 1mg)', e => catalogueText(e.catalogue)], ['Agent (diagnosis check)', e => agentText(e.agent)]],
   measured: [['Test', e => e.fact?.local_text], ['Value', e => e.fact?.value_text || (e.fact?.value_num != null ? num(e.fact.value_num) : '')],
     ['Unit', e => e.fact?.value_unit_ucum], ['Flag', e => e.fact?.abnormal_flag]],
   text: [['Detail', e => e.fact?.local_text]],
@@ -106,8 +106,44 @@ function catalogueText(c){
   if (!c) return '';
   if (c.status === 'matched') return [c.product_name || c.display_name, c.product_name ? c.composition : '', c.manufacturer,
     ['exact', 'generic'].includes(c.method) ? 'exact' : 'match ' + Number(c.score).toFixed(2), c.strength_match === false ? 'strength differs' : ''].filter(Boolean).join(' · ');
-  const near = (c.candidates || []).slice(0, 2).map(x => `${x.name} ${Number(x.score).toFixed(2)}`).join(', ');
+  const near = (c.candidates || []).slice(0, 3).map(x => x.name).join(', ');  // nearest name, written form and strength first
   return 'UNKNOWN_MEDICATION' + (near ? ` (closest: ${near})` : '');
+}
+// the medication agent (backlog E12-S4, owner 2026-09-26): re-reads the line with the prescription's
+// diagnoses and the catalogue, and SUGGESTS a product; the reviewer applies it (never automatic)
+function agentText(a){
+  if (!a) return '';
+  const fit = a.treats ? 'treats ' + a.treats + (a.why ? ` (${a.why})` : '') : a.fits_diagnosis === false ? '⚠ no matching diagnosis' : '';
+  const conf = a.confidence != null ? ` (${Math.round(a.confidence * 100)}%)` : '';
+  if (a.status === 'confirmed') return `✓ ${fit || 'identified'}`;
+  if (a.status === 'suggested') return [`Suggests ${a.product.name}${conf}`, fit, a.evidence ? `written "${a.evidence}"` : '', a.rationale].filter(Boolean).join(' · ');
+  if (a.status === 'vetoed') return `Unsure: ${a.product ? a.product.name : ''}? (${a.reason})`;
+  return 'No confident match';
+}
+function agentRun(r){
+  if (!r) return 'not run yet';
+  if (r.status === 'running') return 'running… (about a minute)';
+  if (r.status === 'failed') return 'failed: ' + (r.error || '');
+  const m = r.metrics || {};
+  return `done · ${m.suggested || 0} suggested · ${m.no_matching_diagnosis || 0} without a matching diagnosis`;
+}
+async function rerunAgent(id){
+  const r = await post(`/api/reviewer/items/${id}/agent`, {});
+  if (!r.ok){ alert((await r.json()).detail); return; }
+  const el = document.getElementById('agentst'); if (el) el.textContent = 'queued…';
+  pollAgent(id, 0, Date.now());
+}
+function pollAgent(id, n, since){  // re-open the item once a run started after `since` has finished
+  if (n > 60) return;
+  setTimeout(async () => { const d = await (await fetch(`/api/reviewer/items/${id}/elements`)).json();
+    const r = d.agent_run, fresh = r && Date.parse(r.started_at) >= since - 5000;
+    if (fresh && r.status !== 'running') openItem(id); else pollAgent(id, n + 1, since); }, 5000);
+}
+function useAgent(fid, item){  // the Edit form, pre-filled with the agent's product; the reviewer saves
+  const e = current[fid]; editFact(fid, item);
+  const box = document.getElementById('ed-' + fid), i = box && box.querySelector('input[data-k="drug_text"]');
+  if (i && e.agent && e.agent.product){ i.value = e.agent.product.name;
+    box.querySelector('input[data-note]').value = 'medication agent: ' + (e.agent.rationale || e.agent.evidence || ''); i.focus(); }
 }
 const colsFor = t => t === 'medication' ? COLS.medication : ['vital_sign', 'lab_result'].includes(t) ? COLS.measured : COLS.text;
 function factRows(e, id, cols){
@@ -115,7 +151,7 @@ function factRows(e, id, cols){
   return `<tr>${cols.map(([, f]) => `<td>${esc(f(e) ?? '')}</td>`).join('')}
     <td>${esc(e.fact?.code)}${e.fact?.code_display ? `<br><small class=muted>${esc(e.fact.code_display)}</small>` : ''}</td>
     <td><span class="pill ${e.state==='held'?'warn':e.state==='rejected'?'bad':'ok'}">${esc(e.state)}</span></td>
-    <td style="white-space:nowrap">${e.state==='held' ? `<button class=ok onclick="decide('${e.fact.id}','accept','${id}')">Accept</button> <button class=bad onclick="decide('${e.fact.id}','reject','${id}')">Reject</button> ` : ''}${e.fact && e.state !== 'rejected' ? `<button onclick="editFact('${e.fact.id}','${id}')">Edit</button>` : ''}${e.state==='held' ? ' <a href="/review">details</a>' : ''}</td></tr>
+    <td style="white-space:nowrap">${e.state==='held' ? `<button class=ok onclick="decide('${e.fact.id}','accept','${id}')">Accept</button> <button class=bad onclick="decide('${e.fact.id}','reject','${id}')">Reject</button> ` : ''}${e.fact && e.state !== 'rejected' ? `<button onclick="editFact('${e.fact.id}','${id}')">Edit</button>` : ''}${e.agent && e.agent.status === 'suggested' && e.state !== 'rejected' ? ` <button class=primary onclick="useAgent('${e.fact.id}','${id}')" title="Open the edit form with the agent's product filled in">Use suggestion</button>` : ''}${e.state==='held' ? ' <a href="/review">details</a>' : ''}</td></tr>
     ${e.fact ? `<tr id="ed-${e.fact.id}" style="display:none"><td colspan=${n} style="background:var(--brand-weak)"></td></tr>` : ''}`;
 }
 async function openItem(id){
@@ -133,10 +169,11 @@ async function openItem(id){
   $('#item').innerHTML = `<div class=rv-split><div>
     <h2 style="margin:0 0 2px">${esc(d.item.patient_name)} <span class=muted style="font-weight:400">${esc(d.item.mpi_id || '')}</span></h2>
     <p class=muted style="margin:0 0 8px">${esc(d.item.filename)} · ${esc(d.item.doc_type)} · ${d.elements.length} facts${held ? ` · <span class="pill warn">${held} held</span>` : ''}</p>
-    <div>${chips}</div>${sections || '<p class=muted>No facts.</p>'}
+    <div>${chips}</div>${groups.medication ? `<p class=muted style="margin:10px 0 0">Medication agent: <span id=agentst>${esc(agentRun(d.agent_run))}</span> <button onclick="rerunAgent('${id}')" title="Re-read the medicines with the diagnoses and the catalogue">Run agent again</button></p>` : ''}${sections || '<p class=muted>No facts.</p>'}
     <p style="margin-top:18px"><button class=primary onclick="approve('${id}')">Approve &amp; promote</button> <button onclick="rejectItem('${id}')">Reject item</button> <span id=msg></span></p><pre id=out style="white-space:pre-wrap"></pre>
     </div>${docViewer(d.item)}</div>`;
   showPage();
+  if (d.agent_run && d.agent_run.status === 'running') pollAgent(id, 0, Date.parse(d.agent_run.started_at));
 }
 // the uploaded document beside its facts (owner, 2026-09-26): the rendered pages the facts were read
 // from, page by page, plus the file exactly as uploaded

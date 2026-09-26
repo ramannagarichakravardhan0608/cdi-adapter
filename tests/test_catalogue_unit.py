@@ -6,6 +6,7 @@ import pytest
 
 from cdi_adapter.catalogue.normalize import (
     best_brand,
+    composition_strengths,
     dosage_form,
     edit_distance,
     ingredients,
@@ -32,6 +33,7 @@ from cdi_adapter.catalogue.normalize import (
         ("Uprise-D3 60K Capsule", "uprise d3", (60000.0,)),  # 60K = 60 000 IU; D3 is a name
         ("Cap Uprise D2 (60,000U)", "uprise d2", (60000.0,)),
         ("Probact XL12s", "probact xl12s", ()),
+        ("Cap. Aueflu (#5)", "aueflu", ()),  # "#5": a quantity to dispense
         ("", "", ()),
     ],
 )
@@ -87,3 +89,10 @@ def test_the_dosage_form_a_name_states():
     assert dosage_form("Sompraz D 40 Capsule SR") == "capsule"
     assert dosage_form("Tab. Dolo 650") == "tablet" and dosage_form("Syp. Crocin") == "syrup"
     assert dosage_form("Montina FX") is None and dosage_form(None) is None
+
+
+def test_a_composition_states_each_ingredients_strength():
+    assert composition_strengths("Sulfasalazine (500mg)") == (500.0,)
+    assert composition_strengths("Vitamin D3 (60000IU)") == (60000.0,)
+    assert composition_strengths("Montelukast (10mg) + Fexofenadine (120mg)") == (10.0, 120.0)
+    assert composition_strengths("Amlodipine (NA)") == () and composition_strengths(None) == ()

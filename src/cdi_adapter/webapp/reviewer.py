@@ -9,6 +9,7 @@
 | GET  /api/reviewer/items/{id}/bundle            | the generated canonical FHIR bundle         |
 | GET  /api/reviewer/items/{id}/bundle/download   | that bundle as a FHIR file (fhir+json)      |
 | GET  /api/reviewer/approved                     | the latest approved items (to download)     |
+| POST /api/reviewer/items/{id}/agent             | run the medication agent again (E12-S4)     |
 
 Held facts inside an item are decided with the S8 endpoint (``POST /api/facts/{id}/review``).
 The reviewer is the signed-in user (backlog E7-S1): a ``reviewer`` sent by the client is ignored.
@@ -27,6 +28,7 @@ from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
+from cdi_adapter.agent.medication import latest_for_document
 from cdi_adapter.canon import promote
 from cdi_adapter.canon import repo as canon
 from cdi_adapter.catalogue.service import matches_for_facts
@@ -107,6 +109,8 @@ def item_elements(item_id: UUID) -> dict[str, Any]:
         med_ids = [str(e["fact"]["id"]) for e in els
                    if e["fact"] and e["fact"]["fact_type"] == "medication"]  # fmt: skip
         catalogue = matches_for_facts(c, med_ids)
+        agent = latest_for_document(c, item["source_document_id"]) if item.get(
+            "source_document_id") else {"run": None, "by_fact": {}}  # fmt: skip
         for e in els:  # a medication's detail: what the page shows and its Edit form fills
             f = e["fact"]
             e["medication"] = None
@@ -117,7 +121,24 @@ def item_elements(item_id: UUID) -> dict[str, Any]:
                 e["medication"] = dict(m) if m else None
                 # the Tata 1mg catalogue's identification of this line (None: not matched yet)
                 e["catalogue"] = catalogue.get(str(f["id"]))
-        return {"item": item, "elements": els}
+                # the medication agent's suggestion, also for the fact a correction replaced
+                e["agent"] = agent["by_fact"].get(str(f["id"])) or agent["by_fact"].get(
+                    str(f.get("supersedes") or ""))  # fmt: skip
+        return {"item": item, "elements": els, "agent_run": agent["run"]}
+
+
+@router.post("/api/reviewer/items/{item_id}/agent")
+def rerun_agent(item_id: UUID, request: Request) -> dict[str, Any]:
+    """Queue the medication agent again for the item's document (e.g. after a diagnosis was
+    corrected). Advisory: it only writes new suggestions (backlog E12-S4, ADR-0003)."""
+    with session_scope() as c:
+        item = canon.get_item(c, item_id)
+    if item is None or not item.get("source_document_id"):
+        raise HTTPException(404, "review item not found")
+    from cdi_adapter.worker import medication_agent
+
+    medication_agent.delay(str(item["source_document_id"]), auth.actor(request).username)
+    return {"queued": True, "document_id": str(item["source_document_id"])}
 
 
 APPROVED_SHOWN = 20

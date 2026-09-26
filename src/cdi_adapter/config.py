@@ -120,6 +120,12 @@ class Settings(BaseSettings):
     catalogue_min_score: float = Field(default=0.85, ge=0, le=1)
     catalogue_min_margin: float = Field(default=0.05, ge=0, le=1)
     catalogue_strength_must_agree: bool = True  # a fuzzy name with another strength: unknown
+    # the medication agent (backlog E12-S4, ADR-0003): after validation it re-reads each medicine
+    # line with the prescription's diagnoses and the catalogue and SUGGESTS the product written
+    # there; advisory only, a reviewer applies it
+    agent_enabled: bool = True
+    agent_max_options: int = Field(default=10, ge=2, le=20)  # catalogue products per line
+    agent_min_grounding: float = Field(default=0.45, ge=0, le=1)  # evidence text vs product name
     extract_retries: int = Field(default=1, ge=0)
     job_max_workers: int = Field(default=6, ge=1)
     # Phase-2 extractions in flight at once (backlog E2-S2, §7.2): 0 = auto, i.e.

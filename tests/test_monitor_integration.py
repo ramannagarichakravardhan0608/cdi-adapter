@@ -45,6 +45,7 @@ def test_a_processed_document_shows_every_stage_and_its_details(client):
         "extract",
         "terminology",
         "validate",
+        "agent",
         "review",
         "fhir",
     ]

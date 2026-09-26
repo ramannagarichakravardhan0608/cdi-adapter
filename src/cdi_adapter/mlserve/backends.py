@@ -116,6 +116,15 @@ def with_schema(prompt: str, json_schema: dict[str, Any] | None) -> str:
     """The prompt plus the schema's exact keys, for a backend that cannot enforce the schema."""
     if not json_schema or not json_schema.get("properties"):
         return prompt
+    if str(json_schema.get("$id", "")).startswith("cdi:med_agent_"):
+        # the medication agent (E12-S4) asks for judgement and medical knowledge, not for text
+        # copied off the page: the extraction rules below ("never add a value that is not
+        # written") would forbid the very answer it asks for
+        return (
+            f"{prompt}\n\nAnswer with ONE JSON object in exactly this shape, with these key names "
+            'exactly. Use JSON null (not the string "null") for a value you cannot give.\n'
+            f"{schema_outline(json_schema)}"
+        )
     required = ", ".join(json_schema.get("required", [])) or "none"
     return (
         f"{prompt}\n\n"
@@ -425,6 +434,17 @@ class StubBackend(Backend):
                 out["study"] = text
                 break
         return self._with_meta(out, lines, "study_date", "study date|date")
+
+    # the medication agent (E12-S4): the stub cannot read handwriting nor knows medicines, so it
+    # chooses no product and links no diagnosis; the agent then records "no suggestion"
+    def _med_agent_choice(self, lines) -> dict[str, Any]:
+        return {"lines": [], "confidence": 0.3}
+
+    def _med_agent_fit(self, lines) -> dict[str, Any]:
+        return {"lines": [], "confidence": 0.3}
+
+    def _med_agent_verify(self, lines) -> dict[str, Any]:
+        return {"pairs": [], "confidence": 0.3}
 
     def _unknown(self, lines) -> dict[str, Any]:
         return {"confidence": 0.3}

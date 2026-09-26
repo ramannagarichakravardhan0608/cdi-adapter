@@ -981,6 +981,7 @@ Postgres.
 | `CDI_FAST_CLASSIFY` | `true` | S2 scored heuristic first; VLM only on ambiguous/handwritten |
 | `CDI_FAST_CLASSIFY_MIN_OCR_CONF` | 0.88 | the fast path only for a confidently OCR'd page; below it the VLM classifies (and can route handwriting to the VLM OCR pass) |
 | `CDI_CATALOGUE_ENABLED` / `_MIN_SCORE` / `_MIN_MARGIN` / `_STRENGTH_MUST_AGREE` | `true` / 0.85 / 0.05 / `true` | medicine catalogue (Tata 1mg) identification after S5: a fuzzy match needs the score AND a lead over every other brand, else `UNKNOWN_MEDICATION` (`docs/medicine-catalogue.md`) |
+| `CDI_AGENT_ENABLED` / `_MAX_OPTIONS` / `_MIN_GROUNDING` | `true` / 10 / 0.45 | medication agent (backlog E12-S4, ADR-0003): after a document is filed for review, re-reads each medicine line with the prescription's diagnoses and the catalogue and **suggests** a product (advisory; the reviewer applies it); a choice whose written evidence does not look like the product is vetoed; steps in `agent_trace` (`docs/medication-agent.md`) |
 | `CDI_EXTRACT_RETRIES` | `1` | S4 VLM re-tries on schema failure (schemas relaxed → rare) |
 | `CDI_JOB_MAX_WORKERS` | 6 | Phase-1 documents in flight concurrently |
 | `CDI_EXTRACT_BATCH_MAX` | 1 (off) | E2-S8: up to this many short documents of one doc_type share one batched model call (`POST /vlm/generate_batch`); every document stays its own sequence. Off until the GPU A/B shows a gain |

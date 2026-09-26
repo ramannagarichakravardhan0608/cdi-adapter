@@ -868,7 +868,7 @@ governed clinical values.
 ### Phase 3
 
 #### Block E12-S4 — Reviewer-copilot agent
-**Status:** Pending
+**Status:** In Progress (2026-09-26) — built for **medication lines** at the owner's request: the medication agent (`agent/medication.py`, `docs/medication-agent.md`) suggests the catalogue product with the evidence text, a one-line rationale and the diagnosis it treats; the Reviewer's "Use suggestion" pre-fills the Edit form (no auto-apply; tests `test_agent_*`). Open: other fact types, the E2-S4 gold-set evaluation (DoD-EVAL), and E12-S1 (the orchestrator) underneath.
 `Should · HARDEN · 3 d · 5 pts · Deps: E12-S1, E7-S1 · Arch ✔ [ADR-0003](adr/0003-agentic-control-plane.md) §15.2 (E1-S8 re-score; was ✖) · DoD-EVAL`
 > **E1-S8 re-score (2026-09-21):** ⛔ HOLD lifted → Arch ✔. External 🔒 dependencies, if any, are unchanged.
 - [ ] For every held fact: suggested value + exact evidence text + one-sentence rationale
@@ -878,7 +878,7 @@ governed clinical values.
 ### Phase 7
 
 #### Block E12-S5 — Agent trace logging
-**Status:** Pending
+**Status:** In Progress (2026-09-26) — `agent_trace` (migration 0010) records every step of the medication agent (model calls, catalogue tool calls, guard decisions) with input, output, confidence and timing, joined to the fact and the `ai_event`; the step sequence is asserted in `test_agent_integration.py`. Open: the `audit_log` join for E12-S1's workflow agents.
 `Must · BLOCKER · 2 d · 3 pts · Deps: E12-S1 · Arch ✔ [ADR-0003](adr/0003-agentic-control-plane.md) §15.2 rule 5 (E1-S8 re-score; was ✖ (§4.3 provenance exists; an agent_trace table isn't named)) · DoD-CODE`
 > **E1-S8 re-score (2026-09-21):** ⛔ HOLD lifted → Arch ✔. External 🔒 dependencies, if any, are unchanged.
 - [ ] New `agent_trace` table (tool called, input, output, confidence) joined to `audit_log` / `fact_provenance`

@@ -230,6 +230,10 @@ def decide(conn: Connection, fact_id: UUID | str, d: ReviewDecision,
     else:
         result_id = apply_fact_correction(conn, fact, d.corrections or {}, reviewer)
         state = "corrected"
+        if fact["fact_type"] == "medication":  # the corrected name is identified in the catalogue
+            from cdi_adapter.catalogue.service import rematch_fact
+
+            rematch_fact(conn, result_id)
     _reviewer_provenance(conn, result_id, fact, reviewer)
     repo.write_audit(conn, actor=reviewer, action="update", entity="clinical_fact",
                      entity_id=fact["id"],

@@ -19,12 +19,17 @@ from cdi_adapter.mlserve.backends import HFBackend, StubBackend, make_backend
 
 EXTRACTION = ["prescription.v3", "lab_report.v3", "vitals.v3", "opd_note.v3",
               "discharge_summary.v3", "radiology.v3"]  # fmt: skip
+AGENT = [
+    "med_agent_choice.v1",
+    "med_agent_fit.v1",
+    "med_agent_verify.v1",
+]  # the medication agent (E12-S4)
 
 # ---------------------------------------------------------------- schemas + registry
 
 
 def test_all_eight_schemas_present_and_valid():
-    assert set(mc.schema_names()) == {"classification.v1", "common.defs", *EXTRACTION}
+    assert set(mc.schema_names()) == {"classification.v1", "common.defs", *EXTRACTION, *AGENT}
     for name in mc.schema_names():
         schema = mc.load_schema(name)
         Draft202012Validator.check_schema(schema)
@@ -36,7 +41,7 @@ def test_patient_is_never_root_required(name):
     assert "patient" not in mc.load_schema(name).get("required", [])
 
 
-@pytest.mark.parametrize("name", ["classification.v1", *EXTRACTION])
+@pytest.mark.parametrize("name", ["classification.v1", *EXTRACTION, *AGENT])
 def test_bundled_schema_has_no_refs(name):
     assert "$ref" not in json.dumps(mc.bundled_schema(name))
 

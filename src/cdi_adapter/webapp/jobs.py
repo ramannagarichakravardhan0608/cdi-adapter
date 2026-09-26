@@ -82,6 +82,9 @@ class Stages:
     # counts that decide whether a document is short enough to join a batch
     extract_batch: Callable[..., list[Any]] | None = None
     shape: Callable[[str], dict[str, int]] | None = None
+    # the medication agent (E12-S4), queued once a document is filed for review; it runs beside
+    # the review, never in the job's way (advisory only, ADR-0003)
+    agent: Callable[[str], Any] = lambda document_id: None
 
     @classmethod
     def real(cls) -> Stages:
@@ -124,9 +127,14 @@ class Stages:
             with session_scope() as c:
                 return repo.document_shape(c, doc_id)
 
+        def agent(document_id: str) -> None:
+            from cdi_adapter.worker import medication_agent
+
+            medication_agent.delay(document_id)
+
         return cls(ingest_bytes, ocr_document, classify_document, extract_document,
                    bind_document, validate_document, counts, merge, enqueue,
-                   extract_batch=extract_documents, shape=shape)  # fmt: skip
+                   extract_batch=extract_documents, shape=shape, agent=agent)  # fmt: skip
 
 
 @dataclass
@@ -544,6 +552,11 @@ class JobRunner:
             d.status, d.error = "error", f"{type(exc).__name__}: {exc}"
             log.error("job_doc_failed", job=job.id, filename=d.filename, error=d.error)
         self._save(job)
+        if d.status == "done":
+            try:  # advisory: a queueing failure never fails the document
+                s.agent(str(d.document_id))
+            except Exception as exc:  # noqa: BLE001
+                log.warning("agent_not_queued", document_id=str(d.document_id), error=str(exc))
 
     def _resume(self, job: Job) -> list[int]:
         """The documents to run from the start: all of them for a new job. A resumed stored job

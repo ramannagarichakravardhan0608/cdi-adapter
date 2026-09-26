@@ -37,7 +37,7 @@ celery_app.conf.update(
     task_serializer="json",
     result_serializer="json",
     accept_content=["json"],
-    task_routes={"cdi.web_job": {"queue": "cdi-web"}},
+    task_routes={"cdi.web_job": {"queue": "cdi-web"}, "cdi.medication_agent": {"queue": "cdi-web"}},
 )
 
 MAX_RETRIES = 3
@@ -137,6 +137,19 @@ def web_job(job_id: str) -> str:
     from cdi_adapter.webapp.jobs import get_runner
 
     return get_runner().run_stored(job_id)
+
+
+@celery_app.task(name="cdi.medication_agent", acks_late=True, ignore_result=True)
+def medication_agent(document_id: str, actor: str = "agent") -> dict[str, Any]:
+    """The medication agent on one validated document (backlog E12-S4): queued after the web job
+    files the document for review, and by the Reviewer's "Run agent again". Advisory only; a
+    failure is recorded on its ``agent`` run and never touches the document or its review."""
+    from cdi_adapter.agent.medication import run_medication_agent
+
+    try:
+        return run_medication_agent(document_id, actor=actor)
+    except Exception as exc:  # noqa: BLE001 - recorded on the run; nothing to retry into
+        return {"failed": f"{type(exc).__name__}: {exc}"}
 
 
 @signals.worker_init.connect

@@ -37,18 +37,19 @@ def _identify(written, strengths=(), form=None):
 
 
 def test_import_loads_every_product_with_its_provenance(catalogue):
-    assert catalogue["rows"] == 16 and len(catalogue["sha256"]) == 64
+    assert catalogue["rows"] == 19 and len(catalogue["sha256"]) == 64
     with session_scope() as c:
-        assert cat.catalogue_size(c) == 16
+        assert cat.catalogue_size(c) == 19
         assert cat.latest_import(c)["file_name"] == SAMPLE.name
         row = c.execute(text("SELECT brand_norm, strengths, composition, discontinued FROM "
                              "med_catalogue WHERE source_id = '3'")).mappings().one()  # fmt: skip
-    assert row["brand_norm"] == "montina fx" and list(row["strengths"]) == []
+    # a name without a strength takes its composition's: Montelukast 10 mg + Fexofenadine 120 mg
+    assert row["brand_norm"] == "montina fx" and list(row["strengths"]) == [10, 120]
     assert row["composition"] == "Montelukast (10mg) + Fexofenadine (120mg)"
     # a reload replaces the source's rows, never duplicates them
     with session_scope() as c:
-        assert cat.import_csv(c, SAMPLE, source="test-1mg")["rows"] == 16
-        assert cat.catalogue_size(c) == 16
+        assert cat.import_csv(c, SAMPLE, source="test-1mg")["rows"] == 19
+        assert cat.catalogue_size(c) == 19
 
 
 def test_written_names_are_identified_through_spelling_variation(catalogue):
@@ -106,6 +107,16 @@ def test_the_written_dosage_form_must_agree_with_a_fuzzy_match(catalogue):
     assert _identify("Tab. Sonpraz").display_name == "Sompraz 40 Tablet"  # the form agrees
     # the form written on the line counts even when the extracted drug text dropped it
     assert _identify("Sonpraz", form="capsule").status == "unknown"
+
+
+def test_the_closest_products_use_the_written_strength(catalogue):
+    """Owner's test Rx (2026-09-26): "Tab. Thyronorm (62.5 mcg)" read as "Muronorm". Too far to
+    accept, but the product of that strength is offered first, not the nearer-spelled
+    Meronorm injection."""
+    m = _identify("Muronorm", (62.5,))
+    assert m.status == "unknown" and m.candidates[0]["name"] == "Thyronorm 62.5mcg Tablet"
+    m = _identify("Cap. Aueflu (#5)")  # "#5" is a quantity, not a strength
+    assert m.status == "unknown" and m.candidates[0]["name"] == "Antiflu 75mg Capsule"
 
 
 def test_no_reliable_match_is_unknown_medication_never_a_guess(catalogue):

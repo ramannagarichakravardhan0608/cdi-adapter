@@ -14,7 +14,9 @@ from uuid import UUID
 
 from sqlalchemy import Connection, text
 
-PIPELINE_STAGES = ("ingest", "ocr", "classify", "extract", "terminology", "validate", "project")
+# "agent": the advisory medication agent after validation (migration 0010, backlog E12-S4)
+PIPELINE_STAGES = ("ingest", "ocr", "classify", "extract", "terminology", "validate", "project",
+                   "agent")  # fmt: skip
 DOCUMENT_STATUSES = (
     "received",
     "pages_rendered",

@@ -33,3 +33,14 @@ def test_medications_show_the_catalogue_identification_beside_the_written_name()
     html = reviewer_page()
     assert "'Catalogue (Tata 1mg)'" in html and "catalogueText(e.catalogue)" in html
     assert "'UNKNOWN_MEDICATION'" in html  # never a guessed product
+
+
+def test_medications_show_the_agents_suggestion_which_the_reviewer_applies() -> None:
+    """Backlog E12-S4: advisory only. The suggestion pre-fills the Edit form; saving it is the
+    reviewer's correction (never applied automatically)."""
+    html = reviewer_page()
+    assert "'Agent (diagnosis check)'" in html and "agentText(e.agent)" in html
+    assert "no matching diagnosis" in html  # the fit check against the prescription's diagnoses
+    assert "Use suggestion" in html and "function useAgent" in html
+    assert "editFact(fid, item)" in html  # opens the normal Edit form, pre-filled
+    assert "/api/reviewer/items/${id}/agent" in html and "Run agent again" in html

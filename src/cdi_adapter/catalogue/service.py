@@ -33,10 +33,12 @@ from cdi_adapter import repo
 from cdi_adapter.catalogue.normalize import (
     MIN_KEY_LETTERS,
     best_brand,
+    composition_strengths,
     dosage_form,
     fold,
     ingredients,
     letters,
+    nearness,
     query_keys,
     score,
     split_name,
@@ -51,6 +53,9 @@ UNKNOWN = "UNKNOWN_MEDICATION"
 CANDIDATES_KEPT = 5
 _TRGM_THRESHOLD = 0.2  # candidate recall only; acceptance is normalize.score + the margin rule
 _TRGM_LIMIT = 40
+_FORM_NUDGE = 0.1  # ranking of the closest products only (see _closest)
+_STRENGTH_NUDGE = 0.15
+_UNIT_LIKE = {"u", "iu", "k", "ku", "[iu]", "[ku]"}
 _BATCH = 2000
 
 # header names of a 1mg-style catalogue export (and the widely used community snapshot of it),
@@ -135,6 +140,8 @@ def import_csv(conn: Connection, path: Path, *, source: str = "tata1mg",
         if not brand:
             continue
         comp = " + ".join(c for c in (_pick(row, "composition"), _pick(row, "composition2")) if c)
+        # "Saaz Tablet" states no strength; its composition does (Sulfasalazine (500mg))
+        strengths = strengths or composition_strengths(comp)
         batch.append({
             "source": source, "sid": sid, "imp": import_id, "name": name, "brand": brand,
             "strengths": list(strengths), "mfr": _pick(row, "manufacturer") or None,
@@ -228,6 +235,39 @@ def _generics(conn: Connection) -> dict[str, str]:
     return _generic_cache[1]
 
 
+def _closest(
+    brand: str,
+    pool: list[tuple[dict[str, Any], float]],
+    strengths: tuple[float, ...],
+    form: str | None,
+) -> list[dict[str, Any]]:
+    """The closest products shown to the reviewer for an UNKNOWN_MEDICATION (never accepted
+    from here), by the nearest name (``nearness``, which also ranks short names such as
+    "Shaz" / "Saaz"), nudged by what else the line states: the written dosage form and
+    strength. A nudge, not a filter: the strength can be misread too ("Antiflu (75)" read as
+    "Aueflu (#5)")."""
+
+    def rank(x: tuple[dict[str, Any], float]) -> float:
+        c = x[0]
+        r = nearness(brand, c["brand"].removeprefix("generic:"))
+        pf = dosage_form(c["name"])
+        if form and pf:
+            r += _FORM_NUDGE if pf == form else -2 * _FORM_NUDGE
+        agrees = strength_agrees(strengths, c["strengths"])
+        if agrees is not None:
+            r += _STRENGTH_NUDGE if agrees else -_STRENGTH_NUDGE
+        return -r
+
+    out: list[dict[str, Any]] = []
+    for c, _ in sorted(pool, key=rank):
+        if len(out) < CANDIDATES_KEPT and c["brand"] not in {x["brand"] for x in out}:
+            out.append(
+                {k: v for k, v in c.items() if k != "strengths"}
+                | {"score": nearness(brand, c["brand"].removeprefix("generic:"))}
+            )
+    return out
+
+
 def _generic(key: str, name: str, sc: float, method: str,
              candidates: list[dict[str, Any]] | None = None) -> Identification:  # fmt: skip
     """A line written by its generic (salt) name: identified as that generic, never as one
@@ -280,34 +320,29 @@ def _identify_key(conn: Connection, brand: str, strengths: tuple[float, ...],
              "ORDER BY similarity(brand_norm, :b) DESC, id LIMIT :n"),
         {"b": brand, "n": _TRGM_LIMIT},
     ).mappings()]  # fmt: skip
+    if strengths:
+        # a badly misread name ("Muronorm 62.5") still has its strength: the products of that
+        # strength whose names are nearest ("Thyronorm 62.5mcg") join the candidates
+        seen = {p["id"] for p in rows}
+        rows += [p for p in (_product(r) | {"brand": r["brand_norm"]} for r in conn.execute(
+            text("SELECT * FROM med_catalogue WHERE strengths && CAST(:s AS numeric[]) "
+                 "ORDER BY similarity(brand_norm, :b) DESC, id LIMIT :n"),
+            {"s": list(strengths), "b": brand, "n": _TRGM_LIMIT},
+        ).mappings()) if p["id"] not in seen]  # fmt: skip
     scored = sorted(((p, score(brand, p["brand"])) for p in rows), key=lambda x: -x[1])
     # a misread generic name ("Metfornin") competes with the brands under the same rules
     lead = fold(brand)[:1]
     gen_scored = [(g, score(brand, g)) for g in generics
                   if abs(len(g) - len(brand)) <= 2 and fold(g)[:1] == lead]  # fmt: skip
     # a product named after its generic ("Metformin 500mg Tablet") is that generic here
-    pool = [
-        (
-            {
-                "id": p["id"],
-                "name": p["name"],
-                "brand": p["brand"],
-                "manufacturer": p["manufacturer"],
-            },
-            sc,
-        )
-        for p, sc in scored
-        if p["brand"] not in generics
-    ]
+    pool = [({"id": p["id"], "name": p["name"], "brand": p["brand"],
+              "manufacturer": p["manufacturer"], "strengths": p["strengths"]}, sc)
+            for p, sc in scored if p["brand"] not in generics]  # fmt: skip
     pool += [({"id": None, "name": f"{generics[g]} (generic)", "brand": "generic:" + g,
-               "manufacturer": None}, sc) for g, sc in gen_scored if sc > 0]  # fmt: skip
+               "manufacturer": None, "strengths": []}, sc)
+             for g, sc in gen_scored if sc > 0]  # fmt: skip
     pool.sort(key=lambda x: -x[1])
-    # what the reviewer is shown: products of the written form first ("Cap." -> capsules)
-    shown = sorted(pool, key=lambda x: (not _form_agrees(form, x[0]), -x[1]))
-    candidates: list[dict[str, Any]] = []
-    for c, sc in shown:
-        if len(candidates) < CANDIDATES_KEPT and c["brand"] not in {x["brand"] for x in candidates}:
-            candidates.append(c | {"score": sc})
+    candidates = _closest(brand, pool, strengths, form)
     top, top_score, runner = best_brand((c["brand"], sc) for c, sc in pool)
     reliable = top_score >= s.catalogue_min_score and top_score - runner >= s.catalogue_min_margin
     if top.startswith("generic:") and reliable:
@@ -352,6 +387,29 @@ def save_identification(conn: Connection, fact_id: UUID | str, ident: Identifica
     )  # fmt: skip
 
 
+def fact_strengths(f: dict[str, Any]) -> tuple[float, ...]:
+    """The strengths a medication fact states: its ``strength_num``, and x1000 as well for a unit
+    like "U" / "IU" / "K" under 1000 ("60K", 60 000 IU, is often read as 60 U)."""
+    if f.get("strength_num") is None:
+        return ()
+    v = float(f["strength_num"])
+    if (f.get("strength_unit") or "").lower() in _UNIT_LIKE and v < 1000:
+        return (v, v * 1000)
+    return (v,)
+
+
+def fact_form(f: dict[str, Any]) -> str | None:
+    """The dosage form written on the line ("Cap. Sonpraz"), which drug_text may have dropped."""
+    return dosage_form(f.get("local_text")) or dosage_form(f.get("form"))
+
+
+def _match_fact(conn: Connection, f: dict[str, Any], import_id: int | None) -> Identification:
+    ident = identify(conn, f.get("drug_text") or f.get("local_text"), fact_strengths(f),
+                     fact_form(f))  # fmt: skip
+    save_identification(conn, f["id"], ident, import_id)
+    return ident
+
+
 def match_document_medications(conn: Connection, document_id: UUID | str) -> dict[str, int]:
     """Identify every current medication fact of a document against the catalogue. A no-op when
     the layer is off or the catalogue is empty (nothing recorded, nothing changed)."""
@@ -362,13 +420,26 @@ def match_document_medications(conn: Connection, document_id: UUID | str) -> dic
     for f in repo.get_facts_for_document(conn, document_id):
         if f["fact_type"] != "medication" or not f.get("is_current"):
             continue
-        strengths = (float(f["strength_num"]),) if f.get("strength_num") is not None else ()
-        # the form as written on the line ("Cap. Sonpraz"), which drug_text may have dropped
-        form = dosage_form(f.get("local_text")) or dosage_form(f.get("form"))
-        ident = identify(conn, f.get("drug_text") or f.get("local_text"), strengths, form)
-        save_identification(conn, f["id"], ident, imp["id"] if imp else None)
+        ident = _match_fact(conn, f, imp["id"] if imp else None)
         counts["catalogue_matched" if ident.status == "matched" else "catalogue_unknown"] += 1
     return counts
+
+
+def rematch_fact(conn: Connection, fact_id: UUID | str) -> Identification | None:
+    """Identify one medication fact again, e.g. the new fact a reviewer's correction made (the
+    old fact's identification stays with the old fact). None when the layer is off."""
+    if not get_settings().catalogue_enabled or catalogue_size(conn) == 0:
+        return None
+    f = conn.execute(
+        text("SELECT f.*, m.drug_text, m.strength_num, m.strength_unit, m.form "
+             "FROM clinical_fact f LEFT JOIN medication_detail m ON m.fact_id = f.id "
+             "WHERE f.id = :i"),
+        {"i": str(fact_id)},
+    ).mappings().first()  # fmt: skip
+    if f is None or f["fact_type"] != "medication":
+        return None
+    imp = latest_import(conn)
+    return _match_fact(conn, dict(f), imp["id"] if imp else None)
 
 
 def matches_for_facts(conn: Connection, fact_ids: list[str]) -> dict[str, dict[str, Any]]:
@@ -382,3 +453,90 @@ def matches_for_facts(conn: Connection, fact_ids: list[str]) -> dict[str, dict[s
              "WHERE CAST(m.fact_id AS text) = ANY(:ids)"), {"ids": fact_ids}
     ).mappings()  # fmt: skip
     return {str(r["fact_id"]): json.loads(json.dumps(dict(r), default=str)) for r in rows}
+
+
+# ------------------------------------------------------------------------------ agent tools
+# Read-only catalogue tools the medication agent calls (backlog E12-S4, ADR-0003 rule 2).
+
+
+def resolve_generics(
+    conn: Connection, names: list[str], per_name: int = 2
+) -> list[tuple[str, str]]:
+    """(generic key, catalogue generic name) for each generic an agent named, matched to the
+    catalogue's own generic names: exactly, one inside the other ("Levothyroxine" / "Thyroxine"),
+    or by nearness >= 0.85 ("Sulphasalazine" / "Sulfasalazine"). Unknown names are dropped."""
+    generics = _generics(conn)
+    out: list[tuple[str, str]] = []
+    for n in names:
+        key = split_name(n)[0]
+        if letters(key) < 4:
+            continue
+        if key in generics:
+            hits = [key]
+        else:
+            hits = [g for g in generics if len(key) >= 5 and len(g) >= 5 and (key in g or g in key)]
+            if not hits:
+                hits = [g for g in generics if nearness(key, g) >= 0.85]
+            hits = sorted(hits, key=lambda g: (-nearness(key, g), len(g)))[:per_name]
+        out += [(g, generics[g]) for g in hits if (g, generics[g]) not in out]
+    return out
+
+
+def _products_of_generic(conn: Connection, generic: str, strengths: tuple[float, ...],
+                         near: str, limit: int) -> list[dict[str, Any]]:  # fmt: skip
+    """One product per brand containing ``generic``, of the written strength when one is stated,
+    the brands nearest ``near`` first."""
+    rows = conn.execute(
+        text("SELECT * FROM (SELECT DISTINCT ON (brand_norm) * FROM med_catalogue "
+             "  WHERE composition ILIKE :g AND (cardinality(CAST(:s AS numeric[])) = 0 "
+             "    OR strengths && CAST(:s AS numeric[])) "
+             "  ORDER BY brand_norm, discontinued, id) t "
+             "ORDER BY similarity(t.brand_norm, :k) DESC, t.id LIMIT :n"),
+        {"g": f"%{generic}%", "s": list(strengths), "k": near, "n": limit},
+    ).mappings()  # fmt: skip
+    return [_product(r) | {"brand": r["brand_norm"]} for r in rows]
+
+
+def shortlist(conn: Connection, *, names: list[str], generics: list[str],
+              strengths: tuple[float, ...] = (), form: str | None = None,
+              limit: int = 12) -> list[dict[str, Any]]:  # fmt: skip
+    """The catalogue products a medicine line may be, for an agent (and then a person) to choose
+    from: products of the generics the line most likely contains at the written strength, then
+    the closest names to each reading of it. One per brand, never more than ``limit``."""
+    keys = [k for k in (split_name(n)[0] for n in names) if letters(k) >= MIN_KEY_LETTERS]
+    near = keys[0] if keys else ""
+
+    def closeness(p: dict[str, Any]) -> float:
+        r = max((nearness(k, p["brand"]) for k in keys), default=0.0)
+        pf = dosage_form(p["name"])
+        if form and pf:
+            r += _FORM_NUDGE if pf == form else -2 * _FORM_NUDGE
+        agrees = strength_agrees(strengths, p["strengths"])
+        if agrees is not None:
+            r += _STRENGTH_NUDGE if agrees else -_STRENGTH_NUDGE
+        return r
+
+    by_generic: list[dict[str, Any]] = []
+    for _key, name in resolve_generics(conn, generics):
+        by_generic += _products_of_generic(conn, name, strengths, near, 60)
+    by_name: list[dict[str, Any]] = []
+    for n in names:
+        ident = identify(conn, n, strengths, form)
+        ids = [ident.catalogue_id] if ident.catalogue_id else []
+        ids += [c["id"] for c in ident.candidates if c.get("id")]
+        if ids:
+            by_name += [_product(r) | {"brand": r["brand_norm"]} for r in conn.execute(
+                text("SELECT * FROM med_catalogue WHERE id = ANY(:ids)"), {"ids": ids}
+            ).mappings()]  # fmt: skip
+    out: list[dict[str, Any]] = []
+    half = max(1, limit // 2)
+    for pool, cap in ((sorted(by_generic, key=lambda p: -closeness(p)), half),
+                      (sorted(by_name, key=lambda p: -closeness(p)), limit)):  # fmt: skip
+        taken = 0
+        for p in pool:
+            if len(out) >= limit or taken >= cap:
+                break
+            if p["brand"] not in {x["brand"] for x in out}:
+                out.append(p)
+                taken += 1
+    return out

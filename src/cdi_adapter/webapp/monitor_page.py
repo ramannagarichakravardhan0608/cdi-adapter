@@ -101,7 +101,7 @@ SCRIPT = r"""
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const STAGES = {ingest:['Ingest','⤓'], ocr:['OCR','Aa'], classify:['Classify','#'], extract:['AI extract','AI'],
-  terminology:['Terminology','⌘'], validate:['Validate','✓'], review:['Review','◉'], fhir:['FHIR','{}']};
+  terminology:['Terminology','⌘'], validate:['Validate','✓'], agent:['Med agent','Rx'], review:['Review','◉'], fhir:['FHIR','{}']};
 const W = 96, GAP = 150, Y = 150, X0 = 60;
 let items = [], selDoc = null, selStage = null, flow = null, flowTimer = null, tab = 'summary';
 let view = {x: 0, y: 0, k: 1};
@@ -133,7 +133,7 @@ function renderItems(){
     return `<div class="item ${i.document_id && i.document_id === selDoc ? 'sel' : ''}" data-doc="${esc(i.document_id || '')}">
       <div class=t>${esc(i.filename)}</div>
       <div class=m>${esc(when(i.created_at))} · ${esc(i.doc_type || '…')} · <span class="pill ${cls}">${esc(i.status)}</span>${i.facts ? ' · ' + i.facts + ' facts' : ''}${i.patient ? ' · ' + esc(i.patient) : ''}</div>
-      <div class=dots>${Object.keys(STAGES).slice(0, 7).map(s => `<span class="dot ${esc(i.stages[s] || '')}" title="${esc(STAGES[s][0])}: ${esc(i.stages[s] || 'pending')}"></span>`).join('')}</div>
+      <div class=dots>${Object.keys(STAGES).slice(0, 8).map(s => `<span class="dot ${esc(i.stages[s] || '')}" title="${esc(STAGES[s][0])}: ${esc(i.stages[s] || 'pending')}"></span>`).join('')}</div>
       ${i.error ? `<div class=m style="color:var(--bad)">${esc(i.error)}</div>` : ''}</div>`;
   }).join('') : '<div class=empty>No documents match.</div>';
   document.querySelectorAll('.item').forEach(el => el.onclick = () => {
@@ -158,6 +158,7 @@ function sub(st){
     case 'extract': return (r.model ? r.model.replace(/^.*\//, '').replace('-Instruct', '') : '') + t;
     case 'terminology': return (d.total ? d.coded + '/' + d.total + ' coded' : '') + t;
     case 'validate': return m.facts != null ? (m.auto_accepted || 0) + ' auto · ' + (m.in_review || 0) + ' held' : st.state;
+    case 'agent': return m.lines != null ? (m.suggested || 0) + ' suggested' + t : st.state;
     case 'review': return d.status || st.state;
     case 'fhir': return d.artifact_type || (st.state === 'ready' ? 'ready to build' : st.state);
   }
@@ -167,7 +168,7 @@ function wireLabel(st){  // what flowed out of a node, like n8n's "n items"
   const d = st.detail || {};
   return {ingest: d.pages ? d.pages.length + ' page' + (d.pages.length === 1 ? '' : 's') : '', ocr: d.blocks != null ? d.blocks + ' lines' : '',
           classify: d.doc_type || '', extract: d.facts != null ? d.facts + ' facts' : '', terminology: d.total ? d.total + ' facts' : '',
-          validate: st.state === 'ok' ? 'checked' : '', review: d.status || ''}[st.key] || '';
+          validate: st.state === 'ok' ? 'checked' : '', agent: d.lines ? d.lines.length + ' medicines' : '', review: d.status || ''}[st.key] || '';
 }
 function renderFlow(){
   const st = flow.stages;
@@ -253,6 +254,9 @@ function summary(s){
       table(d.facts, [['fact_type', 'Type'], ['local_text', 'As written'], ['code', 'Code'], ['code_display', 'Display'], ['code_status', 'Mapping'], ['catalogue', 'Catalogue (Tata 1mg)'], ['review_state', 'Review']]);
     case 'validate': return h + '<h4>Gate</h4>' + kv({facts: d.facts, 'auto-accepted': d.auto_accepted, 'held for review': d.in_review}) +
       '<div class=empty>Confident, consistent facts are auto-accepted; the rest are held for a clinician.</div>';
+    case 'agent': return h + '<h4>Suggestions (advisory: a reviewer applies them)</h4>' +
+      table(d.lines, [['read_as', 'As read'], ['status', 'Agent'], ['product', 'Product'], ['treats', 'Treats'], ['why', 'Because'], ['evidence', 'Written'], ['confidence', 'Conf', 'n'], ['rationale', 'Why']]) +
+      '<h4>Steps (agent trace)</h4>' + table(d.trace, [['seq', '#', 'n'], ['step', 'Step'], ['tool', 'Tool'], ['duration_ms', 'ms', 'n'], ['confidence', 'Conf', 'n']]);
     case 'review': return '<h4>Review item</h4>' + kv({status: d.status, 'claimed by': d.assigned_to, claimed: when(d.claimed_at), decided: when(d.decided_at)}) +
       '<h4>Elements by state</h4>' + kv(d.elements || {}) + '<a href="/reviewer" target=_blank rel=noopener>Open in the Reviewer ↗</a>';
     case 'fhir': return (d ? '<h4>Stored bundle</h4>' + kv({artifact: d.artifact_type, validation: d.validation_status, status: d.status, FHIR: d.fhir_version, IG: d.ig_package, created: when(d.created_at)})

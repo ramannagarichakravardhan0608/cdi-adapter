@@ -78,7 +78,12 @@ row keeps the import it was made against.
 5. The pack: the brand's product with exactly the written strengths (Glycomet-GP 1, not 1/850),
    then one sharing a strength, then one still on the market.
 6. Anything else → **`UNKNOWN_MEDICATION`**, with the closest products kept as `candidates` for the
-   reviewer. Never a guess.
+   reviewer. Never a guess. The closest list is for a person to choose from, so it uses every
+   clue the line has: the nearest names (short ones too: "Shaz" / "Saaz"), then **products of the
+   written strength** even when the name is far ("Muronorm 62.5" → Thyronorm 62.5mcg Tablet
+   first, not the Meronorm injection), nudged by the written dosage form. Strength and form
+   only nudge the order, because they can be misread too. A product whose name states no
+   strength takes its composition's ("Saaz Tablet" = Sulfasalazine 500 mg); "#5" is a quantity.
 
 Measured (local PostgreSQL 16, 250 000 synthetic products): import 18.5 s; identification median
 71 ms, p95 115 ms. Embeddings were not used: brand names are proper nouns whose errors are

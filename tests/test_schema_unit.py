@@ -105,13 +105,13 @@ def test_migration_0001_downgrade_drops_every_table():
     assert set(m.VIEWS) == set(re.findall(r"CREATE OR REPLACE VIEW (\w+)", VIEWS))
 
 
-def test_migration_chain_is_linear_0001_to_0009():
+def test_migration_chain_is_linear_0001_to_0010():
     cfg = Config(str(ROOT / "alembic.ini"))
     cfg.set_main_option("script_location", str(ROOT / "db" / "alembic"))
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_heads() == ["0009"]  # 0009: the medicine catalogue (Tata 1mg)
+    assert script.get_heads() == ["0010"]  # 0010: agent trace + the medication agent stage
     chain = [r.revision for r in script.walk_revisions("base", "heads")]
-    assert chain == ["0009", "0008", "0007", "0006", "0005", "0004", "0003", "0002", "0001"]
+    assert chain == ["0010", "0009", "0008", "0007", "0006", "0005", "0004", "0003", "0002", "0001"]
 
 
 def test_migration_0003_seeds_four_dummy_registry_patients():

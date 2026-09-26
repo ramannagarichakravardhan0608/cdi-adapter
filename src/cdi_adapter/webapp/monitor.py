@@ -30,7 +30,8 @@ from cdi_adapter.webapp.monitor_page import monitor_page
 
 router = APIRouter()
 
-RUN_STAGES = ("ingest", "ocr", "classify", "extract", "terminology", "validate")
+# "agent": the advisory medication agent (E12-S4), queued once the document is filed for review
+RUN_STAGES = ("ingest", "ocr", "classify", "extract", "terminology", "validate", "agent")
 FLOW = (*RUN_STAGES, "review", "fhir")
 ITEMS_MAX = 100
 OCR_BLOCKS_SHOWN = 80
@@ -193,6 +194,30 @@ def _facts(conn: Connection, document_id: str) -> list[dict[str, Any]]:
     return out
 
 
+def _agent(conn: Connection, did: str) -> dict[str, Any] | None:
+    """The medication agent's latest suggestions and the steps it took (``agent_trace``)."""
+    from cdi_adapter.agent.medication import latest_for_document
+
+    got = latest_for_document(conn, did)
+    if got["run"] is None:
+        return None
+    lines = sorted(got["by_fact"].values(), key=lambda x: x.get("line") or 0)
+    trace = conn.execute(
+        text("SELECT t.seq, t.step, t.tool, t.confidence, t.duration_ms FROM agent_trace t "
+             "WHERE t.run_id = (SELECT id FROM pipeline_run WHERE document_id = :d "
+             "  AND stage = 'agent' ORDER BY started_at DESC LIMIT 1) ORDER BY t.seq"),
+        {"d": did},
+    ).mappings().all()  # fmt: skip
+    return {
+        "lines": [{"read_as": x.get("read_as"), "status": x.get("status"),
+                   "product": (x.get("product") or {}).get("name"), "treats": x.get("treats"),
+                   "evidence": x.get("evidence"), "confidence": x.get("confidence"),
+                   "why": x.get("why"),
+                   "rationale": x.get("rationale") or x.get("reason")} for x in lines],
+        "trace": [dict(t) for t in trace],
+    }  # fmt: skip
+
+
 def document_flow(conn: Connection, document_id: UUID | str) -> dict[str, Any] | None:
     did = str(document_id)
     row = conn.execute(text("SELECT * FROM source_document WHERE id = :d"),
@@ -244,6 +269,7 @@ def document_flow(conn: Connection, document_id: UUID | str) -> dict[str, Any] |
             "total": len(facts),
         },  # fmt: skip
         "validate": validated["metrics"] if validated else None,
+        "agent": _agent(conn, did),
         "review": review,
         "fhir": dict(bundle) if bundle else None,
     }
