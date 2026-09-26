@@ -94,11 +94,21 @@ const COLS = {
     ['Dose', e => unit((e.medication || {}).dose_num, (e.medication || {}).dose_unit_ucum)],
     ['Frequency', e => [(e.medication || {}).frequency_code, (e.medication || {}).prn ? 'as needed' : ''].filter(Boolean).join(' · ')],
     ['Duration', e => (e.medication || {}).duration_days != null ? num(e.medication.duration_days) + ' days' : ''],
-    ['Route', e => (e.medication || {}).route], ['Instructions', e => (e.medication || {}).instructions]],
+    ['Route', e => (e.medication || {}).route], ['Instructions', e => (e.medication || {}).instructions],
+    ['Catalogue (Tata 1mg)', e => catalogueText(e.catalogue)]],
   measured: [['Test', e => e.fact?.local_text], ['Value', e => e.fact?.value_text || (e.fact?.value_num != null ? num(e.fact.value_num) : '')],
     ['Unit', e => e.fact?.value_unit_ucum], ['Flag', e => e.fact?.abnormal_flag]],
   text: [['Detail', e => e.fact?.local_text]],
 };
+// the catalogue's identification of the line (owner, 2026-09-26): the product, or UNKNOWN_MEDICATION
+// with the closest catalogue names; the medicine column above stays as written
+function catalogueText(c){
+  if (!c) return '';
+  if (c.status === 'matched') return [c.product_name || c.display_name, c.product_name ? c.composition : '', c.manufacturer,
+    ['exact', 'generic'].includes(c.method) ? 'exact' : 'match ' + Number(c.score).toFixed(2), c.strength_match === false ? 'strength differs' : ''].filter(Boolean).join(' · ');
+  const near = (c.candidates || []).slice(0, 2).map(x => `${x.name} ${Number(x.score).toFixed(2)}`).join(', ');
+  return 'UNKNOWN_MEDICATION' + (near ? ` (closest: ${near})` : '');
+}
 const colsFor = t => t === 'medication' ? COLS.medication : ['vital_sign', 'lab_result'].includes(t) ? COLS.measured : COLS.text;
 function factRows(e, id, cols){
   const n = cols.length + 3;

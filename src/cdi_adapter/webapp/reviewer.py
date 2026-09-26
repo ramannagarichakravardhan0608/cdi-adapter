@@ -29,6 +29,7 @@ from sqlalchemy import text
 
 from cdi_adapter.canon import promote
 from cdi_adapter.canon import repo as canon
+from cdi_adapter.catalogue.service import matches_for_facts
 from cdi_adapter.db import session_scope
 from cdi_adapter.webapp import auth
 from cdi_adapter.webapp.reviewer_page import reviewer_page
@@ -103,13 +104,19 @@ def item_elements(item_id: UUID) -> dict[str, Any]:
         if item is None:
             raise HTTPException(404, "review item not found")
         els = canon.elements(c, item_id)
+        med_ids = [str(e["fact"]["id"]) for e in els
+                   if e["fact"] and e["fact"]["fact_type"] == "medication"]  # fmt: skip
+        catalogue = matches_for_facts(c, med_ids)
         for e in els:  # a medication's detail: what the page shows and its Edit form fills
             f = e["fact"]
             e["medication"] = None
+            e["catalogue"] = None
             if f and f["fact_type"] == "medication":
                 m = c.execute(text("SELECT * FROM medication_detail WHERE fact_id = :i"),
                               {"i": str(f["id"])}).mappings().first()  # fmt: skip
                 e["medication"] = dict(m) if m else None
+                # the Tata 1mg catalogue's identification of this line (None: not matched yet)
+                e["catalogue"] = catalogue.get(str(f["id"]))
         return {"item": item, "elements": els}
 
 

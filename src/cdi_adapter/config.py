@@ -112,6 +112,14 @@ class Settings(BaseSettings):
     # and so send it through the VLM handwriting pass (2026-09-26: a printed letterhead with a
     # handwritten Rx, mean OCR 0.80, was taken as printed and its drugs extracted as gibberish)
     fast_classify_min_ocr_conf: float = Field(default=0.88, ge=0, le=1)
+    # medicine catalogue layer (owner request 2026-09-26; docs/medicine-catalogue.md): after S5,
+    # each medication fact is identified against the imported catalogue (Tata 1mg). A fuzzy match is
+    # accepted only at >= min_score AND a lead of >= min_margin over every other brand; else
+    # UNKNOWN_MEDICATION. Off, or an empty catalogue, changes nothing.
+    catalogue_enabled: bool = True
+    catalogue_min_score: float = Field(default=0.85, ge=0, le=1)
+    catalogue_min_margin: float = Field(default=0.05, ge=0, le=1)
+    catalogue_strength_must_agree: bool = True  # a fuzzy name with another strength: unknown
     extract_retries: int = Field(default=1, ge=0)
     job_max_workers: int = Field(default=6, ge=1)
     # Phase-2 extractions in flight at once (backlog E2-S2, §7.2): 0 = auto, i.e.

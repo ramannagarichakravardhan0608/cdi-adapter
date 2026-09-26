@@ -979,6 +979,8 @@ Postgres.
 | `CDI_VLM_MAX_PIXELS_OCR` | 2 000 000 | processor cap (VRAM bound) |
 | `CDI_VLM_QUANTIZE` | empty (bf16) | `8bit` = bitsandbytes LLM.int8 weights, **test hosts below 24 GB only** (a 15 GB T4 cannot hold the 7B's ~16 GB bf16 weights); the pod stays bf16. `start_mlserve.sh` installs the pinned `BITSANDBYTES_VERSION` (versions.env) when set (`docs/fallback-host.md`) |
 | `CDI_FAST_CLASSIFY` | `true` | S2 scored heuristic first; VLM only on ambiguous/handwritten |
+| `CDI_FAST_CLASSIFY_MIN_OCR_CONF` | 0.88 | the fast path only for a confidently OCR'd page; below it the VLM classifies (and can route handwriting to the VLM OCR pass) |
+| `CDI_CATALOGUE_ENABLED` / `_MIN_SCORE` / `_MIN_MARGIN` / `_STRENGTH_MUST_AGREE` | `true` / 0.85 / 0.05 / `true` | medicine catalogue (Tata 1mg) identification after S5: a fuzzy match needs the score AND a lead over every other brand, else `UNKNOWN_MEDICATION` (`docs/medicine-catalogue.md`) |
 | `CDI_EXTRACT_RETRIES` | `1` | S4 VLM re-tries on schema failure (schemas relaxed → rare) |
 | `CDI_JOB_MAX_WORKERS` | 6 | Phase-1 documents in flight concurrently |
 | `CDI_EXTRACT_BATCH_MAX` | 1 (off) | E2-S8: up to this many short documents of one doc_type share one batched model call (`POST /vlm/generate_batch`); every document stays its own sequence. Off until the GPU A/B shows a gain |

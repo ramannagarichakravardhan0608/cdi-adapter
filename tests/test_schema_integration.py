@@ -28,8 +28,10 @@ CANONICAL_TABLES = {
 AUTH_TABLES = {"web_user", "web_session"}  # migration 0005 (backlog E11-S1)
 MODEL_TABLES = {"model_version", "model_rollout"}  # migration 0006 (backlog E10-S5)
 JOB_TABLES = {"web_job"}  # migration 0007 (backlog E10-S9)
+# migration 0009: the medicine catalogue (Tata 1mg) and each medication's identification
+CATALOGUE_TABLES = {"med_catalogue", "med_catalogue_import", "medication_catalogue_match"}
 ALL_TABLES = (PER_DOC_TABLES | {"patient_registry"} | CANONICAL_TABLES | AUTH_TABLES
-              | MODEL_TABLES | JOB_TABLES)  # fmt: skip
+              | MODEL_TABLES | JOB_TABLES | CATALOGUE_TABLES)  # fmt: skip
 VIEWS = {"v_problem_list", "v_medication_list", "v_allergy_list", "v_results_grid",
          "v_encounter_timeline"}  # fmt: skip
 
@@ -65,7 +67,7 @@ def test_upgrade_head_creates_every_table_and_view(engine):
     assert _tables(engine) == ALL_TABLES
     assert _views(engine) == VIEWS
     with engine.connect() as c:
-        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0008"
+        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0009"
         assert c.execute(text("SELECT nextval('patient_mpi_seq')")).scalar_one() >= 1
 
 

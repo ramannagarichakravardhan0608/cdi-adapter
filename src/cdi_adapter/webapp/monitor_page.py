@@ -250,7 +250,7 @@ function summary(s){
     case 'extract': return h + '<h4>Result</h4>' + kv({model: d.model_name, schema: d.schema_id, 'partial answer': d.is_partial, facts: d.facts}) +
       '<h4>What the model returned</h4>' + pre(d.payload);
     case 'terminology': return h + '<h4>Coding</h4>' + kv({'facts coded': d.coded + ' of ' + d.total}) +
-      table(d.facts, [['fact_type', 'Type'], ['local_text', 'As written'], ['code', 'Code'], ['code_display', 'Display'], ['code_status', 'Mapping'], ['review_state', 'Review']]);
+      table(d.facts, [['fact_type', 'Type'], ['local_text', 'As written'], ['code', 'Code'], ['code_display', 'Display'], ['code_status', 'Mapping'], ['catalogue', 'Catalogue (Tata 1mg)'], ['review_state', 'Review']]);
     case 'validate': return h + '<h4>Gate</h4>' + kv({facts: d.facts, 'auto-accepted': d.auto_accepted, 'held for review': d.in_review}) +
       '<div class=empty>Confident, consistent facts are auto-accepted; the rest are held for a clinician.</div>';
     case 'review': return '<h4>Review item</h4>' + kv({status: d.status, 'claimed by': d.assigned_to, claimed: when(d.claimed_at), decided: when(d.decided_at)}) +

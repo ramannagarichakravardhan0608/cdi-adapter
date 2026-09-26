@@ -156,6 +156,11 @@ def bind_document(document_id: UUID | str, *, actor: str = "system") -> dict[str
                 _update_fact(conn, f["id"], u)
                 bound += u["code_status"] == "bound"
             metrics = {"facts": len(facts), "bound": bound, "local_only": len(facts) - bound}
+            # the medicine catalogue layer (Tata 1mg): identify each medication against the
+            # catalogue, beside its coding; the extracted text is never changed
+            from cdi_adapter.catalogue.service import match_document_medications
+
+            metrics.update(match_document_medications(conn, document_id))
             # E10-S4: the unmapped-code rate trend (E3-S3 minting keeps feeding the same counter)
             prom.TERMINOLOGY.labels("bound").inc(bound)
             prom.TERMINOLOGY.labels("local_only").inc(len(facts) - bound)

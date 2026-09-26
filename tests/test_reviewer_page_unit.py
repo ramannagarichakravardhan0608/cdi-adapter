@@ -27,3 +27,9 @@ def test_the_uploaded_document_is_shown_beside_its_facts() -> None:
     assert "/api/documents/${encodeURIComponent(viewer.id)}/pages/${viewer.page}" in html
     assert "/api/documents/${esc(viewer.id)}/original" in html  # the file exactly as uploaded
     assert "position:sticky" in html  # stays in view while the facts scroll
+
+
+def test_medications_show_the_catalogue_identification_beside_the_written_name() -> None:
+    html = reviewer_page()
+    assert "'Catalogue (Tata 1mg)'" in html and "catalogueText(e.catalogue)" in html
+    assert "'UNKNOWN_MEDICATION'" in html  # never a guessed product

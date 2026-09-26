@@ -24,6 +24,7 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy import Connection, text
 
 from cdi_adapter import repo
+from cdi_adapter.catalogue.service import matches_for_facts
 from cdi_adapter.db import session_scope
 from cdi_adapter.webapp.monitor_page import monitor_page
 
@@ -180,7 +181,16 @@ def _facts(conn: Connection, document_id: str) -> list[dict[str, Any]]:
         "duration_days",
     )
     facts = [f for f in repo.get_facts_for_document(conn, document_id) if f.get("is_current")]
-    return [{k: f.get(k) for k in keep if k in f} for f in facts]
+    # the medicine catalogue (Tata 1mg) identification of each medication line
+    cat = matches_for_facts(conn, [str(f["id"]) for f in facts if f["fact_type"] == "medication"])
+    out = []
+    for f in facts:
+        row = {k: f.get(k) for k in keep if k in f}
+        m = cat.get(str(f["id"]))
+        row["catalogue"] = (m["display_name"] + (f" ({m['score']:.2f})" if m.get("score") else "")
+                            if m else None)  # fmt: skip
+        out.append(row)
+    return out
 
 
 def document_flow(conn: Connection, document_id: UUID | str) -> dict[str, Any] | None:
