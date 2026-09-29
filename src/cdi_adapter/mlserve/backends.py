@@ -358,6 +358,10 @@ def _allergies(lines) -> list[dict[str, Any]]:
     return out
 
 
+# the header a prescription writes its advised tests under (owner request 2026-09-28)
+_TESTS_ADVISED = r"investigations?(?: advised)?|ix|tests? advised|lab tests?|advised tests?"
+
+
 def _coded(items) -> list[dict[str, Any]]:
     return [{"text": t, "evidence": _ev(b), "confidence": _CONF} for b, t in items if t]
 
@@ -391,7 +395,9 @@ class StubBackend(Backend):
         out = {"medications": _medications(lines), "vitals": _vitals(lines),
                "allergies": _allergies(lines),
                "diagnoses": _coded(_after("diagnosis|dx|diagnoses|impression", lines)),
-               "advice": _coded(_after("advice|adv", lines)), "confidence": _CONF}  # fmt: skip
+               "advice": _coded(_after("advice|adv", lines)),
+               "investigations_advised": _coded(_after(_TESTS_ADVISED, lines)),
+               "confidence": _CONF}  # fmt: skip
         return self._with_meta(out, lines, "encounter_date", "date|visit date")
 
     def _lab_report(self, lines) -> dict[str, Any]:
@@ -408,6 +414,7 @@ class StubBackend(Backend):
                "diagnoses": _coded(_after("diagnosis|dx|impression", lines)),
                "vitals": _vitals(lines), "medications": _medications(lines),
                "allergies": _allergies(lines), "advice": _coded(_after("advice|plan", lines)),
+               "investigations_advised": _coded(_after(_TESTS_ADVISED, lines)),
                "confidence": _CONF}  # fmt: skip
         return self._with_meta(out, lines, "encounter_date", "date|visit date")
 
@@ -437,6 +444,9 @@ class StubBackend(Backend):
 
     # the medication agent (E12-S4): the stub cannot read handwriting nor knows medicines, so it
     # chooses no product and links no diagnosis; the agent then records "no suggestion"
+    def _med_agent_recall(self, lines) -> dict[str, Any]:
+        return {"lines": [], "confidence": 0.3}
+
     def _med_agent_choice(self, lines) -> dict[str, Any]:
         return {"lines": [], "confidence": 0.3}
 

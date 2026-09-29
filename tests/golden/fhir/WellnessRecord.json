@@ -71,12 +71,29 @@
         "identifier": [
           {
             "system": "https://careflow.clinic/mpi",
+            "type": {
+              "coding": [
+                {
+                  "code": "MR",
+                  "display": "Medical record number",
+                  "system": "http://terminology.hl7.org/CodeSystem/v2-0203"
+                }
+              ],
+              "text": "Medical record number"
+            },
             "use": "usual",
             "value": "CFP-2026-000001"
           },
           {
             "system": "https://healthid.ndhm.gov.in",
             "type": {
+              "coding": [
+                {
+                  "code": "ABHA",
+                  "display": "Ayushman Bharat Health Account (ABHA) ID",
+                  "system": "https://nrces.in/ndhm/fhir/r4/CodeSystem/ndhm-identifier-type-code"
+                }
+              ],
               "text": "ABHA number"
             },
             "use": "official",
@@ -85,6 +102,13 @@
           {
             "system": "https://healthid.ndhm.gov.in/address",
             "type": {
+              "coding": [
+                {
+                  "code": "ABHA",
+                  "display": "Ayushman Bharat Health Account (ABHA) ID",
+                  "system": "https://nrces.in/ndhm/fhir/r4/CodeSystem/ndhm-identifier-type-code"
+                }
+              ],
               "text": "ABHA address"
             },
             "value": "anjali.das@abdm"
@@ -92,6 +116,13 @@
           {
             "system": "urn:cdi:legacy-mrn",
             "type": {
+              "coding": [
+                {
+                  "code": "MR",
+                  "display": "Medical record number",
+                  "system": "http://terminology.hl7.org/CodeSystem/v2-0203"
+                }
+              ],
               "text": "Legacy MRN"
             },
             "value": "LEG-7"
@@ -114,6 +145,22 @@
       "fullUrl": "urn:uuid:66c0d3a9-c723-5c30-9792-4fe5880edc7e",
       "resource": {
         "id": "66c0d3a9-c723-5c30-9792-4fe5880edc7e",
+        "identifier": [
+          {
+            "system": "https://careflow.clinic/facility",
+            "type": {
+              "coding": [
+                {
+                  "code": "PRN",
+                  "display": "Provider number",
+                  "system": "http://terminology.hl7.org/CodeSystem/v2-0203"
+                }
+              ],
+              "text": "Facility ID"
+            },
+            "value": "CAREFLOW-POLYCLINIC-1"
+          }
+        ],
         "meta": {
           "profile": [
             "https://nrces.in/ndhm/fhir/r4/StructureDefinition/Organization"
@@ -127,6 +174,22 @@
       "fullUrl": "urn:uuid:4f48a076-62ec-5efe-913b-5e01763b70ce",
       "resource": {
         "id": "4f48a076-62ec-5efe-913b-5e01763b70ce",
+        "identifier": [
+          {
+            "system": "https://careflow.clinic/practitioner",
+            "type": {
+              "coding": [
+                {
+                  "code": "OIN",
+                  "display": "Other identifier",
+                  "system": "https://nrces.in/ndhm/fhir/r4/CodeSystem/ndhm-identifier-type-code"
+                }
+              ],
+              "text": "CareFlow practitioner id"
+            },
+            "value": "4f48a076-62ec-5efe-913b-5e01763b70ce"
+          }
+        ],
         "meta": {
           "profile": [
             "https://nrces.in/ndhm/fhir/r4/StructureDefinition/Practitioner"
@@ -274,6 +337,11 @@
             {
               "code": "59408-5",
               "display": "Oxygen saturation in Arterial blood by Pulse oximetry",
+              "system": "http://loinc.org"
+            },
+            {
+              "code": "2708-6",
+              "display": "Oxygen saturation in Arterial blood",
               "system": "http://loinc.org"
             }
           ],
@@ -449,7 +517,7 @@
         "id": "5476ba18-bc0a-5e52-8c98-77d455d1ca51",
         "meta": {
           "profile": [
-            "https://nrces.in/ndhm/fhir/r4/StructureDefinition/Provenance"
+            "http://hl7.org/fhir/StructureDefinition/Provenance"
           ]
         },
         "reason": [
@@ -488,9 +556,11 @@
     "value": "5610307c-c640-5abe-9b4c-5c191f8a8056"
   },
   "meta": {
+    "lastUpdated": "2026-08-12T10:00:00+00:00",
     "profile": [
       "https://nrces.in/ndhm/fhir/r4/StructureDefinition/DocumentBundle"
-    ]
+    ],
+    "versionId": "1"
   },
   "resourceType": "Bundle",
   "timestamp": "2026-08-12T10:00:00+00:00",

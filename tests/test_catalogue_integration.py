@@ -170,3 +170,12 @@ def test_an_empty_catalogue_changes_nothing(db_env):
     _write(doc, blocks)
     metrics = bind_document(doc)
     assert "catalogue_matched" not in metrics and "catalogue_unknown" not in metrics
+
+
+def test_an_exact_brand_of_another_form_is_not_that_product(catalogue):
+    """ "Syp Dolo" is not the Dolo tablet: the brand exists only as tablets, so the line is
+    UNKNOWN_MEDICATION rather than a product of the wrong form."""
+    assert _identify("Tab Dolo 650").display_name == "Dolo 650 Tablet"
+    assert _identify("T Dolo 650").display_name == "Dolo 650 Tablet"  # T = tablet
+    m = _identify("Syp Dolo 650")
+    assert (m.status, m.display_name) == ("unknown", cat.UNKNOWN)

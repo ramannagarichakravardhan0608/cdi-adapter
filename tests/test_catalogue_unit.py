@@ -96,3 +96,29 @@ def test_a_composition_states_each_ingredients_strength():
     assert composition_strengths("Vitamin D3 (60000IU)") == (60000.0,)
     assert composition_strengths("Montelukast (10mg) + Fexofenadine (120mg)") == (10.0, 120.0)
     assert composition_strengths("Amlodipine (NA)") == () and composition_strengths(None) == ()
+
+
+@pytest.mark.parametrize(
+    ("written", "form"),
+    [
+        ("T Dytor 10", "tablet"), ("T. Dolo 650", "tablet"), ("Tab Pan 40", "tablet"),
+        ("Tabs Crocin", "tablet"), ("C Pan-D", "capsule"), ("Cap Sompraz D", "capsule"),
+        ("Syp Crocin", "syrup"), ("Syr Ascoril", "syrup"), ("Inj Monocef", "injection"),
+        ("Susp Augmentin", "suspension"), ("Cr Candid", "cream"), ("Crm Candid B", "cream"),
+        ("Oint Soframycin", "ointment"), ("Gtt Moxicip", "drops"), ("Lot Calamine", "lotion"),
+        ("Sol Betadine", "solution"), ("Resp Budecort", "respules"),
+        ("Moxicip Infusion", "infusion"), ("Betadine 2% Gargle", "gargle"),
+        # a single letter is a form only as the FIRST word; CR after a name is controlled release
+        ("Vitamin C 500", None), ("Neurobion Forte T", None), ("Glycomet GP 1 CR", None),
+    ],
+)  # fmt: skip
+def test_every_dosage_form_abbreviation_maps_to_the_catalogue_form(written, form):
+    """Owner, 2026-09-28: T / Tab / Tabs -> Tablet, C / Cap -> Capsule, Syp -> Syrup, Inj ->
+    Injection, Susp -> Suspension, Cr -> Cream, Oint -> Ointment ...: one table, every medicine."""
+    assert dosage_form(written) == form
+
+
+def test_a_leading_abbreviation_is_read_as_the_form_not_the_name():
+    assert query_keys("T Dytor 10") == [("dytor", (10.0,))]
+    assert query_keys("C Pan-D") == [("pan d", ())]
+    assert query_keys("Vitamin C 500") == [("vitamin c", (500.0,))]  # "C" is part of the name

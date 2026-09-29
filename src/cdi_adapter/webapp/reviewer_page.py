@@ -57,24 +57,38 @@ const FIELDS = {
   medication: [['drug_text', 'Medicine'], ['strength_num', 'Strength'], ['strength_unit', 'Strength unit (mg, ml, …)'],
     ['dose_num', 'Dose'], ['dose_unit_ucum', 'Dose unit (tab, ml, …)'], ['frequency_code', 'Frequency (1-0-1, BD, OD, SOS, …)'],
     ['duration_days', 'Duration (days)'], ['route', 'Route'], ['instructions', 'Instructions (after food, …)']],
+  // every other detail of a fact is editable too (owner, 2026-09-28: "all the details an option to edit")
+  medication_more: [['form', 'Form (tablet, capsule, syrup, …)'], ['prn', 'As needed (SOS)']],
+  measured_more: [['abnormal_flag', 'Flag (H, L, N, …)'], ['ref_range_low', 'Reference range low'],
+    ['ref_range_high', 'Reference range high'], ['ref_range_text', 'Reference range (as written)']],
+  status: [['clinical_status', 'Clinical status (active, resolved, …)']],
+  code: [['code_system', 'Code system'], ['code', 'Code'], ['code_display', 'Code display']],
 };
-const fieldsFor = e => e.element_type === 'medication' ? FIELDS.medication
-  : FIELDS.text.concat(['vital_sign', 'lab_result'].includes(e.element_type) ? FIELDS.measured : []);
-const valueOf = (e, k) => { const src = e.element_type === 'medication' && k !== 'local_text' ? (e.medication || {}) : (e.fact || {});
+const MED_KEYS = new Set(FIELDS.medication.concat(FIELDS.medication_more).map(f => f[0]));
+const fieldsFor = e => (e.element_type === 'medication' ? FIELDS.medication.concat(FIELDS.medication_more)
+  : FIELDS.text.concat(['vital_sign', 'lab_result'].includes(e.element_type) ? FIELDS.measured.concat(FIELDS.measured_more) : [])
+    .concat(['condition', 'symptom', 'allergy', 'finding'].includes(e.element_type) ? FIELDS.status : []))
+  .concat(FIELDS.code);
+const valueOf = (e, k) => { const src = e.element_type === 'medication' && MED_KEYS.has(k) ? (e.medication || {}) : (e.fact || {});
   const v = src[k] ?? (k === 'drug_text' ? e.fact?.local_text : null); return v == null ? '' : String(v); };
+// the input for one field: "as needed" is yes / no, every other field is text
+const fieldInput = (e, k) => k === 'prn'
+  ? `<select data-k="prn"><option value="false"${valueOf(e, k) === 'true' ? '' : ' selected'}>no</option><option value="true"${valueOf(e, k) === 'true' ? ' selected' : ''}>yes</option></select>`
+  : `<input data-k="${k}" value="${esc(valueOf(e, k))}" style="width:100%">`;
 function editFact(fid, item){
   const box = document.getElementById('ed-' + fid);
   if (box.style.display === 'table-row'){ box.style.display = 'none'; return; }
   const e = current[fid];
   box.querySelector('td').innerHTML = fieldsFor(e).map(([k, label]) => `<label style="display:block;margin:4px 0"><small>${esc(label)}</small><br>
-      <input data-k="${k}" value="${esc(valueOf(e, k))}" style="width:100%"></label>`).join('')
+      ${fieldInput(e, k)}</label>`).join('')
     + `<label style="display:block;margin:4px 0"><small>Reason (optional)</small><br><input data-note style="width:100%"></label>
       <p><button class=primary onclick="saveFact('${fid}','${item}')">Save correction</button> <button onclick="editFact('${fid}','${item}')">Cancel</button> <span data-msg></span></p>`;
   box.style.display = 'table-row';
 }
 async function saveFact(fid, item){
   const e = current[fid], box = document.getElementById('ed-' + fid), corrections = {};
-  box.querySelectorAll('input[data-k]').forEach(i => { if (i.value !== valueOf(e, i.dataset.k)) corrections[i.dataset.k] = i.value; });
+  box.querySelectorAll('[data-k]').forEach(i => { if (i.value !== valueOf(e, i.dataset.k) && !(i.dataset.k === 'prn' && i.value === 'false' && valueOf(e, 'prn') === ''))
+    corrections[i.dataset.k] = i.dataset.k === 'prn' ? i.value === 'true' : i.value; });
   const msg = box.querySelector('[data-msg]');
   if (!Object.keys(corrections).length){ msg.textContent = 'Nothing changed.'; return; }
   const r = await post(`/api/facts/${fid}/review`, {action: 'correct', corrections, note: box.querySelector('input[data-note]').value || null});
@@ -85,7 +99,7 @@ async function saveFact(fid, item){
 // (owner, 2026-09-26: "the extracted data should be grouped properly"); a section's columns suit
 // its kind of fact, and an unknown fact type is never dropped: it lands in "Other"
 const SECTIONS = [['condition', 'Diagnoses'], ['symptom', 'Symptoms & complaints'], ['finding', 'Examination findings'],
-  ['vital_sign', 'Vitals'], ['lab_result', 'Lab results'], ['diagnostic_report', 'Reports'], ['medication', 'Medications'],
+  ['vital_sign', 'Vitals'], ['lab_result', 'Lab results'], ['diagnostic_report', 'Reports'], ['medication', 'Medications'], ['lab_order', 'Tests advised'],
   ['procedure', 'Procedures'], ['allergy', 'Allergies'], ['immunization', 'Immunizations'], ['care_plan', 'Care plan'],
   ['referral', 'Referrals'], ['advice', 'Advice & follow-up'], ['document', 'Other']];
 const unit = (n, u) => n == null ? '' : `${num(n)} ${u || ''}`.trim();
@@ -99,13 +113,14 @@ const COLS = {
   measured: [['Test', e => e.fact?.local_text], ['Value', e => e.fact?.value_text || (e.fact?.value_num != null ? num(e.fact.value_num) : '')],
     ['Unit', e => e.fact?.value_unit_ucum], ['Flag', e => e.fact?.abnormal_flag]],
   text: [['Detail', e => e.fact?.local_text]],
+  order: [['Test (as written)', e => e.fact?.local_text]],
 };
 // the catalogue's identification of the line (owner, 2026-09-26): the product, or UNKNOWN_MEDICATION
 // with the closest catalogue names; the medicine column above stays as written
 function catalogueText(c){
   if (!c) return '';
   if (c.status === 'matched') return [c.product_name || c.display_name, c.product_name ? c.composition : '', c.manufacturer,
-    ['exact', 'generic'].includes(c.method) ? 'exact' : 'match ' + Number(c.score).toFixed(2), c.strength_match === false ? 'strength differs' : ''].filter(Boolean).join(' · ');
+    c.method === 'reviewer' ? 'chosen by reviewer' : ['exact', 'generic'].includes(c.method) ? 'exact' : 'match ' + Number(c.score).toFixed(2), c.strength_match === false ? 'strength differs' : ''].filter(Boolean).join(' · ');
   const near = (c.candidates || []).slice(0, 3).map(x => x.name).join(', ');  // nearest name, written form and strength first
   return 'UNKNOWN_MEDICATION' + (near ? ` (closest: ${near})` : '');
 }
@@ -115,6 +130,11 @@ function agentText(a){
   if (!a) return '';
   const fit = a.treats ? 'treats ' + a.treats + (a.why ? ` (${a.why})` : '') : a.fits_diagnosis === false ? '⚠ no matching diagnosis' : '';
   const conf = a.confidence != null ? ` (${Math.round(a.confidence * 100)}%)` : '';
+  // the recall step (2026-09-28): what the model's own knowledge names for the line
+  const rc = a.recalled || {}, thinks = (rc.brands || []).concat(rc.generics || []);
+  if (thinks.length && a.status !== 'confirmed' && a.status !== 'suggested')
+    return [a.status === 'vetoed' ? `Unsure: ${a.product ? a.product.name : ''}? (${a.reason})` : 'No confident match',
+      `agent thinks: ${thinks.join(', ')}`, rc.reason, 'see Replace'].filter(Boolean).join(' · ');
   if (a.status === 'confirmed') return `✓ ${fit || 'identified'}`;
   if (a.status === 'suggested') return [`Suggests ${a.product.name}${conf}`, fit, a.evidence ? `written "${a.evidence}"` : '', a.rationale].filter(Boolean).join(' · ');
   if (a.status === 'vetoed') return `Unsure: ${a.product ? a.product.name : ''}? (${a.reason})`;
@@ -145,14 +165,64 @@ function useAgent(fid, item){  // the Edit form, pre-filled with the agent's pro
   if (i && e.agent && e.agent.product){ i.value = e.agent.product.name;
     box.querySelector('input[data-note]').value = 'medication agent: ' + (e.agent.rationale || e.agent.evidence || ''); i.focus(); }
 }
-const colsFor = t => t === 'medication' ? COLS.medication : ['vital_sign', 'lab_result'].includes(t) ? COLS.measured : COLS.text;
+const colsFor = t => t === 'medication' ? COLS.medication : ['vital_sign', 'lab_result'].includes(t) ? COLS.measured
+  : t === 'lab_order' ? COLS.order : COLS.text;
 function factRows(e, id, cols){
   const n = cols.length + 3;
   return `<tr>${cols.map(([, f]) => `<td>${esc(f(e) ?? '')}</td>`).join('')}
     <td>${esc(e.fact?.code)}${e.fact?.code_display ? `<br><small class=muted>${esc(e.fact.code_display)}</small>` : ''}</td>
     <td><span class="pill ${e.state==='held'?'warn':e.state==='rejected'?'bad':'ok'}">${esc(e.state)}</span></td>
-    <td style="white-space:nowrap">${e.state==='held' ? `<button class=ok onclick="decide('${e.fact.id}','accept','${id}')">Accept</button> <button class=bad onclick="decide('${e.fact.id}','reject','${id}')">Reject</button> ` : ''}${e.fact && e.state !== 'rejected' ? `<button onclick="editFact('${e.fact.id}','${id}')">Edit</button>` : ''}${e.agent && e.agent.status === 'suggested' && e.state !== 'rejected' ? ` <button class=primary onclick="useAgent('${e.fact.id}','${id}')" title="Open the edit form with the agent's product filled in">Use suggestion</button>` : ''}${e.state==='held' ? ' <a href="/review">details</a>' : ''}</td></tr>
-    ${e.fact ? `<tr id="ed-${e.fact.id}" style="display:none"><td colspan=${n} style="background:var(--brand-weak)"></td></tr>` : ''}`;
+    <td style="white-space:nowrap">${e.state==='held' ? `<button class=ok onclick="decide('${e.fact.id}','accept','${id}')">Accept</button> <button class=bad onclick="decide('${e.fact.id}','reject','${id}')">Reject</button> ` : ''}${e.fact && e.state !== 'rejected' ? `<button onclick="editFact('${e.fact.id}','${id}')">Edit</button>` : ''}${e.agent && e.agent.status === 'suggested' && e.state !== 'rejected' ? ` <button class=primary onclick="useAgent('${e.fact.id}','${id}')" title="Open the edit form with the agent's product filled in">Use suggestion</button>` : ''}${e.element_type === 'medication' && e.fact && e.state !== 'rejected' ? ` <button onclick="openReplace('${e.fact.id}','${id}')" title="Choose the medicine from the catalogue or the agent's options">Replace</button>` : ''}${e.state==='held' ? ' <a href="/review">details</a>' : ''}</td></tr>
+    ${e.fact ? `<tr id="ed-${e.fact.id}" style="display:none"><td colspan=${n} style="background:var(--brand-weak)"></td></tr>` : ''}
+    ${replaceRow(e, id, n)}`;
+}
+// Replace (owner, 2026-09-28): the products the catalogue and the medication agent offer for a
+// medicine line, plus a catalogue search; the reviewer picks one and it replaces the medicine
+// through the same correction as Edit (dose, frequency and the rest of the line are kept)
+function replaceRow(e, item, n){
+  if (e.element_type !== 'medication' || !e.fact || e.state === 'rejected') return '';
+  return `<tr id="rp-${e.fact.id}" style="display:none"><td colspan=${n} style="background:var(--brand-weak)"></td></tr>`;
+}
+let replacing = {};
+const optLine = (o, list, i) => `<label style="display:block;margin:3px 0;cursor:pointer"><input type=radio name="rp-${replacing.fid}" value="${list}:${i}">
+  <b>${esc(o.name)}</b> <small class=muted>${esc([o.why, o.manufacturer, o.composition, o.pack_size_label,
+    o.generic ? 'generic' : '', o.discontinued ? 'discontinued' : '', o.strength_match === false ? 'strength differs from the line' : ''].filter(Boolean).join(' · '))}</small></label>`;
+function optGroup(title, list, opts, empty){
+  return `<p style="margin:8px 0 2px"><b>${esc(title)}</b></p>` + (opts.length ? opts.map((o, i) => optLine(o, list, i)).join('') : `<small class=muted>${esc(empty)}</small>`);
+}
+async function openReplace(fid, item, q){
+  const box = document.getElementById('rp-' + fid);
+  if (!box) return;
+  if (q === undefined && box.style.display === 'table-row'){ box.style.display = 'none'; return; }
+  const ed = document.getElementById('ed-' + fid); if (ed) ed.style.display = 'none';
+  box.style.display = 'table-row';
+  const cell = box.querySelector('td');
+  if (q === undefined) cell.innerHTML = '<small class=muted>Loading the catalogue and agent options…</small>';
+  const r = await fetch(`/api/reviewer/facts/${fid}/replacements` + (q ? '?q=' + encodeURIComponent(q) : ''));
+  const d = await r.json();
+  if (!r.ok){ cell.innerHTML = `<small>Error: ${esc(d.detail)}</small>`; return; }
+  replacing = {fid, item, d};
+  if (d.catalogue_empty){ cell.innerHTML = '<small class=muted>The medicine catalogue is empty on this server: nothing to choose from.</small>'; return; }
+  cell.innerHTML = `<p style="margin:0 0 4px">Replace <b>${esc(d.written)}</b> with:</p>
+    ${optGroup('From the catalogue (Tata 1mg)', 'catalogue', d.catalogue, 'No catalogue products are close to this line.')}
+    ${optGroup('From the medication agent', 'agent', d.agent, 'The agent has no suggestion for this line (use "Run agent again" to ask it).')}
+    <p style="margin:10px 0 2px"><b>Search the catalogue</b></p>
+    <input id="rpq-${fid}" value="${esc(q || '')}" placeholder="brand or generic name, e.g. Dolo 650 or Paracetamol" style="width:70%"
+      onkeydown="if(event.key==='Enter')openReplace('${fid}','${item}',this.value)"> <button onclick="openReplace('${fid}','${item}',document.getElementById('rpq-${fid}').value)">Search</button>
+    ${q ? optGroup('Search results', 'search', d.search, 'Nothing found in the catalogue.') : ''}
+    <label style="display:block;margin:8px 0 4px"><small>Reason (optional)</small><br><input data-rpnote style="width:100%"></label>
+    <p><button class=primary onclick="saveReplace()">Replace with selected</button> <button onclick="openReplace('${fid}','${item}')">Cancel</button> <span data-rpmsg></span></p>`;
+}
+async function saveReplace(){
+  const {fid, item, d} = replacing, box = document.getElementById('rp-' + fid);
+  const msg = box.querySelector('[data-rpmsg]'), picked = box.querySelector(`input[name="rp-${fid}"]:checked`);
+  if (!picked){ msg.textContent = 'Select a medicine first.'; return; }
+  const [list, i] = picked.value.split(':'), o = d[list][Number(i)];
+  msg.textContent = 'Replacing…';
+  const r = await post(`/api/reviewer/facts/${fid}/replace`, {catalogue_id: o.id, generic: o.id == null ? o.generic : null,
+    source: list, note: box.querySelector('input[data-rpnote]').value || null});
+  if (!r.ok){ msg.textContent = 'Error: ' + (await r.json()).detail; return; }
+  openItem(item); load();
 }
 async function openItem(id){
   const d = await (await fetch(`/api/reviewer/items/${id}/elements`)).json();

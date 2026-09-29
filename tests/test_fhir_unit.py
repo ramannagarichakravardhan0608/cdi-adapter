@@ -125,7 +125,13 @@ def test_bundle_shape_and_lint_clean():
     assert b["type"] == "document" and b["entry"][0]["resource"]["resourceType"] == "Composition"
     assert all(e["fullUrl"].startswith("urn:uuid:") for e in b["entry"])
     comp = b["entry"][0]["resource"]
-    assert [s["title"] for s in comp["section"]] == ["Medications", "Advisory notes"]
+    # ABDM 6.5.0 PrescriptionRecord: ONE section, only MedicationRequest (+ Binary) entries, each
+    # typed; the advice stays with the record as that section's narrative
+    (sec,) = comp["section"]
+    assert sec["title"] == "Prescription record"
+    assert sec["entry"] == [{"reference": "urn:uuid:m", "type": "MedicationRequest"}]
+    assert "low salt diet" in sec["text"]["div"]
+    assert b["meta"]["versionId"] == "1"  # DocumentBundle: meta.versionId 1..1
     assert R._lint(b) == []
 
 
@@ -175,7 +181,8 @@ def test_blood_pressure_observation_carries_loinc_components():
                                   value_unit_ucum="mm[Hg]"), "urn:uuid:bp", PAT, ENC)  # fmt: skip
     comps = {c["code"]["coding"][0]["code"]: c["valueQuantity"]["value"] for c in o["component"]}
     assert comps == {"8480-6": 138.0, "8462-4": 86.0}  # §8.2: BP -> 8480-6 / 8462-4
-    assert o["valueString"] == "138/86"  # §5 S9 lint: Observations have a value
+    # the reading is in the components; the FHIR bp profile allows no string value[x]
+    assert "valueString" not in o and "valueQuantity" not in o
     assert (
         R._lint(
             R.bundle([("urn:uuid:c", {"resourceType": "Composition"}), ("urn:uuid:bp", o)], "t")

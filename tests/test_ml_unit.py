@@ -20,6 +20,7 @@ from cdi_adapter.mlserve.backends import HFBackend, StubBackend, make_backend
 EXTRACTION = ["prescription.v3", "lab_report.v3", "vitals.v3", "opd_note.v3",
               "discharge_summary.v3", "radiology.v3"]  # fmt: skip
 AGENT = [
+    "med_agent_recall.v1",
     "med_agent_choice.v1",
     "med_agent_fit.v1",
     "med_agent_verify.v1",

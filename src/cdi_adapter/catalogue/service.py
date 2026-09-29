@@ -311,7 +311,12 @@ def _identify_key(conn: Connection, brand: str, strengths: tuple[float, ...],
     ).mappings()]  # fmt: skip
     if exact:
         p, agrees = _pick_pack(exact, strengths, form)
-        return Identification("matched", p["name"], p["id"], 1.0, "exact", agrees, p, query=brand)
+        # the written form must agree here too ("Syp Crocin" is not the Crocin tablet): a brand
+        # with no product of that form goes on to the search below, which reports it UNKNOWN
+        # with the products of the written form first
+        if _form_agrees(form, p):
+            return Identification("matched", p["name"], p["id"], 1.0, "exact", agrees, p,
+                                  query=brand)  # fmt: skip
 
     conn.execute(text("SELECT set_config('pg_trgm.similarity_threshold', :t, true)"),
                  {"t": str(_TRGM_THRESHOLD)})  # fmt: skip

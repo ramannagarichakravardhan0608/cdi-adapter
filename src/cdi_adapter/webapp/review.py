@@ -46,7 +46,7 @@ EDITABLE = ("clinician_confirmed", "corrected")
 # edit corrects it, not only the fact's text (2026-09-25)
 MED_CORRECTABLE = {
     "drug_text", "strength_num", "strength_unit", "dose_num", "dose_unit_ucum", "route",
-    "frequency_code", "duration_days", "prn", "instructions",
+    "frequency_code", "duration_days", "prn", "instructions", "form",
 }  # fmt: skip
 _MED_NUMBERS = ("strength_num", "dose_num", "duration_days")
 _COPY_COLS = (
@@ -94,10 +94,18 @@ def _reviewer_provenance(conn, fact_id, prior: dict[str, Any], reviewer: str) ->
 
 
 def _approved(conn: Connection, fact: dict[str, Any]) -> bool:
+    """Whether THIS fact is in an approved review item: the item holds the fact, or an earlier
+    version of it (a correction supersedes it). Not merely an approved item for the same document:
+    a document uploaded again is extracted again into new facts and a new item, which stays
+    correctable until it is approved itself (2026-09-28: the older approval blocked every Edit and
+    Replace on the re-upload)."""
     return conn.execute(
-        text("SELECT 1 FROM rv_item WHERE status = 'approved' "
-             "AND source_document_id = ANY(:d) LIMIT 1"),
-        {"d": [str(x) for x in fact["source_doc_ids"] or []]},
+        text("WITH RECURSIVE chain(id) AS (SELECT CAST(:f AS uuid) UNION ALL "
+             "  SELECT c.supersedes FROM clinical_fact c JOIN chain ON c.id = chain.id "
+             "  WHERE c.supersedes IS NOT NULL) "
+             "SELECT 1 FROM rv_item_element e JOIN rv_item i ON i.id = e.rv_item_id "
+             "WHERE i.status = 'approved' AND e.fact_id IN (SELECT id FROM chain) LIMIT 1"),
+        {"f": str(fact["id"])},
     ).first() is not None  # fmt: skip
 
 
@@ -111,6 +119,15 @@ def _number(field: str, v: Any) -> float | None:
     if n < 0:
         raise ReviewError(422, f"{field} must not be negative")
     return n
+
+
+def _signed(field: str, v: Any) -> float | None:
+    if v in (None, ""):
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        raise ReviewError(422, f"{field} must be a number") from None
 
 
 def _med_corrections(fact: dict[str, Any], med: dict[str, Any] | None,
@@ -146,6 +163,9 @@ def apply_fact_correction(conn: Connection, fact: dict[str, Any], corrections: d
     med_c = {k: v for k, v in corrections.items() if k in MED_CORRECTABLE}
     if "value_num" in fact_c:
         fact_c["value_num"] = _number("value_num", fact_c["value_num"])
+    for k in ("ref_range_low", "ref_range_high"):  # a range may be below zero (base excess)
+        if k in fact_c:
+            fact_c[k] = _signed(k, fact_c[k])
     new = {c: fact[c] for c in _COPY_COLS}
     new.update(fact_c)
     if med_c.get("drug_text") and "local_text" not in fact_c:

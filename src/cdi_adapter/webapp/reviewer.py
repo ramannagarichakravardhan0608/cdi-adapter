@@ -10,6 +10,8 @@
 | GET  /api/reviewer/items/{id}/bundle/download   | that bundle as a FHIR file (fhir+json)      |
 | GET  /api/reviewer/approved                     | the latest approved items (to download)     |
 | POST /api/reviewer/items/{id}/agent             | run the medication agent again (E12-S4)     |
+| GET  /api/reviewer/facts/{id}/replacements      | products to replace a medicine with         |
+| POST /api/reviewer/facts/{id}/replace           | replace the medicine with the chosen one    |
 
 Held facts inside an item are decided with the S8 endpoint (``POST /api/facts/{id}/review``).
 The reviewer is the signed-in user (backlog E7-S1): a ``reviewer`` sent by the client is ignored.
@@ -33,7 +35,7 @@ from cdi_adapter.canon import promote
 from cdi_adapter.canon import repo as canon
 from cdi_adapter.catalogue.service import matches_for_facts
 from cdi_adapter.db import session_scope
-from cdi_adapter.webapp import auth
+from cdi_adapter.webapp import auth, med_replace
 from cdi_adapter.webapp.reviewer_page import reviewer_page
 
 router = APIRouter()
@@ -139,6 +141,40 @@ def rerun_agent(item_id: UUID, request: Request) -> dict[str, Any]:
 
     medication_agent.delay(str(item["source_document_id"]), auth.actor(request).username)
     return {"queued": True, "document_id": str(item["source_document_id"])}
+
+
+class Replacement(BaseModel):
+    # one of the two: a catalogue product, or a catalogue generic (a line written by salt name)
+    catalogue_id: int | None = None
+    generic: str | None = Field(default=None, max_length=200)
+    source: str = Field(default="catalogue", max_length=20)  # catalogue | agent | search
+    note: str | None = Field(default=None, max_length=2000)
+
+
+def _replace_call(fn):
+    try:
+        return fn()
+    except med_replace.ReviewError as e:
+        raise HTTPException(e.status, e.detail) from e
+
+
+@router.get("/api/reviewer/facts/{fact_id}/replacements")
+def replacements(fact_id: UUID, q: str | None = None) -> dict[str, Any]:
+    """The products the catalogue and the medication agent offer for a medicine line, and with
+    ``q`` a catalogue search, for the reviewer's "Replace" (owner request 2026-09-28)."""
+    with session_scope() as c:
+        return _replace_call(lambda: med_replace.options(c, fact_id, (q or "")[:100]))
+
+
+@router.post("/api/reviewer/facts/{fact_id}/replace")
+def replace(fact_id: UUID, body: Replacement, request: Request) -> dict[str, Any]:
+    """Replace the line's medicine with the chosen product: a correction by the signed-in
+    reviewer, as the Edit form makes; the rest of the line (dose, frequency, ...) is kept."""
+    me = auth.actor(request).username
+    with session_scope() as c:
+        return _replace_call(lambda: med_replace.replace(
+            c, fact_id, catalogue_id=body.catalogue_id, generic=body.generic,
+            source=body.source, reviewer=me, note=body.note))  # fmt: skip
 
 
 APPROVED_SHOWN = 20

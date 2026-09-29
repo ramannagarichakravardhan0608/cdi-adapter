@@ -62,7 +62,7 @@ _RX_MARKER = re.compile(r"^\s*(rx|adv|ad)\b[.:]?\s*", re.I)
 def query_keys(text: str | None) -> list[tuple[str, tuple[float, ...]]]:
     """The (brand key, strengths) a written medicine name is looked up by, in order: as written,
     then without a leading prescription marker. Catalogue names are never split this way."""
-    t = _FUSED_FORM.sub(r"\1 ", text or "")
+    t = standard_form_prefix(_FUSED_FORM.sub(r"\1 ", text or ""))
     keys = [split_name(t)]
     bare = _RX_MARKER.sub("", t, count=1)
     if bare != t:
@@ -72,21 +72,73 @@ def query_keys(text: str | None) -> list[tuple[str, tuple[float, ...]]]:
     return keys
 
 
-_FORM_OF = {
+# Every written dosage-form word or abbreviation -> the catalogue's own form word (the forms the
+# Tata 1mg product names use: Tablet, Capsule, Syrup, Injection, Suspension, Cream, ...),
+# lower-cased. The ONE table the extraction, the catalogue and the terminology lookup share
+# (owner, 2026-09-28: "map abbreviations correctly ... consistently to all medicines").
+DOSAGE_FORMS = {
     "tab": "tablet", "tabs": "tablet", "tablet": "tablet", "tablets": "tablet",
     "cap": "capsule", "caps": "capsule", "capsule": "capsule", "capsules": "capsule",
-    "syp": "syrup", "syr": "syrup", "syrup": "syrup", "susp": "suspension",
-    "suspension": "suspension", "inj": "injection", "injection": "injection",
-    "drop": "drops", "drops": "drops", "cream": "cream", "oint": "ointment",
-    "ointment": "ointment", "gel": "gel",
+    "syp": "syrup", "syr": "syrup", "syrup": "syrup",
+    "inj": "injection", "injection": "injection",
+    "susp": "suspension", "suspension": "suspension",
+    "crm": "cream", "cream": "cream",
+    "oint": "ointment", "ointment": "ointment",
+    "drop": "drops", "drops": "drops", "gtt": "drops", "gtts": "drops",
+    "gel": "gel",
+    "lot": "lotion", "lotion": "lotion",
+    "sol": "solution", "soln": "solution", "solution": "solution",
+    "pwd": "powder", "powder": "powder",
+    "sach": "sachet", "sachet": "sachet", "sachets": "sachet",
+    "inh": "inhaler", "inhaler": "inhaler",
+    "resp": "respules", "respules": "respules",
+    "rotacap": "rotacap", "rotacaps": "rotacap",
+    "spray": "spray",
+    "supp": "suppository", "suppository": "suppository",
+    "liq": "liquid", "liquid": "liquid",
+    "loz": "lozenges", "lozenges": "lozenges",
+    "gran": "granules", "granules": "granules",
+    "pen": "pen",
+    # the rest of the catalogue's form words (Tata 1mg product names), so a product of another
+    # form is recognised as one ("Moxicip Infusion" is not the "Gtt Moxicip" eye drop)
+    "infusion": "infusion", "gargle": "gargle", "mouthwash": "mouthwash", "soap": "soap",
+    "shampoo": "shampoo", "patch": "patch", "paste": "paste", "kit": "kit",
+    "softgel": "softgel", "jelly": "jelly", "emulsion": "emulsion", "elixir": "elixir",
 }  # fmt: skip
+# abbreviations that are a dosage form ONLY as the first word of a medicine line ("T Dytor",
+# "C Pan-D", "Cr Candid"); anywhere else they are part of a name ("Vitamin C", "Neurobion T") or
+# a release form ("Glycomet CR" = controlled release)
+LEADING_FORMS = {"t": "tablet", "c": "capsule", "cr": "cream"}
+_FORM_OF = DOSAGE_FORMS
+
+
+def form_word(word: str, *, leading: bool = False) -> str | None:
+    """The catalogue form a single written word stands for ("Tab." -> tablet), or None."""
+    w = word.lower().strip(" .,:;-")
+    return DOSAGE_FORMS.get(w) or (LEADING_FORMS.get(w) if leading else None)
 
 
 def dosage_form(text: str | None) -> str | None:
     """The dosage form a name states, from its first form word: "Cap. Sompraz" -> capsule,
-    "Sompraz 40 Tablet" -> tablet, "CapUprise" -> capsule; None when it states none."""
-    t = re.sub(r"[^a-z]+", " ", _FUSED_FORM.sub(r"\1 ", text or "").lower())
-    return next((_FORM_OF[w] for w in t.split() if w in _FORM_OF), None)
+    "Sompraz 40 Tablet" -> tablet, "CapUprise" -> capsule, "T Dytor" -> tablet; None when it
+    states none."""
+    words = re.sub(r"[^a-z]+", " ", _FUSED_FORM.sub(r"\1 ", text or "").lower()).split()
+    if words and (lead := form_word(words[0], leading=True)):
+        return lead
+    return next((DOSAGE_FORMS[w] for w in words if w in DOSAGE_FORMS), None)
+
+
+_LEADING_WORD = re.compile(r"^\s*([A-Za-z]+)\b\.?\s+(?=\S)")
+
+
+def standard_form_prefix(text: str) -> str:
+    """The line with a leading dosage-form abbreviation written as the catalogue's word, so the
+    rest is read as the name: "T Dytor 10" -> "tablet Dytor 10", "Cr. Candid" -> "cream Candid".
+    Only a form word the brand splitter already knows is written (a catalogue key never changes)."""
+    m = _LEADING_WORD.match(text)
+    if m and (form := form_word(m.group(1), leading=True)) and form in FORM_WORDS:
+        return f"{form} {text[m.end() :]}"
+    return text
 
 
 def ingredients(composition: str | None) -> list[tuple[str, str]]:

@@ -126,6 +126,10 @@ class Settings(BaseSettings):
     agent_enabled: bool = True
     agent_max_options: int = Field(default=10, ge=2, le=20)  # catalogue products per line
     agent_min_grounding: float = Field(default=0.45, ge=0, le=1)  # evidence text vs product name
+    # the recall step (owner, 2026-09-28): the model is given each medicine line's extracted text
+    # and the prescription's diagnoses and names, from its own knowledge, the brands and generics
+    # the line most likely is; they widen the catalogue shortlist (false: the agent as before)
+    agent_recall: bool = True
     extract_retries: int = Field(default=1, ge=0)
     job_max_workers: int = Field(default=6, ge=1)
     # Phase-2 extractions in flight at once (backlog E2-S2, §7.2): 0 = auto, i.e.

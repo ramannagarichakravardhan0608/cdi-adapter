@@ -48,6 +48,10 @@ _ALIASES = {
     "diagnoses": ("diagnosis", "dx", "impression_diagnoses", "conditions", "provisional_diagnosis"),
     "allergies": ("allergy", "allergic_to", "drug_allergies"),
     "advice": ("instructions", "advise", "recommendations", "notes"),
+    # tests a prescription advises (owner request 2026-09-28); only where the schema has the key
+    "investigations_advised": ("investigations", "investigation", "tests_advised", "lab_tests",
+                               "advised_tests", "tests", "ix", "lab_investigations",
+                               "investigations_ordered", "tests_ordered"),
     "chief_complaints": ("complaints", "chief_complaint", "c_o", "presenting_complaints"),
     "findings_list": ("findings", "observations_list"),
     "impression_concepts": ("impression", "impressions", "conclusion"),

@@ -6,8 +6,14 @@ handwritten name ("Muronorm" for Thyronorm, "Shaz" for Saaz) is too far from any
 safely, so it stays ``UNKNOWN_MEDICATION``. This agent uses what the spelling cannot: the page
 image, the written strength and form, and the prescription's own diagnoses.
 
-For each page with medicine lines, after the document is filed for review:
+For each page with medicine lines, after the document is filed for review (automatically, at the
+end of the Generate EMR run):
 
+0. **Recall** (model, text only; ``agent_recall``, owner 2026-09-28): each open line *as extracted*
+   (name, strength, dose, frequency, ...) and the prescription's diagnoses go to the model, which
+   names from its own knowledge the brands and generics the line most likely is (schema
+   ``med_agent_recall.v1``). They only widen the shortlist below: the product is still chosen
+   against the page and guarded, and the Reviewer's "Replace" lists them as the agent's options.
 1. **Shortlist** (catalogue tool, no model): per line not already identified exactly, the products
    of the written strength and form whose names are nearest the reading, plus the closest names
    (``catalogue.service.shortlist``).
@@ -52,12 +58,14 @@ log = get_logger(__name__)
 
 AGENT = "medication_agent.v1"
 EVENT_KIND = "medication_agent"
+RECALL_SCHEMA = "med_agent_recall.v1"
 CHOOSE_SCHEMA = "med_agent_choice.v1"
 FIT_SCHEMA = "med_agent_fit.v1"
 VERIFY_SCHEMA = "med_agent_verify.v1"
 DIAGNOSIS_TYPES = ("condition", "symptom")
-# a line whose catalogue identification is already exact needs no choice, only the fit check
-SETTLED = ("exact", "generic")
+# a line whose catalogue identification is already exact, or was chosen by the reviewer (Replace),
+# needs no choice, only the fit check
+SETTLED = ("exact", "generic", "reviewer")
 
 
 @dataclass
@@ -71,6 +79,10 @@ class Line:
     form: str | None
     catalogue: dict[str, Any] | None
     options: list[dict[str, Any]] = field(default_factory=list)
+    # the whole line as extracted (name, strength, dose, frequency, ...), for the recall step
+    written: str = ""
+    # the recall step's answer: {"brands": [...], "generics": [...], "reason": ...}
+    recalled: dict[str, Any] = field(default_factory=dict)
 
     @property
     def settled(self) -> bool:
@@ -99,19 +111,79 @@ def _strength_text(line: Line) -> str:
     return f", strength {', '.join(f'{s:g}' for s in line.strengths)}" if line.strengths else ""
 
 
-def choose_prompt(lines: list[Line]) -> str:
+def line_text(f: dict[str, Any]) -> str:
+    """A medication fact as extracted, in one line: what was written and the details read from
+    it ("Tab Muronorm 62.5 mg OD x 30 days | strength 62.5 mg; frequency OD; 30 days")."""
+    num = lambda v: f"{float(v):g}"  # noqa: E731
+    details = [
+        f"strength {num(f['strength_num'])} {f.get('strength_unit') or ''}".strip()
+        if f.get("strength_num") is not None else "",
+        f"form {f['form']}" if f.get("form") else "",
+        f"dose {num(f['dose_num'])} {f.get('dose_unit_ucum') or ''}".strip()
+        if f.get("dose_num") is not None else "",
+        f"frequency {f['frequency_code']}" if f.get("frequency_code") else "",
+        f"{num(f['duration_days'])} days" if f.get("duration_days") is not None else "",
+        f"route {f['route']}" if f.get("route") else "",
+        f"instructions {f['instructions']}" if f.get("instructions") else "",
+    ]  # fmt: skip
+    written = f.get("local_text") or f.get("drug_text") or ""
+    extra = "; ".join(d for d in details if d)
+    return f"{written} | {extra}" if extra else written
+
+
+def recall_prompt(diagnoses: list[str], lines: list[Line]) -> str:
+    """Step 0 (owner, 2026-09-28): the model's own knowledge of Indian medicines, given each line
+    as extracted and the prescription's diagnoses. Its answer only widens the catalogue
+    shortlist; the product is still chosen against the page and guarded."""
+    dx = "\n".join(f"- {d}" for d in diagnoses) or "- (none written)"
+    return (
+        "You are a clinical pharmacist in India reading a prescription. Its medicine lines were "
+        "read from handwriting and may be misspelt (letters confused, e.g. rn/m, u/n, a/o, "
+        "missing letters). The prescription's diagnoses (doctors abbreviate):\n" + dx + "\n\n"
+        "For EACH line below, from your knowledge of medicines sold in India, give: brands - the "
+        "correctly spelt brand name(s) this line most likely is (at most 3; the name as a "
+        "pharmacist would write it, without strength or form), generics - the generic / salt "
+        "name(s) it contains (at most 3), and reason - one short sentence (how the spelling, "
+        "the strength and a listed diagnosis point to it). Use the diagnoses only to decide "
+        "between look-alike names; never propose a medicine the written name does not resemble "
+        "just because it treats a diagnosis. Give empty lists when you do not know.\n\n"
+        + "\n".join(f"[{ln.n}] {ln.written or ln.read_as}" for ln in lines)
+        + '\n\nExample answer (another prescription): {"lines": [{"line": 1, "brands": '
+        '["Glycomet GP"], "generics": ["Metformin", "Glimepiride"], "reason": "Glycornet read '
+        'for Glycomet; strength 1 mg matches glimepiride; listed diabetes"}], "confidence": 0.7}'
+    )
+
+
+def _names(v: Any, most: int = 3) -> list[str]:
+    """A recall answer's list of names, cleaned: strings only, at most ``most``, no repeats."""
+    out: list[str] = []
+    for x in v if isinstance(v, list) else []:
+        s = str(x).strip() if isinstance(x, str) else ""
+        if 2 < len(s) <= 60 and s.lower() not in (o.lower() for o in out):
+            out.append(s)
+    return out[:most]
+
+
+def choose_prompt(lines: list[Line], diagnoses: list[str] | None = None) -> str:
     blocks = []
     for ln in lines:
         opts = "\n".join(
             f"   {i}) {o['name']} - {o.get('composition') or 'composition not listed'}"
             for i, o in enumerate(ln.options, start=1)
         )
-        blocks.append(f'[{ln.n}] first read as "{ln.read_as}"{_strength_text(ln)}. '
+        extracted = f" Extracted line: {ln.written}." if ln.written else ""
+        blocks.append(f'[{ln.n}] first read as "{ln.read_as}"{_strength_text(ln)}.{extracted} '
                       f"Options:\n{opts}")  # fmt: skip
+    context = (
+        "The prescription's diagnoses (use them only to decide between look-alike names): "
+        + "; ".join(diagnoses) + ".\n\n"
+        if diagnoses else ""
+    )  # fmt: skip
     return (
         "You are helping a clinician check a handwritten prescription. The page image is "
         "attached. A first reading of its medicine lines is below; it may be wrong.\n\n"
-        "For each line, look at the handwriting of that line on the page and choose the "
+        + context
+        + "For each line, look at the handwriting of that line on the page and choose the "
         "catalogue product that is actually written there. Answer choice 0 when none of the "
         "options is what is written.\n\n" + "\n\n".join(blocks) + "\n\n"
         "For EACH line: choice (the option number, or 0), evidence (the medicine name exactly as "
@@ -229,7 +301,8 @@ class _Trace:
             )  # fmt: skip
 
 
-def _lines_by_page(conn: Connection, document_id: str) -> tuple[list[str], dict[Any, list[Line]]]:
+def _lines_by_page(conn: Connection, document_id: str,
+                   recall: bool = False) -> tuple[list[str], dict[Any, list[Line]]]:  # fmt: skip
     facts = [f for f in repo.get_facts_for_document(conn, document_id) if f.get("is_current")]
     meds = [f for f in facts if f["fact_type"] == "medication"]
     matches = catalogue.matches_for_facts(conn, [str(f["id"]) for f in meds])
@@ -252,6 +325,7 @@ def _lines_by_page(conn: Connection, document_id: str) -> tuple[list[str], dict[
             read_as=f.get("drug_text") or f.get("local_text") or "",
             strengths=catalogue.fact_strengths(f), form=catalogue.fact_form(f),
             catalogue=matches.get(str(f["id"])),
+            written=line_text(f) if recall else "",
         ))  # fmt: skip
     return diagnoses_of(facts), pages
 
@@ -282,7 +356,7 @@ def run_medication_agent(document_id: UUID | str, *, client: MLClient | None = N
     with session_scope() as c:
         if catalogue.catalogue_size(c) == 0:
             return {"skipped": "no catalogue"}
-        diagnoses, pages = _lines_by_page(c, did)
+        diagnoses, pages = _lines_by_page(c, did, recall=s.agent_recall)
     if not pages:
         return {"skipped": "no medicines"}
     vlm = client or get_client(did)
@@ -293,7 +367,8 @@ def run_medication_agent(document_id: UUID | str, *, client: MLClient | None = N
     try:
         out = [r for page_id, lines in pages.items()
                for r in _run_page(did, page_id, lines, vlm, trace, s.agent_max_options,
-                                  s.agent_min_grounding)]  # fmt: skip
+                                  s.agent_min_grounding,
+                                  diagnoses if s.agent_recall else None)]  # fmt: skip
         _fit(out, diagnoses, vlm, trace)
         with session_scope() as c:
             event = _record(c, did, out, vlm, diagnoses)
@@ -322,17 +397,40 @@ def run_medication_agent(document_id: UUID | str, *, client: MLClient | None = N
 
 
 def _run_page(did: str, page_id: Any, lines: list[Line], vlm: MLClient, trace: _Trace,
-              max_options: int, min_grounding: float) -> list[dict[str, Any]]:  # fmt: skip
-    # 1. shortlist: catalogue products for each line not identified exactly (a tool, no model)
+              max_options: int, min_grounding: float,
+              diagnoses: list[str] | None = None) -> list[dict[str, Any]]:  # fmt: skip
+    """``diagnoses`` given (``agent_recall``): the recall step runs first and the choice sees the
+    extracted lines and the diagnoses; None: the agent as it was before the recall step."""
     open_lines = [ln for ln in lines if not ln.settled]
+    # 0. recall (model, text only): the brands / generics each open line most likely is, from the
+    # model's own knowledge, the line as extracted and the diagnoses
+    if diagnoses is not None and open_lines:
+        t0 = time.perf_counter()
+        recalled = vlm.vlm_json(None, recall_prompt(diagnoses, open_lines), RECALL_SCHEMA,
+                                max_tokens=80 + 90 * len(open_lines))  # fmt: skip
+        trace("recall", f"vlm:{RECALL_SCHEMA}",
+              {"diagnoses": diagnoses, "lines": [ln.written for ln in open_lines]}, recalled,
+              started=t0, confidence=_conf(recalled))  # fmt: skip
+        by_n = {r.get("line"): r for r in recalled.get("lines", []) if isinstance(r, dict)}
+        for ln in open_lines:
+            r = by_n.get(ln.n) or {}
+            ln.recalled = {"brands": _names(r.get("brands")), "generics": _names(r.get("generics")),
+                           "reason": (r.get("reason") or "").strip() or None
+                           if isinstance(r.get("reason"), str) else None}  # fmt: skip
+    # 1. shortlist: catalogue products for each line not identified exactly (a tool, no model),
+    # for the reading and, after recall, for the brands and generics the model named
     for ln in open_lines:
         t0 = time.perf_counter()
+        names = [ln.read_as] + [b for b in ln.recalled.get("brands", []) if b != ln.read_as]
         with session_scope() as c:
-            ln.options = catalogue.shortlist(c, names=[ln.read_as], generics=[],
+            ln.options = catalogue.shortlist(c, names=names,
+                                             generics=ln.recalled.get("generics", []),
                                              strengths=ln.strengths, form=ln.form,
                                              limit=max_options)  # fmt: skip
-        trace("shortlist", "catalogue.shortlist",
-              {"name": ln.read_as, "strengths": ln.strengths, "form": ln.form},
+        inp: dict[str, Any] = {"name": ln.read_as, "strengths": ln.strengths, "form": ln.form}
+        if ln.recalled:
+            inp |= {"recalled": ln.recalled}
+        trace("shortlist", "catalogue.shortlist", inp,
               [o["name"] for o in ln.options], fact_id=ln.fact_id, started=t0)  # fmt: skip
     # 2. choose: which shortlisted product is written on each line (the page image)
     choices: dict[int, dict[str, Any]] = {}
@@ -341,7 +439,7 @@ def _run_page(did: str, page_id: Any, lines: list[Line], vlm: MLClient, trace: _
         with session_scope() as c:
             image = _page_image(c, did, page_id)
         t0 = time.perf_counter()
-        chosen = vlm.vlm_json(image, choose_prompt(asked), CHOOSE_SCHEMA,
+        chosen = vlm.vlm_json(image, choose_prompt(asked, diagnoses), CHOOSE_SCHEMA,
                               max_tokens=120 + 110 * len(asked))  # fmt: skip
         trace("choose", f"vlm:{CHOOSE_SCHEMA}",
               {"image": image is not None, "lines": [ln.n for ln in asked]}, chosen,
@@ -359,17 +457,33 @@ def _run_page(did: str, page_id: Any, lines: list[Line], vlm: MLClient, trace: _
                                    "name": m.get("product_name") or m.get("display_name"),
                                    "manufacturer": m.get("manufacturer"),
                                    "composition": m.get("composition")},
-                       "reason": "the catalogue identified this line exactly"}  # fmt: skip
+                       "reason": "the reviewer chose this product" if m.get("method") == "reviewer"
+                       else "the catalogue identified this line exactly"}  # fmt: skip
         elif not ln.options:
             verdict = {"status": "none", "reason": "no catalogue product fits this line"}
         else:
             verdict = guard(ln, choices.get(ln.n), min_grounding)
             trace("guard", "guard", {"line": ln.n, "choice": choices.get(ln.n)}, verdict,
                   fact_id=ln.fact_id, confidence=verdict.get("confidence"))  # fmt: skip
+        rec: dict[str, Any] = {}
+        if ln.recalled:  # what the model's own knowledge named, and the options it led to
+            rec = {"recalled": ln.recalled,
+                   "knowledge_options": [o["name"] for o in ln.options
+                                         if from_recall(o, ln.recalled)]}  # fmt: skip
         out.append({"fact_id": ln.fact_id, "line": ln.n, "read_as": ln.read_as, "agent": AGENT,
                     "options": [o["name"] for o in ln.options], "treats": None, "why": None,
-                    "fits_diagnosis": None, **verdict})  # fmt: skip
+                    "fits_diagnosis": None, **rec, **verdict})  # fmt: skip
     return out
+
+
+def from_recall(product: dict[str, Any], recalled: dict[str, Any]) -> bool:
+    """Whether a shortlisted product is one the recall step pointed to: a brand the model named
+    (by nearness of the brand key) or a generic it named that the product contains."""
+    brand = product.get("brand") or split_name(product.get("name") or "")[0]
+    if any(nearness(split_name(b)[0], brand) >= 0.85 for b in recalled.get("brands", [])):
+        return True
+    comp = (product.get("composition") or "").lower()
+    return any(g.lower() in comp for g in recalled.get("generics", []) if len(g) >= 4)
 
 
 def _fit(out: list[dict[str, Any]], diagnoses: list[str], vlm: MLClient, trace: _Trace) -> None:

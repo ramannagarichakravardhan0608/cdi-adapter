@@ -31,19 +31,36 @@ MAX_TOKENS = {
     "vitals_sheet": 1200,
 }
 
+# how every medication line is read, on any document that lists medicines
+MEDICATION_RULES = (
+    "A medication is a named drug (Tab / Cap / Syp / Inj / a brand or generic name); drug_name "
+    'is the medicine\'s name as written (the form word may lead it: "Cap Clopilet"), never '
+    "the form word alone. Keep its strength, dose, dose-slot pattern, route and duration exactly "
+    "as written, and leave any of them empty when the line does not state it - never fill in a "
+    "typical value such as 1-0-1 or PO. Instructions that are not a drug (gargles, steam "
+    "inhalation, fluids / ORS, rest, diet, follow-up) are advice, not medications."
+)
+
+# the tests a prescription advises (owner request 2026-09-28): read into investigations_advised
+TESTS_ADVISED_RULES = (
+    " Tests the doctor advises or orders (under Investigations / Ix / Tests advised, or a test "
+    'written under Adv / Advice, e.g. "Adv: CBC, LFT, HbA1c, X-ray chest") go in '
+    "investigations_advised, one entry per test, exactly as written; a test written with its "
+    "result is a result, not advised. Never list a test the page does not name."
+)
+
 GUIDANCE = {
     "prescription": "List EVERY medication line - usually 5-15 drugs - do not stop early. "
-    "A medication is a named drug (Tab / Cap / Syp / Inj / a brand or generic name); keep its "
-    "strength, dose, dose-slot pattern, route and duration exactly as written, and leave any of "
-    "them empty when the line does not state it - never fill in a typical value. Instructions "
-    "that are not a drug (gargles, steam inhalation, fluids / ORS, rest, diet, follow-up) are "
-    "advice, not medications.",
+    + MEDICATION_RULES
+    + TESTS_ADVISED_RULES,
     "lab_report": "List EVERY test row with its result, unit and reference range.",
     "vitals_sheet": "List every vital sign that has a number. Record allergies if written.",
     "radiology": "Copy EVERY finding line into findings_list; put the impression separately.",
-    "discharge_summary": "Capture final diagnoses, procedures, discharge medications and advice.",
+    "discharge_summary": "Capture final diagnoses, procedures, discharge medications and advice. "
+    + MEDICATION_RULES,
     "operative_note": "Capture the procedure(s) performed, findings, diagnoses and advice.",
-    "opd_note": "Capture complaints, examination findings, diagnoses, vitals, medications.",
+    "opd_note": "Capture complaints, examination findings, diagnoses, vitals, and EVERY "
+    "medication line (the Rx section). " + MEDICATION_RULES + TESTS_ADVISED_RULES,
     "referral": "Capture the reason for referral, diagnoses and whom the patient is referred to.",
 }
 

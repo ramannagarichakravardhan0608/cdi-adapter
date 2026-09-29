@@ -90,6 +90,8 @@ POLICY: dict[tuple[str, str], frozenset[str]] = {
     ("GET", "/api/reviewer/items/{item_id}/bundle/download"): _CLINICAL,
     ("GET", "/api/reviewer/approved"): _CLINICAL,
     ("POST", "/api/reviewer/items/{item_id}/agent"): _CLINICAL,
+    ("GET", "/api/reviewer/facts/{fact_id}/replacements"): _CLINICAL,
+    ("POST", "/api/reviewer/facts/{fact_id}/replace"): _CLINICAL,
     # the Pipeline Monitor microsite (stages, OCR lines, facts): clinical content
     ("GET", "/monitor"): _CLINICAL,
     ("GET", "/api/monitor/items"): _CLINICAL,

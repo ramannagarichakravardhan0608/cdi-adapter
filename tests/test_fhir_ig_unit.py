@@ -215,7 +215,22 @@ def test_goldens_are_committed_and_match_the_builders() -> None:
         b = json.loads(fg.path_for(a).read_text(encoding="utf-8"))
         comp = b["entry"][0]["resource"]
         assert b["type"] == "document" and comp["resourceType"] == "Composition"
-        assert comp["meta"]["profile"] == [f"https://nrces.in/ndhm/fhir/r4/StructureDefinition/{a}"]
+        profile = a.split("-")[0]  # "<artifact>-<variant>": the same ABDM record type
+        assert comp["meta"]["profile"] == [
+            f"https://nrces.in/ndhm/fhir/r4/StructureDefinition/{profile}"
+        ]
+
+
+def test_every_kind_of_upload_has_a_golden_that_the_real_validator_passes() -> None:
+    """2026-09-28 (owner): every upload type must give a valid ABDM FHIR record. The goldens cover
+    every artifact S9 emits, lab and imaging reports and the HealthDocumentRecord fallback, and
+    the HL7 validator reports NO error on any of them: the baseline is empty and stays empty."""
+    from cdi_adapter.fhir.resources import ARTIFACT, DEFAULT_ARTIFACT
+
+    emitted = {a for a, _, _ in ARTIFACT.values()} | {DEFAULT_ARTIFACT[0]}
+    assert emitted == {a.split("-")[0] for a in fg.ARTIFACTS}
+    assert "DiagnosticReportRecord-Imaging" in fg.ARTIFACTS
+    assert fg.read_baseline()["errors"] == {a: [] for a in fg.ARTIFACTS}
 
 
 def test_goldens_are_deterministic_and_carry_no_real_data() -> None:

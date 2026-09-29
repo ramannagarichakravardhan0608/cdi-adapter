@@ -161,6 +161,10 @@ def _promote_fact(conn: Connection, f: dict[str, Any], item_id, reviewer: str) -
                                      "reaction": f["value_text"],
                                      "clinical_status": "active"})  # fmt: skip
         return "cn_allergy"
+    if t == "lab_order":  # a test the prescription advises (owner request 2026-09-28)
+        _insert(conn, "cn_lab_order", {**c, "code_system": f["code_system"], "code": f["code"],
+                                       "test_text": f["local_text"]})  # fmt: skip
+        return "cn_lab_order"
     return None  # other fact types stay in the per-document record only
 
 

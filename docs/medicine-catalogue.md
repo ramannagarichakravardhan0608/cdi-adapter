@@ -94,6 +94,17 @@ model to run and still confuse look-alike brands.
 
 * **Reviewer** → Medications: column *Catalogue (Tata 1mg)* — product · manufacturer · score, or
   `UNKNOWN_MEDICATION (closest: …)`. The *Medicine* column stays as written.
+* **Reviewer** → Medications → **Replace** (2026-09-28): lists the products offered for the line
+  *From the catalogue* (its match, closest products, catalogue shortlist) and *From the medication
+  agent* (its product and the options it chose from), plus a catalogue search by brand or
+  generic. The reviewer picks one; it becomes the line's medicine through the same correction as
+  Edit (dose, frequency, duration, route and instructions are kept), and the line's catalogue
+  identification becomes that product with method `reviewer` ("chosen by reviewer"). A rerun of
+  the agent treats such a line as settled. API: `GET /api/reviewer/facts/{id}/replacements?q=`,
+  `POST /api/reviewer/facts/{id}/replace` `{catalogue_id | generic, source, note}`
+  (`webapp/med_replace.py`); the item's history gets a `correct` action with
+  `replace_medication: true`. Strength is not changed automatically: a pack whose strength
+  differs from the line is flagged, and the reviewer corrects the strength with Edit.
 * **Pipeline Monitor** → Terminology step: the same per line; the step's metrics carry
   `catalogue_matched` / `catalogue_unknown`.
 * Tables: `med_catalogue`, `med_catalogue_import`, `medication_catalogue_match` (migration 0009).

@@ -856,10 +856,13 @@ reflects the latest review decisions.
   Unit / Code; untick a row to drop it; row hover highlights the bbox on the scan).
 - **`POST /api/jobs/{id}/generate`** `{edits:[{fact_id, action:keep|drop, corrections?}]}` —
   applies the reviewer's decisions (`keep`→`clinician_confirmed`, `corrections`→
-  `corrected`, `drop`→`rejected`) then re-projects. Because scans over 700 KB are
-  referenced by URL rather than base64-inlined, **bundle generation is ~140 ms for
-  3 documents**. All kept facts are governed → the bundles come back
-  `ready_to_share`.
+  `corrected`, `drop`→`rejected`) then re-projects. The scan is base64-inlined in every
+  bundle, because the ABDM 6.5.0 profiles require the bytes (`DocumentReference` / `Binary` /
+  `Media` `data` 1..1); a scan over 700 KB also carries its object-store URL (2026-09-28: it used
+  to carry the URL only, which the HL7 validator rejects). All kept facts are governed → the
+  bundles come back `ready_to_share`. Every artifact's golden bundle validates with **0 errors**
+  against `ndhm.in#6.5.0` (HL7 validator 6.10.4; `tests/golden/fhir/`, empty baseline; see
+  `docs/fhir-abdm.md`).
 - The front page (`/`) header is **"Intelligent OCR driven Agentic EMR
   generation"**; the "Generate EMR" card shows a stage-tab row (Ingest…Validate) and
   a document × stage grid with a green tick per completed cell.

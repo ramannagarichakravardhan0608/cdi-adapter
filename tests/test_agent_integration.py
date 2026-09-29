@@ -80,6 +80,18 @@ class ScriptedAgentModel(MLClient):
         return json.dumps({"lines": lines, "confidence": 0.9})
 
 
+@pytest.fixture(autouse=True)
+def _no_recall(monkeypatch):
+    """This module checks the agent without the recall step (``agent_recall`` false), i.e. the
+    agent exactly as it was; test_agent_recall_integration checks the recall step."""
+    from cdi_adapter.config import get_settings
+
+    monkeypatch.setenv("CDI_AGENT_RECALL", "false")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 @pytest.fixture
 def rx(db_env):
     from cdi_adapter.terminology.service import bind_document

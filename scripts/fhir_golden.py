@@ -35,7 +35,10 @@ from cdi_adapter.fhir.service import assemble_document_bundle  # noqa: E402
 
 GOLDEN_DIR = ROOT / "tests" / "golden" / "fhir"
 ARTIFACTS = ("PrescriptionRecord", "DiagnosticReportRecord", "OPConsultRecord",
-             "DischargeSummaryRecord", "WellnessRecord")  # fmt: skip
+             "DischargeSummaryRecord", "WellnessRecord",
+             # 2026-09-28: every kind of upload is covered: a scan report (DiagnosticReportImaging
+             # inside a DiagnosticReportRecord) and a document with no structured record type
+             "DiagnosticReportRecord-Imaging", "HealthDocumentRecord")  # fmt: skip
 NOW = "2026-08-12T10:00:00+00:00"
 WHEN = datetime(2026, 8, 12, 9, 30, tzinfo=UTC)
 _NS = uuid.UUID("0b8c3f2e-6a41-4d7e-9c55-2f1e8d7a9b60")
@@ -130,6 +133,13 @@ CASES: dict[str, tuple[str, dict[str, Any], list[dict[str, Any]]]] = {
         _vital(4, "Weight", "29463-7", "Body weight", 72, "kg"),
         _vital(5, "Height", "8302-2", "Body height", 158, "cm"),
     ]),
+    "DiagnosticReportRecord-Imaging": ("radiology", {"class": "AMB", "period_start": WHEN}, [
+        _fact(1, "diagnostic_report", "Chest X-ray PA view",
+              value_text="Lung fields clear. Cardiac size normal. Impression: normal study."),
+    ]),
+    "HealthDocumentRecord": ("advice_slip", {"class": "AMB", "period_start": WHEN}, [
+        _fact(1, "advice", "Review in OPD after 2 weeks with reports"),
+    ]),
 }  # fmt: skip
 
 
@@ -143,7 +153,7 @@ def build(artifact: str) -> dict[str, Any]:
     enc = {**enc, "id": _id("encounter", artifact)}
     out = assemble_document_bundle(document_id, doc, doc_type, enc, PATIENT, "golden-fixture",
                                    facts, data_b64=PNG_1X1, url=None, now=NOW)  # fmt: skip
-    if out["artifact_type"] != artifact:
+    if out["artifact_type"] != artifact.split("-")[0]:  # "<artifact>-<variant>"
         raise AssertionError(f"{doc_type} projected as {out['artifact_type']}, not {artifact}")
     bundle: dict[str, Any] = out["bundle"]
     bundle["id"] = _id("bundle", artifact)  # R.bundle() draws a random id per projection
