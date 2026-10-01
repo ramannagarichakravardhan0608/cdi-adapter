@@ -237,6 +237,15 @@ def item_bundle_download(item_id: UUID) -> Response:
     """The approved item's canonical FHIR Bundle as a file: the Bundle itself, nothing around it
     (its status and validation stay in ``/bundle``)."""
     row = _latest_bundle(item_id)
+    from cdi_adapter.config import get_settings
+    from cdi_adapter.fhir import validate_abdm
+
+    if row["status"] != "ready_to_share":
+        raise HTTPException(409, "bundle has not passed validation")
+    if get_settings().fhir_require_hapi:
+        validation = validate_abdm.validate(row["bundle"], row["artifact_type"])
+        if not validation["valid"]:
+            raise HTTPException(409, "bundle has not passed the required HL7 validation")
     disposition = f'attachment; filename="fhir_{row["artifact_type"]}_{str(item_id)[:8]}.json"'
     return Response(json.dumps(row["bundle"], default=str, indent=2),
                     media_type="application/fhir+json",

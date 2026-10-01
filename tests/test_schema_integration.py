@@ -33,13 +33,22 @@ CATALOGUE_TABLES = {"med_catalogue", "med_catalogue_import", "medication_catalog
 AGENT_TABLES = {"agent_trace"}  # migration 0010 (backlog E12-S5)
 ORDER_TABLES = {"cn_lab_order"}  # migration 0011: tests a prescription advises
 # migration 0013 (backlog E4-S7): ocr_block became ocr_observation; ocr_block is now a view
-EVIDENCE_TABLES = {"ocr_observation", "interpretation_candidate", "verified_fact",
-                   "ocr_agreement"}  # 0013 (E4-S7) + 0018 (E4-S11)
+EVIDENCE_TABLES = {
+    "ocr_observation",
+    "interpretation_candidate",
+    "verified_fact",
+    "ocr_agreement",
+}  # 0013 (E4-S7) + 0018 (E4-S11)
 LONGITUDINAL_TABLES = {"medication_supersession"}  # migration 0014 (backlog E5-S1)
 ORCHESTRATOR_TABLES = {"workflow_step", "workflow_replay", "agent_tool_call"}  # 0019 (E12-S1)
-TRAINING_TABLES = {"calibration_dataset", "calibration_training_example",  # 0015 (E4-S1)
-                   "calibration_model", "calibration_slice",  # 0016 (E4-S2)
-                   "gate_threshold_set", "gate_threshold"}  # 0017 (E4-S3)
+TRAINING_TABLES = {
+    "calibration_dataset",
+    "calibration_training_example",  # 0015 (E4-S1)
+    "calibration_model",
+    "calibration_slice",  # 0016 (E4-S2)
+    "gate_threshold_set",
+    "gate_threshold",
+}  # 0017 (E4-S3)
 ALL_TABLES = ((PER_DOC_TABLES - {"ocr_block"}) | {"patient_registry"} | CANONICAL_TABLES
               | AUTH_TABLES | MODEL_TABLES | JOB_TABLES | CATALOGUE_TABLES | AGENT_TABLES
               | ORDER_TABLES | EVIDENCE_TABLES | LONGITUDINAL_TABLES
@@ -79,7 +88,7 @@ def test_upgrade_head_creates_every_table_and_view(engine):
     assert _tables(engine) == ALL_TABLES
     assert _views(engine) == VIEWS
     with engine.connect() as c:
-        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0020"
+        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0021"
         assert c.execute(text("SELECT nextval('patient_mpi_seq')")).scalar_one() >= 1
 
 

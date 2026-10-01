@@ -81,7 +81,9 @@ def test_one_trace_follows_every_document_through_every_stage_the_gateway_and_fh
     assert job.as_json()["trace_id"] == job.trace_id
 
     # the FHIR bundle is a later request: it joins the job's trace
-    monkeypatch.setattr(webapp, "project_patient", lambda pid: {"bundles": [], "patient": pid})
+    monkeypatch.setattr(
+        webapp, "project_patient", lambda pid, **kw: {"bundles": [], "patient": pid}
+    )
     assert webapp._fhir(job)["patient"] == "patient-1"
 
     got = spans.get_finished_spans()
@@ -179,6 +181,24 @@ def test_span_attributes_are_ids_and_names_only(spans):
     finished = spans.get_finished_spans()
     assert finished
     for s in finished:
-        assert set(s.attributes) <= allowed, (s.name, dict(s.attributes))
+        if s.name.startswith("fastapi."):
+            # Framework spans use static code symbols, not patient data.
+            assert set(s.attributes) <= {"code.function.name"}
+            assert all("Anjali" not in str(v) for v in s.attributes.values())
+            continue
+        if s.name == "POST /vlm/generate":
+            assert set(s.attributes) <= {
+                "server.address",
+                "server.port",
+                "url.path",
+                "url.scheme",
+                "http.request.method",
+                "http.response.status_code",
+                "http.route",
+                "network.protocol.version",
+            }
+            assert s.attributes["url.path"] == "/vlm/generate"
+        else:
+            assert set(s.attributes) <= allowed, (s.name, dict(s.attributes))
         values = json.dumps(dict(s.attributes), default=str)
         assert "Anjali" not in values and "rx.pdf" not in values, (s.name, values)

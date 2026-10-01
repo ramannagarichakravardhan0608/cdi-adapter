@@ -137,7 +137,7 @@ def derive_thresholds(conn: Connection, calibrator_version: int, *,
     summary = {"classes": len(rows), "derived": len(derived),
                "meets_target": sum(bool(r["meets_target"]) for r in derived),
                "insufficient_data": short}  # fmt: skip
-    set_id = conn.execute(
+    set_id: Any = conn.execute(
         text("INSERT INTO gate_threshold_set (version, calibrator_version, target_default, "
              "  target_numeric, target_basis, bound, min_accepted, summary, created_by) "
              "VALUES (:v, :c, :t, :tn, :tb, :b, :m, CAST(:s AS jsonb), :by) RETURNING id"),

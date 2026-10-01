@@ -13,8 +13,8 @@
    and superseded facts are never projected.
 4. ``DocumentReference`` (the scan) + ``Provenance`` (every clinical resource + the scan).
 5. ``Composition`` with sections -> ``Bundle(type=document)``.
-6. ``_lint`` structural checks.
-7. ``status = ready_to_share`` only when fully governed **and** lint-clean; held facts ->
+6. ``_lint`` structural checks and the configured ABDM validator.
+7. ``status = ready_to_share`` only when fully governed **and** validation-clean; held facts ->
    ``draft`` / ``warning``; structural errors -> ``draft`` / ``error``. Persisted to
    ``fhir_resource`` + ``fhir_bundle`` (replacing this document's previous projection);
    ``pipeline_run(stage='project')``; ``source_document.status='projected'``; audit.
@@ -38,6 +38,7 @@ from cdi_adapter import repo
 from cdi_adapter.config import get_settings
 from cdi_adapter.db import session_scope
 from cdi_adapter.fhir import resources as R
+from cdi_adapter.fhir import validate_abdm
 from cdi_adapter.logging import get_logger
 from cdi_adapter.mpi.service import get_patient
 from cdi_adapter.storage import ObjectStore, get_store
@@ -292,6 +293,10 @@ def project_document(
     if not persist:
         with session_scope() as conn:
             out = build_document_bundle(conn, doc_id, store)
+            validation = validate_abdm.validate(out["bundle"], out["artifact_type"])
+            out["issues"].extend(validation["issues"])
+            if not validation["valid"]:
+                out["status"], out["validation_status"] = "draft", "error"
         out.pop("_entries")
         return out
     with session_scope() as conn:
@@ -299,6 +304,10 @@ def project_document(
     try:
         with session_scope() as conn:
             out = build_document_bundle(conn, doc_id, store)
+            validation = validate_abdm.validate(out["bundle"], out["artifact_type"])
+            out["issues"].extend(validation["issues"])
+            if not validation["valid"]:
+                out["status"], out["validation_status"] = "draft", "error"
             _persist(conn, out)
             repo.set_document_status(conn, doc_id, "projected")
             metrics = {"artifact": out["artifact_type"], "status": out["status"],
@@ -317,12 +326,15 @@ def project_document(
 
 
 def project_patient(patient_id: UUID | str, *, persist: bool = True,
-                    store: ObjectStore | None = None) -> dict[str, Any]:  # fmt: skip
+                    store: ObjectStore | None = None,
+                    document_ids: list[str] | None = None) -> dict[str, Any]:  # fmt: skip
     with session_scope() as conn:
         pat = get_patient(conn, patient_id)
-        docs = conn.execute(
-            text("SELECT id FROM source_document WHERE patient_id = :p ORDER BY created_at"),
-            {"p": patient_id},
+        selected = " AND id = ANY(CAST(:ids AS uuid[]))" if document_ids is not None else ""
+        docs: Any = conn.execute(
+            text("SELECT id FROM source_document WHERE patient_id = :p" + selected
+                 + " ORDER BY created_at"),
+            {"p": patient_id, "ids": document_ids},
         ).scalars().all()  # fmt: skip
     bundles = [project_document(d, persist=persist, store=store) for d in docs]
     return {

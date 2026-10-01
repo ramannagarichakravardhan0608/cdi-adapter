@@ -166,12 +166,11 @@ def test_full_workbasket_flow_promotes_and_builds_canonical_bundle(seeded_scans,
     assert approved[0]["id"] == item and approved[0]["bundle_status"] == b["status"]
 
 
-def test_approving_with_a_held_fact_never_promotes_it(seeded_scans, client):
+def test_approving_with_a_held_fact_is_refused(seeded_scans, client):
     _, item = _item_with_held_facts(["Tab Metformin 5000 mg 1-1-1", "Tab Amlodipine 5 mg OD"])
     _post(client, f"/api/reviewer/items/{item}/claim")
-    r = _post(client, f"/api/reviewer/items/{item}/approve")  # §4.5: approve
-    assert r.status_code == 200
-    assert r.json()["promoted"] == {"cn_condition": 2, "cn_medication": 1}  # held Metformin out
+    r = _post(client, f"/api/reviewer/items/{item}/approve")
+    assert r.status_code == 409 and "held fact" in r.json()["detail"]
     with session_scope() as c:
         drugs = c.execute(text("SELECT drug_text FROM cn_medication WHERE rv_item_id = :i"),
                           {"i": item}).scalars().all()  # fmt: skip
@@ -179,8 +178,8 @@ def test_approving_with_a_held_fact_never_promotes_it(seeded_scans, client):
             "SELECT count(*) FROM ai_clinical_verification v JOIN ai_suggestion s "
             "ON s.id = v.ai_suggestion_id JOIN ai_event e ON e.id = s.ai_event_id "
             "WHERE e.rv_item_id = :i"), {"i": item}).scalar_one()  # fmt: skip
-    assert drugs == ["Amlodipine"]
-    assert n_verif == 3  # nobody decided the held fact: no verification is recorded for it
+    assert drugs == []
+    assert n_verif == 0  # refusal has no partial canonical/audit promotion
 
 
 def test_lab_item_promotes_into_cn_lab_result_test_code(seeded_scans, client, admin):
@@ -388,18 +387,21 @@ def test_a_second_approve_waits_for_the_first_and_is_refused(seeded_scans, clien
     assert n == 1 and approvals == 1
 
 
-def test_approved_lists_a_document_once_its_latest_approval(seeded_scans, client):
+def test_approved_reupload_reuses_original_snapshot(seeded_scans, client):
     lines = _rx()[:4] + ["Rx", "Tab Amlodipine 5 mg OD"]
     doc, blocks = _doc_with_ocr(lines)
-    items = []
-    for _ in range(2):  # uploaded, approved; uploaded again (re-extracted), approved again
-        _write(doc, blocks)
-        bind_document(doc)
-        validate_document(doc)
-        with session_scope() as c:
-            items.append(str(create_rv_item_for_document(c, doc, job_id="job-a")))
-        _post(client, f"/api/reviewer/items/{items[-1]}/claim")
-        assert _post(client, f"/api/reviewer/items/{items[-1]}/approve").status_code == 200
-    assert items[0] != items[1]  # an approved item is never reopened: the new upload is new
+    _write(doc, blocks)
+    bind_document(doc)
+    validate_document(doc)
+    with session_scope() as c:
+        item = str(create_rv_item_for_document(c, doc, job_id="job-a"))
+    _post(client, f"/api/reviewer/items/{item}/claim")
+    assert _post(client, f"/api/reviewer/items/{item}/approve").status_code == 200
+    assert _write(doc, blocks)["preserved"]
+    bind_document(doc)
+    validate_document(doc)
+    with session_scope() as c:
+        assert str(create_rv_item_for_document(c, doc, job_id="job-b")) == item
+    assert _post(client, f"/api/reviewer/items/{item}/approve").status_code == 409
     shown = [i["id"] for i in client.get("/api/reviewer/approved").json()]
-    assert items[1] in shown and items[0] not in shown
+    assert shown.count(item) == 1

@@ -177,7 +177,7 @@ class PgJobStore:
 
     def files(self, job: Job, indices: list[int]) -> dict[int, tuple[str, bytes, str | None]]:
         with session_scope() as c:
-            meta = c.execute(text("SELECT files FROM web_job WHERE id = :i"),
+            meta: Any = c.execute(text("SELECT files FROM web_job WHERE id = :i"),
                              {"i": job.id}).scalar_one()  # fmt: skip
         out: dict[int, tuple[str, bytes, str | None]] = {}
         for i in indices:

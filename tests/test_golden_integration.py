@@ -86,3 +86,11 @@ def test_repeat_run_without_a_fresh_db_is_reported_as_drift(fresh):
     with get_engine().connect() as conn:
         drift = gp.compare(gp.measure(conn, docs), gp.load_golden()["stub"])
     assert "prescription_00.resources: expected 14, got 12" in drift
+
+
+def test_golden_full_processes_exactly_three_documents_in_baseline_order(fresh, tmp_path):
+    docs = gp.run_full(tmp_path)
+    assert list(docs) == list(gp.load_golden()["stub"]["documents"])
+    with get_engine().connect() as conn:
+        measured = gp.measure(conn, docs)
+    assert gp.compare(measured, gp.load_golden()["stub"]) == []

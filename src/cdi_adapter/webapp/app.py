@@ -28,6 +28,7 @@ any request; an upload is acknowledged only once it is durable.
 from __future__ import annotations
 
 import json
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import NAMESPACE_URL, UUID, uuid5
@@ -47,15 +48,32 @@ from cdi_adapter.mpi import registry
 from cdi_adapter.mpi.service import patient_summary
 from cdi_adapter.storage import get_store
 from cdi_adapter.webapp import admin, auth, jobstore, monitor, review, review_page, reviewer
+from cdi_adapter.webapp.limits import RequestSizeLimit
 from cdi_adapter.webapp.page import upload_page
 
 log = get_logger(__name__)
 MAX_FILES = 10
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    get_settings()  # Validate production configuration before accepting traffic.
+    yield
+
+
 # every route passes auth.authorize first: sign-in + role, per auth.POLICY (backlog E11-S1)
 # (FastAPI's /docs, /redoc and /openapi.json would bypass it, so they are switched off)
-app = FastAPI(title="CareFlow CDI-Adapter", dependencies=[Depends(auth.authorize)],
-              docs_url=None, redoc_url=None, openapi_url=None)  # fmt: skip
+app = FastAPI(
+    title="CareFlow CDI-Adapter",
+    lifespan=lifespan,
+    dependencies=[Depends(auth.authorize)],
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
+
+app.add_middleware(RequestSizeLimit)
+
 app.include_router(auth.router)
 app.include_router(review.router)
 app.include_router(review_page.router)
@@ -130,7 +148,13 @@ async def create_job(request: Request, files: list[UploadFile] = File(...),
                      patient_ref: str | None = Form(None)) -> dict[str, Any]:  # fmt: skip
     if not files or len(files) > MAX_FILES:
         raise HTTPException(422, f"upload 1 to {MAX_FILES} files")
-    payload = [(f.filename or "upload", await f.read(), f.content_type) for f in files]
+    limit = get_settings().upload_max_bytes
+    payload = []
+    for f in files:
+        raw = await f.read(limit + 1)
+        if len(raw) > limit:
+            raise HTTPException(413, "file exceeds the upload size limit")
+        payload.append((f.filename or "upload", raw, f.content_type))
     if any(not raw for _, raw, _ in payload):
         raise HTTPException(422, "empty file")
     reg, patient_id = None, None
@@ -240,8 +264,12 @@ def _fhir(job) -> dict[str, Any]:
         raise HTTPException(409, "job has no patient yet")
     # a later request, but part of the job's trace (E10-S3): the bundle ends the document's path
     with tracing.span("fhir.project", {"cdi.job_id": job.id}, parent=job.trace_parent()):
-        out = project_patient(job.patient_id)
-    return job_bundles(out, [d.document_id for d in job.docs if d.document_id])
+        out = project_patient(
+            job.patient_id,
+            persist=False,
+            document_ids=[d.document_id for d in job.docs if d.document_id],
+        )
+    return out
 
 
 def job_bundles(projection: dict[str, Any], document_ids: list[str]) -> dict[str, Any]:
@@ -272,6 +300,8 @@ def job_fhir_download(job_id: str) -> Response:
     data = _fhir(_job(job_id))
     if not data["bundles"]:
         raise HTTPException(409, "no FHIR record for this job yet")
+    if any(b["status"] != "ready_to_share" for b in data["bundles"]):
+        raise HTTPException(409, "resolve held facts and validation errors before downloading")
     now = datetime.now(UTC).isoformat(timespec="seconds")
     body = download_bundle(data["bundles"], job_id, now)
     disposition = f'attachment; filename="fhir_{job_id}.json"'
@@ -285,7 +315,7 @@ def patient_fhir(patient_id: UUID) -> dict[str, Any]:
         if not c.execute(text("SELECT 1 FROM patient_identity WHERE id = :p"),
                          {"p": str(patient_id)}).first():  # fmt: skip
             raise HTTPException(404, "patient not found")
-    return project_patient(patient_id)
+    return project_patient(patient_id, persist=False)
 
 
 # ------------------------------------------------------------------ documents
@@ -310,7 +340,7 @@ def document_evidence(document_id: UUID) -> dict[str, Any]:
     with session_scope() as c:
         d = _doc(c, document_id)
         cls = repo.get_latest_classification(c, document_id)
-        n_blocks = c.execute(text("SELECT count(*) FROM ocr_block WHERE document_id = :d"),
+        n_blocks: Any = c.execute(text("SELECT count(*) FROM ocr_block WHERE document_id = :d"),
                              {"d": str(document_id)}).scalar_one()  # fmt: skip
         facts = [{k: f[k] for k in ("id", "fact_type", "local_text", "code", "code_status",
                                     "value_num", "value_unit_ucum", "review_state",

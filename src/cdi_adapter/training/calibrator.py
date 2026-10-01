@@ -189,7 +189,7 @@ def fit_calibrator(conn: Connection, dataset_version: int | None = None, *,
                "insufficient_data": len(slices) - len(fitted),
                "within_tolerance": sum(bool(s["within_tolerance"]) for s in fitted),
                "examples": len(rows)}  # fmt: skip
-    model_id = conn.execute(
+    model_id: Any = conn.execute(
         text("INSERT INTO calibration_model (version, dataset_version, method, min_examples, "
              "  tolerance, tolerance_basis, summary, created_by) "
              "VALUES (:v, :d, :m, :me, :t, :tb, CAST(:s AS jsonb), :by) RETURNING id"),

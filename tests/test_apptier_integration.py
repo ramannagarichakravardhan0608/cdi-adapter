@@ -169,8 +169,10 @@ def test_a_runner_killed_mid_job_is_taken_over_without_loss_or_doubles(
 
     monkeypatch.setattr(jobstore, "dispatch", lambda job_id: None)  # the runners are ours
     tag = uuid.uuid4().hex[:6]
-    pdfs = [make_pdf([_rx() + [f"Review in 2 weeks {tag}"]]),
-            make_pdf([_rx() + [f"Follow-up visit {tag}"]])]  # fmt: skip
+    # _rx() creates a unique patient on each call; both documents must use the same one.
+    lines = _rx()
+    pdfs = [make_pdf([lines + [f"Review in 2 weeks {tag}"]]),
+            make_pdf([lines + [f"Follow-up visit {tag}"]])]  # fmt: skip
     r = signed_in(app, "admin").post(
         "/api/jobs",
         files=[("files", (f"rx{i}.pdf", p, "application/pdf")) for i, p in enumerate(pdfs)],

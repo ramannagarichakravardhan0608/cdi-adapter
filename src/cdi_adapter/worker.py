@@ -60,7 +60,7 @@ def ingest_file(self, path: str, source_channel: str = "folder") -> str:
         raise
     except Exception as exc:  # noqa: BLE001
         _retry(self, exc)
-    log.info("folder_ingested", path=path, document_id=str(res.document_id),
+    log.info("folder_ingested", document_id=str(res.document_id),
              deduplicated=res.deduplicated)  # fmt: skip
     return str(res.document_id)
 

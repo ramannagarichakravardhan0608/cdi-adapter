@@ -3,8 +3,8 @@
 If ``CDI_FHIR_JAVA`` is on the PATH, the HL7 validator jar exists at ``CDI_FHIR_VALIDATOR_JAR`` and
 the pinned IG tarball is in ``CDI_FHIR_PACKAGE_HOME`` (backlog E6-S1), ``validate`` runs the real
 validator against ``CDI_IG_PACKAGE`` (id#version, the version is honoured) fully offline and
-parses the OperationOutcome. Otherwise it falls back to the Python conformance checks below.
-Making S9 gate on the real validator is E6-S2.
+parses the OperationOutcome. Otherwise Python checks provide diagnostics and the bundle is
+blocked from sharing unless CDI_FHIR_REQUIRE_HAPI=false (synthetic development only).
 
 The Python fallback is **not** IG profile validation; it checks the document-bundle rules this
 system relies on (§6): Bundle(type=document) with identifier + timestamp, Composition first with
@@ -173,5 +173,13 @@ def validate(bundle: dict[str, Any], artifact: str) -> dict[str, Any]:
         engine, issues = "hapi", _run_hapi(bundle)
     else:
         engine, issues = "python", python_checks(bundle, artifact)
+        if get_settings().fhir_require_hapi:
+            issues.append(
+                _issue(
+                    "error",
+                    "validator-unavailable",
+                    "The pinned HL7 validator is required before sharing",
+                )
+            )
     errors = [i for i in issues if i["severity"] in ("error", "fatal")]
     return {"engine": engine, "valid": not errors, "issues": issues}

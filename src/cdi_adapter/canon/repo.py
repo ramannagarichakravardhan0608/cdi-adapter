@@ -41,6 +41,18 @@ def create_rv_item_for_document(
     already in the workbasket (uploaded again: same bytes = same document, extracted again) keeps
     its item, brought up to date with the document's current facts (2026-09-25: it was left with
     the old, since deleted, facts, i.e. empty)."""
+    repo.lock_documents(conn, [str(document_id)])
+    # Adjudicated uploads are reused, never promoted into duplicate canonical rows.
+    decided = conn.execute(
+        text(
+            "SELECT id FROM rv_item WHERE source_document_id = :d "
+            "AND status IN ('approved', 'rejected') "
+            "ORDER BY created_at DESC LIMIT 1"
+        ),
+        {"d": str(document_id)},
+    ).scalar_one_or_none()
+    if decided:
+        return decided
     existing = conn.execute(
         text("SELECT id FROM rv_item WHERE source_document_id = :d AND status IN "
              "('workbasket', 'claimed') LIMIT 1"), {"d": str(document_id)}
@@ -52,7 +64,7 @@ def create_rv_item_for_document(
     if not facts:
         return None
     cls = repo.get_latest_classification(conn, document_id)
-    item = conn.execute(
+    item: Any = conn.execute(
         text("INSERT INTO rv_item (patient_id, source_document_id, job_id, doc_type) "
              "VALUES (:p, :d, :j, :t) RETURNING id"),
         {"p": facts[0]["patient_id"], "d": str(document_id), "j": job_id,

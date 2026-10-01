@@ -171,7 +171,19 @@ def validate_document(document_id: UUID | str, *, actor: str = "system") -> dict
 
 def _validate(conn: Connection, doc_id: str, s: Settings,
               run_id: UUID | str | None = None) -> dict[str, Any]:  # fmt: skip
-    ext = conn.execute(
+    # A patient-wide gate lock serializes cross-document contradiction checks.
+    pid = conn.execute(
+        text("SELECT patient_id FROM source_document WHERE id = :d"), {"d": doc_id}
+    ).scalar_one_or_none()
+    conn.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:p, 0))"), {"p": "validate:" + str(pid)}
+    )
+    related_docs: Any = conn.execute(
+        text("SELECT id FROM source_document WHERE patient_id = :p OR id = :d"),
+        {"p": pid, "d": doc_id},
+    ).scalars()
+    repo.lock_documents(conn, [str(d) for d in related_docs])
+    ext: Any = conn.execute(
         text("SELECT payload FROM extraction WHERE document_id = :d "
              "ORDER BY created_at DESC LIMIT 1"), {"d": doc_id}
     ).scalar_one_or_none()  # fmt: skip
@@ -198,8 +210,17 @@ def _validate(conn: Connection, doc_id: str, s: Settings,
     audit: list[str] = []
     n_auto = n_conflict = 0
     confidences: list[tuple[str, float]] = []  # E10-S4: observed once the gate pass is done
+    approved: set[Any] = set(
+        conn.execute(
+            text(
+                "SELECT e.fact_id FROM rv_item_element e JOIN rv_item i ON i.id = e.rv_item_id "
+                "WHERE i.source_document_id = :d AND i.status = 'approved'"
+            ),
+            {"d": doc_id},
+        ).scalars()
+    )
     for f in facts:
-        if f["review_state"] in HUMAN_STATES:
+        if f["review_state"] in HUMAN_STATES or f["id"] in approved:
             continue
         f["encounter_date"] = enc_date
         range_findings, updates = rules.check_value_range(f)
@@ -229,8 +250,19 @@ def _validate(conn: Connection, doc_id: str, s: Settings,
                     findings.append(Finding("blocker", "contradiction", msg))
                     # §5 S6: "both facts forced in_review"
                     back = Finding("blocker", "contradiction", f"conflicts with fact {f['id']}")
-                    _set_state(conn, other["id"], "in_review", None,
-                               {"findings": [back.as_json()]})  # fmt: skip
+                    if other["review_state"] not in HUMAN_STATES:
+                        conn.execute(
+                            text(
+                                "UPDATE clinical_fact SET review_state = 'in_review', "
+                                "review_note = CAST(:n AS jsonb), updated_at = now() "
+                                "WHERE id = :id AND review_state NOT IN "
+                                "('clinician_confirmed', 'corrected', 'rejected') "
+                                "AND NOT EXISTS (SELECT 1 FROM rv_item_element e JOIN rv_item i "
+                                "ON i.id = e.rv_item_id WHERE e.fact_id = :id "
+                                "AND i.status = 'approved')"
+                            ),
+                            {"id": other["id"], "n": json.dumps({"findings": [back.as_json()]})},
+                        )
 
         n_warn = sum(x.severity == "warn" for x in findings)
         n_block = sum(x.severity == "blocker" for x in findings)

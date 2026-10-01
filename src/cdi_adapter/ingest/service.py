@@ -64,6 +64,10 @@ def ingest_bytes(
 ) -> IngestResult:
     if not raw:
         raise pages.UnsupportedDocument("empty upload")
+    from cdi_adapter.config import get_settings
+
+    if len(raw) > get_settings().upload_max_bytes:
+        raise pages.UnsupportedDocument("file exceeds the upload size limit")
     store = store or get_store()
     sha = hashlib.sha256(raw).hexdigest()
     mime = mime_type or pages.sniff_mime(raw, filename)
@@ -148,7 +152,7 @@ def _render_finish(doc_id: UUID, sha: str, raw: bytes, mime: str, store: ObjectS
                 entity_id=doc_id,
                 detail={"status": "error", "stage": "ingest"},
             )
-        log.error("ingest_failed", document_id=str(doc_id), error=str(exc))
+        log.error("ingest_failed", document_id=str(doc_id), error_type=type(exc).__name__)
         raise
 
     # 8. done

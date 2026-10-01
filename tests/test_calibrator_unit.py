@@ -17,9 +17,10 @@ from cdi_adapter.training.isotonic import fit
 
 def test_pool_adjacent_violators_on_a_known_case():
     c = fit([0.1, 0.2, 0.3, 0.4], [0, 1, 0, 1])
-    assert c.x == (0.1, 0.25, 0.4) and c.y == (0.0, 0.5, 1.0)  # the 1,0 violation pooled
+    assert c.x == (0.1, 0.2, 0.3, 0.4) and c.y == (0.0, 0.5, 0.5, 1.0)  # the 1,0 violation pooled
     assert c.predict(0.0) == 0.0 and c.predict(1.0) == 1.0  # clipped outside
-    assert c.predict(0.175) == pytest.approx(0.25)  # linear between block centres
+    assert c.predict(0.175) == pytest.approx(0.375)
+    assert c.predict(0.2) == c.predict(0.3) == 0.5  # preserve the fitted plateau
 
 
 def test_the_fit_is_monotone_and_recovers_the_true_rate():

@@ -48,10 +48,11 @@ def ensure_identity(conn: Connection, reg: dict[str, Any], *, actor: str = "syst
     ).scalar_one_or_none()  # fmt: skip
     if existing:
         return existing
-    pid = conn.execute(
+    pid: Any = conn.execute(
         text(
             "INSERT INTO patient_identity (mpi_id, name, sex, birth_date, abha_number, "
-            "  identity_confidence) VALUES (:m, :name, :sex, :dob, :abha, 1.0) RETURNING id"
+            "  identity_confidence, birth_date_precision) "
+            "VALUES (:m, :name, :sex, :dob, :abha, 1.0, 'day') RETURNING id"
         ),
         {"m": reg["patient_id"], "name": reg["name"], "sex": reg.get("gender"),
          "dob": reg.get("dob"), "abha": reg.get("abha_id")},

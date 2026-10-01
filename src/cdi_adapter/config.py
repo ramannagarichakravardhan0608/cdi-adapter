@@ -46,6 +46,15 @@ class Settings(BaseSettings):
     processed_dir: str = "/workspace/data/processed"
     failed_dir: str = "/workspace/data/failed"
 
+    # Hard bounds apply at HTTP intake and again to worker-side rendering.
+    upload_max_bytes: int = Field(default=12 * 1024 * 1024, ge=1024)
+    request_max_bytes: int = Field(default=64 * 1024 * 1024, ge=1024)
+    document_max_pages: int = Field(default=50, ge=1)
+    page_max_pixels: int = Field(default=10_000_000, ge=1)
+    document_max_pixels: int = Field(default=50_000_000, ge=1)
+    fhir_require_hapi: bool = True  # false only for synthetic development/test fixtures
+    production: bool = False
+
     # S1 render resolution
     page_dpi: int = Field(default=200, ge=50, le=600)
 
@@ -207,8 +216,16 @@ def get_settings() -> Settings:
     base = Settings()  # env + .env only: tells us where the store is
     store = secretstore.active_dir(base.secrets_dir)
     if store is None:
-        return base
-    if not store.is_dir():
+        settings = base
+    elif not store.is_dir():
         raise FileNotFoundError(f"{secretstore.ENV_VAR}={store} does not exist")
-    secretstore.assert_safe(store)
-    return Settings(_secrets_dir=store)  # type: ignore[call-arg]  # pydantic-settings init kwarg
+    else:
+        secretstore.assert_safe(store)
+        settings = Settings(_secrets_dir=store)  # type: ignore[call-arg]
+    if settings.production:
+        from cdi_adapter.preflight import configuration_issues
+
+        issues = configuration_issues(settings)
+        if issues:
+            raise RuntimeError("Production configuration rejected: " + "; ".join(issues))
+    return settings

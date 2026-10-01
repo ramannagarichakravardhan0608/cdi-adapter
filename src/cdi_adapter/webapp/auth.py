@@ -157,7 +157,7 @@ def _now() -> datetime:
 def verify_login(conn: Any, username: str, password: str) -> tuple[User | None, str]:
     """(user, "") on success, else (None, reason). Counts failures and locks the account."""
     s = get_settings()
-    row = conn.execute(text("SELECT * FROM web_user WHERE username = :u"),
+    row = conn.execute(text("SELECT * FROM web_user WHERE username = :u FOR UPDATE"),
                        {"u": username.strip().lower()}).mappings().first()  # fmt: skip
     if row is None:
         check_password(password, _DUMMY_HASH)

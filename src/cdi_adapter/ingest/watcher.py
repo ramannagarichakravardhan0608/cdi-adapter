@@ -74,7 +74,7 @@ class InboxHandler(FileSystemEventHandler):
         except (UnsupportedDocument, OSError) as exc:
             dest = _unique(self.failed, path.name)
             shutil.move(str(path), dest)
-            log.warning("folder_rejected", file=path.name, reason=str(exc), moved_to=str(dest))
+            log.warning("folder_rejected", error_type=type(exc).__name__)
             return dest
         dest = _unique(self.processed, path.name)
         shutil.move(str(path), dest)
@@ -83,9 +83,9 @@ class InboxHandler(FileSystemEventHandler):
         except Exception as exc:  # the broker is down: park the file where an operator sees it
             failed = _unique(self.failed, path.name)
             shutil.move(str(dest), failed)
-            log.error("folder_submit_failed", file=path.name, error=str(exc), moved_to=str(failed))
+            log.error("folder_submit_failed", error_type=type(exc).__name__)
             return failed
-        log.info("folder_queued", file=path.name, stored_at=str(dest))
+        log.info("folder_queued")
         return dest
 
 

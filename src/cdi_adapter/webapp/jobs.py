@@ -393,7 +393,7 @@ class JobRunner:
             d.steps_done.append("classify")
         except Exception as exc:  # one bad document never sinks the job
             d.status, d.error = "error", f"{type(exc).__name__}: {exc}"
-            log.error("job_doc_failed", job=job.id, filename=filename, error=d.error)
+            log.error("job_doc_failed", job=job.id, error_type=type(exc).__name__)
         self._save(job)
 
     def _groups(self, docs: list[DocState]) -> list[list[DocState]]:
@@ -526,7 +526,7 @@ class JobRunner:
             return
         except Exception as exc:
             d.status, d.error = "error", f"{type(exc).__name__}: {exc}"
-            log.error("job_doc_failed", job=job.id, filename=d.filename, error=d.error)
+            log.error("job_doc_failed", job=job.id, error_type=type(exc).__name__)
             self._save(job)
             return
         self._save(job)  # extracted, and the job's patient fixed: a resumed run starts after this
@@ -550,7 +550,7 @@ class JobRunner:
             d.status, d.step = "done", None
         except Exception as exc:
             d.status, d.error = "error", f"{type(exc).__name__}: {exc}"
-            log.error("job_doc_failed", job=job.id, filename=d.filename, error=d.error)
+            log.error("job_doc_failed", job=job.id, error_type=type(exc).__name__)
         self._save(job)
         if d.status == "done":
             try:  # advisory: a queueing failure never fails the document
@@ -634,6 +634,7 @@ class JobRunner:
         try:
             with job.save_lock:
                 self.store.finish(job, self.owner)
+            self._jobs.pop(job.id, None)
         except Exception as exc:  # noqa: BLE001 - the lease runs out; a sweep finishes it again
             log.error("job_finish_failed", job=job.id, error=str(exc))
 

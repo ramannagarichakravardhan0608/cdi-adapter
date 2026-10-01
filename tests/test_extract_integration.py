@@ -20,7 +20,6 @@ from cdi_adapter.extract.service import IdentityMismatch, extract_document, writ
 from cdi_adapter.ingest.service import ingest_bytes
 from cdi_adapter.ml.client import StubMLClient
 from cdi_adapter.mpi import service as mpi
-from tests.helpers import make_pdf
 
 pytestmark = pytest.mark.integration
 
@@ -202,11 +201,19 @@ def test_unknown_doc_type_is_skipped_as_normalized(db_env):
 
 
 def test_full_extract_document_chain(app_env):
-    res = ingest_bytes(make_pdf([RX_LINES]), "anjali-rx.pdf")
+    from scripts.make_sample_docs import text_pdf
+
+    # Use the same legible synthetic rendering as the pipeline golden path.
+    res = ingest_bytes(text_pdf(RX_LINES), "anjali-rx.pdf")
     from cdi_adapter.classify.service import classify_document
     from cdi_adapter.ocr.service import ocr_document
 
     ocr_document(res.document_id, force_engine="rapidocr")
     classify_document(res.document_id)
     out = extract_document(res.document_id)
-    assert out["facts"] >= 8
+    # BP is one fact with two FHIR components: seven facts, not the old eight.
+    facts = repo_facts(res.document_id)
+    assert out["facts"] == len(facts)
+    assert sum(f["fact_type"] == "medication" for f in facts) == 3
+    assert sum(f["fact_type"] == "vital_sign" for f in facts) == 2
+    assert sum(f["fact_type"] == "condition" for f in facts) == 2

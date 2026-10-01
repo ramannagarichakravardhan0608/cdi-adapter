@@ -37,7 +37,12 @@ def digest_package(pkg_dir: Path) -> str:
     """sha256 over the package's own files (relative path + content), in sorted order."""
     h = hashlib.sha256()
     root = pkg_dir / "package"
-    files = sorted(p for p in root.rglob("*") if p.is_file() and p.name not in GENERATED)
+    # Pins were generated on Windows. Use its case-insensitive path ordering explicitly
+    # on every host, with a deterministic tie-break for Linux case-distinct paths.
+    files = sorted(
+        (p for p in root.rglob("*") if p.is_file() and p.name not in GENERATED),
+        key=lambda p: (p.relative_to(root).as_posix().casefold(), p.relative_to(root).as_posix()),
+    )
     for f in files:
         h.update(f.relative_to(root).as_posix().encode() + b"\0")
         h.update(hashlib.sha256(f.read_bytes()).digest())

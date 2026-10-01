@@ -542,7 +542,7 @@ def _record(conn: Connection, did: str, out: list[dict[str, Any]], vlm: MLClient
             diagnoses: list[str]) -> Any:  # fmt: skip
     item = conn.execute(text("SELECT id FROM rv_item WHERE source_document_id = :d "
                              "ORDER BY created_at DESC LIMIT 1"), {"d": did}).scalar()  # fmt: skip
-    event = conn.execute(
+    event: Any = conn.execute(
         text("INSERT INTO ai_event (rv_item_id, source_document_id, kind, model_stack) "
              "VALUES (:i, :d, :k, CAST(:m AS jsonb)) RETURNING id"),
         {"i": item, "d": did, "k": EVENT_KIND,

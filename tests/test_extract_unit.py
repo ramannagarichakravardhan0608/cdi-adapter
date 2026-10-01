@@ -225,7 +225,7 @@ def test_prompt_block_ids_budget_and_guidance():
         (Candidate(), False),  # nothing legible -> nothing contradicts
         (Candidate(name="Ramesh Kumar", birth_year=1978), True),
         (Candidate(name="Anjali Das", birth_year=1990), True),
-        (Candidate(name="Anjali Das", dob=date(1979, 5, 1)), False),  # +-1 yr
+        (Candidate(name="Anjali Das", dob=date(1979, 5, 1)), True),  # full dates must match
     ],
 )
 def test_check_mismatch(found, mismatch):

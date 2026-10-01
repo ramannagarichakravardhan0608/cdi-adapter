@@ -153,8 +153,12 @@ def run_full(folder: Path) -> dict[str, str]:
         check=True,
     )
     import pipeline_smoke
+    from make_sample_docs import DOCS
 
-    return {Path(r["file"]).stem: r["document_id"] for r in pipeline_smoke.run(folder, True)}
+    # The baseline is three documents, in clinical order (shared resources belong to the
+    # first document). Processing the PNG copies too doubles facts and changes attribution.
+    rows = pipeline_smoke.run(folder, True, filenames=[f"{name}.pdf" for name in DOCS])
+    return {Path(r["file"]).stem: r["document_id"] for r in rows}
 
 
 def run_seeded() -> dict[str, str]:

@@ -135,7 +135,7 @@ def _log(agent: str, tool: str, document_id: str | None, status: str, payload: A
          output: Any, reason: str | None, ms: int, *, run_id: str | None = None,
          fact_id: str | None = None) -> None:  # fmt: skip
     with session_scope() as c:
-        call_id = c.execute(
+        call_id: Any = c.execute(
             text("INSERT INTO agent_tool_call (agent, tool, document_id, status, input, output, "
                  "  reason, duration_ms) VALUES (:a, :t, :d, :s, CAST(:i AS jsonb), "
                  "  CAST(:o AS jsonb), :r, :ms) RETURNING id"),

@@ -4,22 +4,40 @@ pipeline on Celery; the web app (:8888) is the primary path."""
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 
 from cdi_adapter.ingest.pages import UnsupportedDocument
+from cdi_adapter.webapp.limits import RequestSizeLimit
 
-app = FastAPI(title="cdi-adapter ingest API")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    from cdi_adapter.config import get_settings
+
+    if get_settings().production:
+        raise RuntimeError("The legacy ingest API has no staff authentication; use the web app")
+    yield
+
+
+app = FastAPI(title="cdi-adapter ingest API", lifespan=lifespan)
+
+app.add_middleware(RequestSizeLimit)
 
 
 @app.post("/ingest", status_code=202)
 async def ingest(file: UploadFile = File(...), legacy_ref: str | None = Form(None),
                  legacy_patient_ref: str | None = Form(None)) -> dict[str, Any]:  # fmt: skip
+    from cdi_adapter.config import get_settings
     from cdi_adapter.ingest.service import ingest_bytes
     from cdi_adapter.worker import submit_document
 
-    raw = await file.read()
+    limit = get_settings().upload_max_bytes
+    raw = await file.read(limit + 1)
+    if len(raw) > limit:
+        raise HTTPException(413, "file exceeds the upload size limit")
     if not raw:
         raise HTTPException(422, "empty file")
     try:

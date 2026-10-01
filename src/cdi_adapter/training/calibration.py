@@ -151,7 +151,7 @@ def export(conn: Connection, *, actor: str = "calibration-export",
     version = (latest.version if latest else 0) + 1
     by_decision = {d: sum(r["decision"] == d for r in rows)
                    for d in ("confirmed", "corrected", "rejected")}  # fmt: skip
-    dataset_id = conn.execute(
+    dataset_id: Any = conn.execute(
         text("INSERT INTO calibration_dataset (version, schema_version, content_sha256, "
              "  row_count, source, created_by) "
              "VALUES (:v, :s, :h, :n, CAST(:src AS jsonb), :by) RETURNING id"),

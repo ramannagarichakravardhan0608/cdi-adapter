@@ -28,7 +28,7 @@ class NotInspectable(LookupError):
 
 
 def inspectable_tables(conn: Connection) -> list[str]:
-    names = conn.execute(
+    names: Any = conn.execute(
         text("SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename")
     ).scalars()
     return [n for n in names if n.startswith(PREFIXES)]

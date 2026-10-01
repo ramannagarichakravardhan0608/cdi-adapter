@@ -79,7 +79,7 @@ def decisions(conn: Connection, document_id: UUID | str) -> dict[str, Any]:
     for f in facts:
         f["agent_steps"] = [s["id"] for s in seq if s["fact_ref"] == f["id"]]
         f["provenance"] = prov[f["id"]]
-    untraced_calls = conn.execute(
+    untraced_calls: Any = conn.execute(
         text("SELECT c.id FROM agent_tool_call c WHERE c.document_id = CAST(:d AS uuid) "
              "AND NOT EXISTS (SELECT 1 FROM agent_trace t WHERE t.tool_call_id = c.id) "
              "ORDER BY c.id"),

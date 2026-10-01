@@ -42,3 +42,8 @@ mypy, then `pytest -m "not integration"`. Any red stage fails the run. See [`doc
 Run CLI tools as `python -m <tool>`: Windows Smart App Control blocks pip's unsigned `.exe` launchers.
 
 Configuration is read from `CDI_*` environment variables or a `.env` file; see `.env.example`.
+
+## Production deployment
+
+Follow [the production release gates](docs/production-release.md) before enabling patient traffic.
+The synthetic test suite does not certify clinical accuracy or the target deployment.

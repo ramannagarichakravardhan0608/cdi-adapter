@@ -169,9 +169,26 @@ def bind_document(document_id: UUID | str, *, actor: str = "system") -> dict[str
         )
     try:
         with session_scope() as conn:
+            repo.lock_documents(conn, [str(document_id)])
+            approved = bool(
+                conn.execute(
+                    text(
+                        "SELECT 1 FROM rv_item WHERE source_document_id = :d "
+                        "AND status IN ('approved', 'rejected') LIMIT 1"
+                    ),
+                    {"d": str(document_id)},
+                ).first()
+            )
             facts = repo.get_facts_for_document(conn, document_id)
             bound = 0
             for f in facts:
+                if approved or f["review_state"] in (
+                    "clinician_confirmed",
+                    "corrected",
+                    "rejected",
+                ):
+                    bound += f["code_status"] == "bound"
+                    continue
                 u = bind_fact(f)
                 _update_fact(conn, f["id"], u)
                 bound += u["code_status"] == "bound"

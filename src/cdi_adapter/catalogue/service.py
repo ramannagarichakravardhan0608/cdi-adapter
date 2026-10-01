@@ -117,7 +117,7 @@ def import_csv(conn: Connection, path: Path, *, source: str = "tata1mg",
     reader.fieldnames = [(h or "").strip().lower() for h in (reader.fieldnames or [])]
     if not any(h in reader.fieldnames for h in COLUMNS["name"]):
         raise ValueError(f"{path.name}: no product-name column (one of {COLUMNS['name']})")
-    import_id = conn.execute(
+    import_id: Any = conn.execute(
         text("INSERT INTO med_catalogue_import (source, file_name, sha256, rows_loaded, "
              "imported_by) VALUES (:s, :f, :h, 0, :a) RETURNING id"),
         {"s": source, "f": path.name, "h": sha, "a": actor},
@@ -227,6 +227,7 @@ def _generics(conn: Connection) -> dict[str, str]:
     iid = imp["id"] if imp else None
     if iid is None or _generic_cache[0] != iid:
         found: dict[str, str] = {}
+        comp: Any
         for comp in conn.execute(text("SELECT DISTINCT composition FROM med_catalogue "
                                       "WHERE composition IS NOT NULL")).scalars():  # fmt: skip
             for key, name in ingredients(comp):

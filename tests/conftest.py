@@ -16,6 +16,8 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import OperationalError
 
+# Synthetic fixtures are not intended for sharing with clinical systems.
+os.environ.setdefault("CDI_FHIR_REQUIRE_HAPI", "false")
 ROOT = Path(__file__).resolve().parents[1]
 ADMIN_URL = os.environ.get(
     "CDI_TEST_ADMIN_URL", "postgresql+psycopg://cdi:cdi@127.0.0.1:5432/postgres"
@@ -99,7 +101,7 @@ def minio_endpoint() -> str:
 
 
 @pytest.fixture
-def app_env(migrated_db, minio_endpoint, monkeypatch):
+def app_env(minio_endpoint, migrated_db, monkeypatch):
     """Point every CDI_* setting at the test Postgres + real MinIO for one test."""
     from cdi_adapter import db, storage
     from cdi_adapter.config import get_settings

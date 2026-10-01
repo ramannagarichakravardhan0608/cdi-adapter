@@ -131,6 +131,8 @@ def names_match(a: str | None, b: str | None) -> bool:
 def dob_match(a: date | int | None, b: date | int | None) -> bool:
     if a is None or b is None:
         return True  # nothing to contradict
+    if isinstance(a, date) and isinstance(b, date):
+        return a == b
     ya = a.year if isinstance(a, date) else a
     yb = b.year if isinstance(b, date) else b
     return abs(ya - yb) <= 1
@@ -140,15 +142,17 @@ def dob_match(a: date | int | None, b: date | int | None) -> bool:
 
 
 def _mint(conn: Connection, cand: Candidate) -> UUID:
-    seq = conn.execute(text("SELECT nextval('patient_mpi_seq')")).scalar_one()
+    seq: Any = conn.execute(text("SELECT nextval('patient_mpi_seq')")).scalar_one()
     mpi_id = f"CFP-{date.today().year}-{seq:06d}"
-    pid = conn.execute(
+    pid: Any = conn.execute(
         text(
-            "INSERT INTO patient_identity (mpi_id, name, sex, birth_date, abha_number, legacy_mrn) "
-            "VALUES (:mpi, :name, :sex, :dob, :abha, :mrn) RETURNING id"
+            "INSERT INTO patient_identity (mpi_id, name, sex, birth_date, birth_date_precision, "
+            "abha_number, legacy_mrn) "
+            "VALUES (:mpi, :name, :sex, :dob, :precision, :abha, :mrn) RETURNING id"
         ),
         {"mpi": mpi_id, "name": cand.name, "sex": cand.sex,
          "dob": cand.dob or (date(cand.birth_year, 1, 1) if cand.birth_year else None),
+         "precision": "day" if cand.dob else "year" if cand.birth_year else None,
          "abha": cand.abha, "mrn": cand.mrn},
     ).scalar_one()  # fmt: skip
     repo.write_audit(conn, actor="system", action="create", entity="patient_identity",
@@ -160,6 +164,19 @@ def _mint(conn: Connection, cand: Candidate) -> UUID:
 RESOLVE_LOCK_KEY = 0x434449204D5049
 
 
+def _conflicting_identity(row: Any, cand: Candidate) -> bool:
+    if cand.abha and row["abha_number"] and digits(row["abha_number"]) != cand.abha:
+        return True
+    if cand.sex and row["sex"] and row["sex"] != cand.sex:
+        return True
+    if cand.mrn and row["legacy_mrn"] and row["legacy_mrn"] != cand.mrn:
+        return True
+    dob = row["birth_date"]
+    if dob and row["birth_date_precision"] == "year":
+        dob = dob.year
+    return not dob_match(dob, cand.dob or cand.birth_year)
+
+
 def resolve_identity(conn: Connection, cand: Candidate) -> tuple[UUID, str]:
     """Return ``(patient_id, how)`` with ``how`` in ``abha`` | ``fuzzy`` | ``minted``.
 
@@ -169,7 +186,7 @@ def resolve_identity(conn: Connection, cand: Candidate) -> tuple[UUID, str]:
     """
     conn.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": RESOLVE_LOCK_KEY})
     if cand.abha:
-        pid = conn.execute(
+        pid: Any = conn.execute(
             text("SELECT id FROM patient_identity "
                  "WHERE regexp_replace(abha_number, '\\D', '', 'g') = :a"), {"a": cand.abha}
         ).scalar_one_or_none()  # fmt: skip
@@ -177,13 +194,13 @@ def resolve_identity(conn: Connection, cand: Candidate) -> tuple[UUID, str]:
             return pid, "abha"
     if cand.name and cand.birth_year:
         rows = conn.execute(
-            text("SELECT id, name FROM patient_identity WHERE birth_date IS NOT NULL "
+            text("SELECT * FROM patient_identity WHERE birth_date IS NOT NULL "
                  "AND abs(extract(year FROM birth_date) - :y) <= 1"), {"y": cand.birth_year}
         ).mappings()  # fmt: skip
         target = normalize_name(cand.name)
         best = max(
             ((r["id"], SequenceMatcher(None, target, normalize_name(r["name"])).ratio())
-             for r in rows),
+             for r in rows if not _conflicting_identity(r, cand)),
             key=lambda t: t[1], default=None,
         )  # fmt: skip
         if best and best[1] >= FUZZY_NAME_RATIO:
@@ -241,7 +258,9 @@ def merge_identity_evidence(conn: Connection, patient_id: UUID | str) -> dict[st
     conn.execute(
         text(
             "UPDATE patient_identity SET name = coalesce(:name, name), sex = coalesce(:sex, sex), "
-            "birth_date = coalesce(:dob, birth_date), identity_confidence = :c, "
+            "birth_date = coalesce(:dob, birth_date), "
+            "birth_date_precision = CASE WHEN CAST(:dob AS date) IS NOT NULL THEN 'day' "
+            "ELSE birth_date_precision END, identity_confidence = :c, "
             "updated_at = now() WHERE id = :p"
         ),
         {"p": patient_id, "name": name, "sex": sex, "dob": dob, "c": confidence},

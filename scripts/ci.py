@@ -45,12 +45,16 @@ INTEGRATION_STAGES: tuple[Stage, ...] = (
     Stage(
         "integration",
         (PY, "-m", "pytest", "-m", "integration", "-q", "-p", "no:cacheprovider"),
-        (("CDI_TEST_REQUIRE_INFRA", "1"), ("CDI_MLSERVE_BACKEND", "stub")),
+        (
+            ("CDI_TEST_REQUIRE_INFRA", "1"),
+            ("CDI_MLSERVE_BACKEND", "stub"),
+            ("CDI_FHIR_REQUIRE_HAPI", "false"),
+        ),
     ),
     Stage(
         "pipeline-audit",
         (PY, "scripts/ci_pipeline_audit.py"),
-        (("CDI_MLSERVE_BACKEND", "stub"),),
+        (("CDI_MLSERVE_BACKEND", "stub"), ("CDI_FHIR_REQUIRE_HAPI", "false")),
     ),
     # E1-S6: the §8.2 golden path, S1 -> S9 on a fresh database, against the stub baseline
     Stage(
@@ -65,7 +69,7 @@ INTEGRATION_STAGES: tuple[Stage, ...] = (
             "--fresh-db",
             "cdi_golden",
         ),
-        (("CDI_MLSERVE_BACKEND", "stub"),),
+        (("CDI_MLSERVE_BACKEND", "stub"), ("CDI_FHIR_REQUIRE_HAPI", "false")),
     ),  # fmt: skip
 )
 SUITES = {"unit": STAGES, "integration": INTEGRATION_STAGES}

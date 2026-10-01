@@ -31,6 +31,10 @@ class WorkflowError(Exception):
 
 def _item(conn: Connection, item_id, *, lock: bool = False) -> dict[str, Any]:
     if lock:
+        doc = conn.execute(
+            text("SELECT source_document_id FROM rv_item WHERE id = :i"), {"i": str(item_id)}
+        ).scalar_one_or_none()
+        repo.lock_documents(conn, [str(doc)] if doc else [])
         # a decision holds the item's row until it commits: a second approve (a double click, or
         # the other web instance) waits, then sees "approved" and is refused. 2026-09-25: approve
         # runs the validator for seconds, and 5 clicks promoted the same item 5 times
@@ -134,6 +138,7 @@ def _promote_fact(conn: Connection, f: dict[str, Any], item_id, reviewer: str) -
                 "frequency_per_day": m.get("frequency_per_day"),
                 "duration_days": m.get("duration_days"),
                 "instructions": m.get("instructions"),
+                "prn": bool(m.get("prn")),
             },
         )
         return "cn_medication"
@@ -173,11 +178,13 @@ def promote_review_item(conn: Connection, rv_item_id: UUID | str, reviewer: str,
     item = _item(conn, rv_item_id, lock=True)
     _assert_claimed(item, reviewer, override)
     els = canon.elements(conn, rv_item_id)
+    if any(e["fact"] and e["fact"]["review_state"] in canon.HELD for e in els):
+        raise WorkflowError(409, "resolve every held fact before approval")
 
     model = conn.execute(text("SELECT model_name FROM extraction WHERE document_id = :d "
                               "ORDER BY created_at DESC LIMIT 1"),
                          {"d": item["source_document_id"]}).scalar_one_or_none()  # fmt: skip
-    event = conn.execute(
+    event: Any = conn.execute(
         text("INSERT INTO ai_event (rv_item_id, source_document_id, kind, model_stack) "
              "VALUES (:i, :d, 'extraction', CAST(:m AS jsonb)) RETURNING id"),
         {"i": str(rv_item_id), "d": item["source_document_id"],
@@ -192,7 +199,7 @@ def promote_review_item(conn: Connection, rv_item_id: UUID | str, reviewer: str,
         if f is None:
             continue
         machine = original.get(str(e["fact_id"]), f)  # what the model proposed
-        sug = conn.execute(
+        sug: Any = conn.execute(
             text(
                 "INSERT INTO ai_suggestion (ai_event_id, fact_id, element_type, suggested, "
                 "  confidence) VALUES (:e, :f, :t, CAST(:s AS jsonb), :c) RETURNING id"

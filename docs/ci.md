@@ -76,3 +76,10 @@ The project folder is not yet in a git repository or on a git host (owner instru
    disabled; remove the test — it must turn green and become mergeable.
 
 Steps 2–4 are what keep E1-S1 **Blocked** until the repository exists on a host.
+
+## Reproducing the CPU dependency set
+
+Use Python 3.12 and `python -m pip install -c requirements-ci.txt -e ".[dev,ocr,load]"`.
+Run both `python scripts/ci.py` and `python scripts/ci.py --suite integration` with native
+PostgreSQL and MinIO. Synthetic runs use `CDI_FHIR_REQUIRE_HAPI=false`; production requires
+the full validator. See [production release gates](production-release.md).

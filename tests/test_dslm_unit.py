@@ -25,6 +25,15 @@ SAMPLES = ROOT / "data" / "samples"
 RUNPOD = ROOT / "infra" / "runpod"
 
 
+@pytest.fixture(scope="module", autouse=True)
+def synthetic_samples(tmp_path_factory):
+    from scripts.make_sample_docs import generate
+
+    global SAMPLES
+    SAMPLES = tmp_path_factory.mktemp("dslm-samples")
+    generate(SAMPLES)
+
+
 def _settings(**kw: Any) -> Settings:
     return Settings(_env_file=None, mlserve_backend="vllm", **kw)  # type: ignore[call-arg]
 

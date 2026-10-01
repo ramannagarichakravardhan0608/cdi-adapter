@@ -144,7 +144,7 @@ def patient(p: dict[str, Any], ref: str) -> dict[str, Any]:
         res["name"] = [{"text": p["name"]}]
     if p.get("sex") in _GENDER:
         res["gender"] = _GENDER[p["sex"]]
-    if p.get("birth_date"):
+    if p.get("birth_date") and p.get("birth_date_precision", "day") == "day":
         res["birthDate"] = _iso(p["birth_date"])
     return res
 
@@ -198,7 +198,8 @@ def condition(f, ref, pat, enc) -> dict[str, Any]:
         )
     return {
         "resourceType": "Condition", "id": ref.split(":")[-1], "meta": _meta("Condition"),
-        "clinicalStatus": {"coding": [{"system": _COND_CLINICAL, "code": "active"}]},
+        "clinicalStatus": {"coding": [{"system": _COND_CLINICAL,
+                                        "code": f.get("clinical_status") or "active"}]},
         "verificationStatus": {"coding": [{"system": _COND_VERIFY, "code": "confirmed"}]},
         "code": cc, "subject": {"reference": pat}, "encounter": {"reference": enc},
         "recordedDate": _iso(f.get("asserted_time")),

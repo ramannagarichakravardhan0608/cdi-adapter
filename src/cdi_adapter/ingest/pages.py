@@ -68,13 +68,38 @@ def _png(img: Image.Image) -> bytes:
 
 def render_pages(raw: bytes, mime: str, dpi: int | None = None) -> list[bytes]:
     """One PNG per page."""
-    dpi = dpi or get_settings().page_dpi
+    s = get_settings()
+    if len(raw) > s.upload_max_bytes:
+        raise UnsupportedDocument("file exceeds the upload size limit")
+    dpi = dpi or s.page_dpi
+    total = 0
+
+    def budget(index: int, pixels: int) -> None:
+        nonlocal total
+        total += pixels
+        if index >= s.document_max_pages:
+            raise UnsupportedDocument("document exceeds the page limit")
+        if pixels > s.page_max_pixels or total > s.document_max_pixels:
+            raise UnsupportedDocument("document exceeds the pixel budget")
+
     if mime == "application/pdf":
         with pymupdf.open(stream=raw, filetype="pdf") as doc:
+            if len(doc) > s.document_max_pages:
+                raise UnsupportedDocument("document exceeds the page limit")
+            for i, page in enumerate(doc):
+                rect = page.rect * pymupdf.Matrix(dpi / 72, dpi / 72)
+                box = rect.irect
+                budget(i, box.width * box.height)
             return [page.get_pixmap(dpi=dpi, alpha=False).tobytes("png") for page in doc]
     if mime.startswith("image/"):
         with Image.open(io.BytesIO(raw)) as im:
-            return [_png(frame.convert("RGB")) for frame in ImageSequence.Iterator(im)]
+            if getattr(im, "n_frames", 1) > s.document_max_pages:
+                raise UnsupportedDocument("document exceeds the page limit")
+            out = []
+            for i, frame in enumerate(ImageSequence.Iterator(im)):
+                budget(i, frame.width * frame.height)
+                out.append(_png(frame.convert("RGB")))
+            return out
     raise UnsupportedDocument(f"cannot render {mime}")
 
 

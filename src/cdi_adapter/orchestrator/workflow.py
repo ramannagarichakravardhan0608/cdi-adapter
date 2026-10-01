@@ -5,7 +5,7 @@ appends a ``workflow_step`` (migration 0019) - so a document's whole path, from 
 and the folder-watch (Celery) path, is recorded without any stage code knowing about it.
 
 ``replay_plan`` turns a document's recorded steps back into calls: the successful steps after its
-latest ingest, in the order they ran, each with the arguments that reproduce it (an OCR step
+latest ingest, once per stage/argument combination in first-seen order (an OCR step
 re-runs with the engine it used). ``replay`` executes the plan with the same stage functions the
 pipeline uses, records a ``workflow_replay`` row, and the replayed stages append their own steps.
 Ingest is never replayed: it needs the original upload, which the replay does not re-send.
@@ -46,11 +46,19 @@ def replay_plan(conn: Connection, document_id: UUID | str,
         raise ValueError(f"from_stage must be one of {STAGES}")
     rec = steps(conn, document_id)
     last_ingest = max((i for i, s in enumerate(rec) if s["stage"] == "ingest"), default=-1)
-    plan = []
+    latest: dict[tuple[str, str], dict[str, Any]] = {}
     for s in rec[last_ingest + 1 :]:
         if s["status"] != "ok":
             continue
-        plan.append({"stage": s["stage"], "args": _args(s), "step_id": s["id"]})
+        args = _args(s)
+        latest[(s["stage"], json.dumps(args, sort_keys=True))] = {
+            "stage": s["stage"],
+            "args": args,
+            "step_id": s["id"],
+        }
+    # Updating an existing key retains its original position: an interrupted replay must not
+    # move OCR/extraction behind validation from the previous complete run.
+    plan = list(latest.values())
     if from_stage is not None:
         first = next((i for i, p in enumerate(plan) if p["stage"] == from_stage), None)
         plan = [] if first is None else plan[first:]
@@ -91,7 +99,7 @@ def replay(document_id: UUID | str, *, from_stage: str | None = None, actor: str
             status = "failed"
             break
     with session_scope() as c:
-        rid = c.execute(
+        rid: Any = c.execute(
             text("INSERT INTO workflow_replay (document_id, from_stage, plan, results, status, "
                  "  requested_by, started_at) VALUES (:d, :f, CAST(:p AS jsonb), "
                  "  CAST(:r AS jsonb), :s, :by, :at) RETURNING id"),

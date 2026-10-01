@@ -407,7 +407,17 @@ def test_hf_fallback_loads_only_after_the_failed_primary_is_released():
     assert be.loaded and be.model == "Qwen/Qwen2.5-VL-3B-Instruct"
 
 
-def test_hf_loads_bf16_by_default_and_int8_only_when_asked():
+def test_hf_loads_bf16_by_default_and_int8_only_when_asked(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    # This unit checks loader arguments; loading real weights belongs to the GPU test suite.
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(bfloat16="torch.bfloat16"))
+    monkeypatch.setitem(
+        sys.modules,
+        "transformers",
+        SimpleNamespace(BitsAndBytesConfig=lambda **kw: SimpleNamespace(load_in_4bit=False, **kw)),
+    )
     from cdi_adapter.mlserve.backends import _load_kwargs
 
     plain = _load_kwargs("Qwen/Qwen2.5-VL-7B-Instruct", _settings())

@@ -474,3 +474,15 @@ def set_document_status(
         ),
         {"id": document_id, "status": status, "error": json.dumps(error) if error else None},
     )
+
+
+def lock_documents(conn: Connection, document_ids: list[str]) -> None:
+    """Serialize clinical mutations, always locking documents in UUID order."""
+    if document_ids:
+        conn.execute(
+            text(
+                "SELECT id FROM source_document WHERE id = ANY(CAST(:ids AS uuid[])) "
+                "ORDER BY id FOR UPDATE"
+            ),
+            {"ids": document_ids},
+        ).all()

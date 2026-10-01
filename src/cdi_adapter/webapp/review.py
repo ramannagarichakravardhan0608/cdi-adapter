@@ -18,6 +18,7 @@ ignored, so a decision can never be recorded under someone else's name.
 
 from __future__ import annotations
 
+import math
 from typing import Any, Literal
 from uuid import UUID
 
@@ -116,6 +117,8 @@ def _number(field: str, v: Any) -> float | None:
         n = float(v)
     except (TypeError, ValueError):
         raise ReviewError(422, f"{field} must be a number") from None
+    if not math.isfinite(n):
+        raise ReviewError(422, f"{field} must be finite")
     if n < 0:
         raise ReviewError(422, f"{field} must not be negative")
     return n
@@ -125,7 +128,10 @@ def _signed(field: str, v: Any) -> float | None:
     if v in (None, ""):
         return None
     try:
-        return float(v)
+        n = float(v)
+        if not math.isfinite(n):
+            raise ReviewError(422, f"{field} must be finite")
+        return n
     except (TypeError, ValueError):
         raise ReviewError(422, f"{field} must be a number") from None
 
@@ -162,7 +168,7 @@ def apply_fact_correction(conn: Connection, fact: dict[str, Any], corrections: d
     fact_c = {k: v for k, v in corrections.items() if k in CORRECTABLE}
     med_c = {k: v for k, v in corrections.items() if k in MED_CORRECTABLE}
     if "value_num" in fact_c:
-        fact_c["value_num"] = _number("value_num", fact_c["value_num"])
+        fact_c["value_num"] = _signed("value_num", fact_c["value_num"])
     for k in ("ref_range_low", "ref_range_high"):  # a range may be below zero (base excess)
         if k in fact_c:
             fact_c[k] = _signed(k, fact_c[k])
@@ -182,7 +188,7 @@ def apply_fact_correction(conn: Connection, fact: dict[str, Any], corrections: d
                    code_status="bound" if b else "local_only")  # fmt: skip
     cols = [*new, "review_state", "supersedes", "is_current"]
     vals = {**new, "review_state": "corrected", "supersedes": fact["id"], "is_current": True}
-    new_id = conn.execute(
+    new_id: Any = conn.execute(
         text(f"INSERT INTO clinical_fact ({', '.join(cols)}) "
              f"VALUES ({', '.join(':' + c for c in cols)}) RETURNING id"), vals
     ).scalar_one()  # fmt: skip
@@ -216,7 +222,7 @@ def _close_tasks(conn: Connection, fact_ids: list[str]) -> int:
     ).mappings().all()  # fmt: skip
     closed = 0
     for t in rows:
-        still = conn.execute(
+        still: Any = conn.execute(
             text("SELECT count(*) FROM clinical_fact WHERE id = ANY(:ids) "
                  "AND review_state IN ('pending', 'in_review') AND is_current"),
             {"ids": list(t["fact_ids"])},
@@ -230,11 +236,14 @@ def _close_tasks(conn: Connection, fact_ids: list[str]) -> int:
 
 def decide(conn: Connection, fact_id: UUID | str, d: ReviewDecision,
            reviewer: str) -> dict[str, Any]:  # fmt: skip
+    initial = _fact(conn, fact_id)
+    repo.lock_documents(conn, [str(d) for d in initial["source_doc_ids"] or []])
+    conn.execute(text("SELECT id FROM clinical_fact WHERE id = :i FOR UPDATE"), {"i": str(fact_id)})
     fact = _fact(conn, fact_id)
     editable = d.action == "correct" and fact["review_state"] in EDITABLE
     if not fact["is_current"] or (fact["review_state"] not in REVIEWABLE and not editable):
         raise ReviewError(409, f"fact is {fact['review_state']}; already adjudicated")
-    if d.action == "correct" and _approved(conn, fact):
+    if _approved(conn, fact):
         raise ReviewError(409, "its review item is approved: the fact is in the canonical EMR "
                                "and can no longer be corrected here")  # fmt: skip
     result_id = fact["id"]

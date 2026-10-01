@@ -179,10 +179,8 @@ def test_replace_needs_a_clinician(db_env):
     assert c.post(f"/api/reviewer/facts/{fid}/replace", json={"catalogue_id": 1}).status_code == 403
 
 
-def test_a_document_uploaded_again_after_approval_is_correctable_again(client):
-    """Owner's report 2026-09-28: the same screenshot was approved, then uploaded again; the new
-    item's Replace (and Edit) failed with "its review item is approved", because the check looked
-    for ANY approved item of the document. Only the item that holds the fact counts."""
+def test_a_document_uploaded_again_after_approval_remains_immutable(client):
+    """A duplicate upload must not reopen an approved record or duplicate clinical data."""
     lines = _rx()[:4] + ["Rx", "Tab Dola 650 mg 1-0-1"]
     doc, blocks = _doc_with_ocr(lines)
     _write(doc, blocks)
@@ -198,27 +196,15 @@ def test_a_document_uploaded_again_after_approval_is_correctable_again(client):
     r = client.post(url, json={"catalogue_id": dolo, "source": "search"})
     assert r.status_code == 409 and "approved" in r.json()["detail"]  # its own item is approved
 
-    _write(doc, blocks)  # the same file uploaded again: extracted again into new facts
+    assert _write(doc, blocks)["preserved"]
     bind_document(doc)
     validate_document(doc)
     with session_scope() as c:
         second = create_rv_item_for_document(c, doc, job_id="job-second")
-    assert second != first
+    assert second == first
     (new,) = _meds(doc)
-    r = client.post(f"/api/reviewer/facts/{new['id']}/replace",
-                    json={"catalogue_id": dolo, "source": "search"})  # fmt: skip
-    assert r.status_code == 200, r.text
-    fixed = r.json()["result_fact_id"]
+    assert new["id"] == old["id"]
     r = client.post(
-        f"/api/facts/{fixed}/review",
-        json={"action": "correct", "corrections": {"instructions": "after food"}},
+        f"/api/reviewer/facts/{new['id']}/replace", json={"catalogue_id": dolo, "source": "search"}
     )
-    assert r.status_code == 200, r.text  # Edit works on it too
-
-    with session_scope() as c:  # once the new item is approved, it is locked in turn
-        c.execute(text("UPDATE rv_item SET status = 'approved' WHERE id = :i"), {"i": second})
-    late = client.post(
-        f"/api/facts/{r.json()['result_fact_id']}/review",
-        json={"action": "correct", "corrections": {"instructions": "x"}},
-    )
-    assert late.status_code == 409 and "approved" in late.json()["detail"]
+    assert r.status_code == 409 and "approved" in r.json()["detail"]

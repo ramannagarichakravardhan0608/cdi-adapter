@@ -95,9 +95,20 @@ def check_mismatch(expected: dict[str, Any], found: mpi.Candidate) -> bool:
     """True when the document clearly belongs to someone else."""
     if found.name and expected.get("name") and not mpi.names_match(found.name, expected["name"]):
         return True
+    exp_abha = mpi.digits(expected.get("abha_id") or expected.get("abha_number"))
+    if exp_abha and found.abha and exp_abha != mpi.digits(found.abha):
+        return True
+    exp_mrn = expected.get("legacy_mrn")
+    if exp_mrn and found.mrn and str(exp_mrn).strip() != str(found.mrn).strip():
+        return True
+    exp_sex = mpi.parse_sex(expected.get("sex") or expected.get("gender"))
+    if exp_sex and found.sex and exp_sex != found.sex:
+        return True
     exp_dob = expected.get("dob") or expected.get("birth_date")
     if isinstance(exp_dob, str):
         exp_dob = (parse_date(exp_dob) or (None,))[0]
+    if expected.get("birth_date_precision") == "year" and isinstance(exp_dob, date):
+        exp_dob = exp_dob.year
     return not mpi.dob_match(exp_dob, found.dob or found.birth_year)
 
 
@@ -116,9 +127,57 @@ def write_extraction(
     model_name: str | None = None,
     model_version: str | None = None,
 ) -> dict[str, Any]:
+    repo.lock_documents(conn, [str(document_id)])
     # the patient this document was already filed under (an earlier extraction of the same bytes)
     prior = conn.execute(text("SELECT patient_id FROM source_document WHERE id = :d"),
                          {"d": str(document_id)}).scalar_one_or_none()  # fmt: skip
+    cand = mpi.candidate_from_payload(payload)
+    expected = expected_patient
+    if expected is None and patient_id is None and prior is not None:
+        expected = mpi.get_patient(conn, prior)
+    if patient_id is not None:
+        if prior is not None and str(prior) != str(patient_id):
+            raise IdentityMismatch(document_id, expected or {}, cand)
+        # A batch's first document establishes the identity even without a registry selection.
+        expected = expected or mpi.get_patient(conn, patient_id)
+        if expected is None:
+            raise LookupError("selected patient does not exist")
+    if expected is not None and check_mismatch(expected, cand):
+        raise IdentityMismatch(document_id, expected, cand)
+    protected = conn.execute(
+        text(
+            "SELECT 1 FROM clinical_fact WHERE :d = ANY(source_doc_ids) "
+            "AND review_state IN ('clinician_confirmed', 'corrected', 'rejected') "
+            "UNION ALL SELECT 1 FROM rv_item WHERE source_document_id = :d "
+            "AND status IN ('claimed', 'approved', 'rejected') LIMIT 1"
+        ),
+        {"d": str(document_id)},
+    ).first()
+    if protected:
+        # Re-upload/replay cannot replace a clinical decision or a claimed review snapshot.
+        ext = (
+            conn.execute(
+                text(
+                    "SELECT * FROM extraction WHERE document_id = :d "
+                    "ORDER BY created_at DESC LIMIT 1"
+                ),
+                {"d": str(document_id)},
+            )
+            .mappings()
+            .first()
+        )
+        enc = conn.execute(
+            text("SELECT id FROM encounter WHERE source_document_id = :d"), {"d": str(document_id)}
+        ).scalar_one_or_none()
+        return {
+            "patient_id": prior,
+            "identity": "document",
+            "encounter_id": enc,
+            "extraction_id": ext["id"] if ext else None,
+            "facts": len(repo.get_facts_for_document(conn, document_id)),
+            "partial": bool(ext and ext["is_partial"]),
+            "preserved": True,
+        }
     repo.purge_document_facts(conn, document_id)
     partial = is_partial(payload)
     extraction_id = repo.insert_extraction(
@@ -127,10 +186,6 @@ def write_extraction(
         evidence_map=block_id_map, is_partial=partial, run_id=run_ids[-1] if run_ids else None,
     )  # fmt: skip
 
-    cand = mpi.candidate_from_payload(payload)
-    if expected_patient is not None and check_mismatch(expected_patient, cand):
-        repo.purge_document_facts(conn, document_id)
-        raise IdentityMismatch(document_id, expected_patient, cand)
     how = "given"
     if patient_id is None and prior is not None:
         # the same document uploaded again stays with its patient: a name-only reading never
@@ -139,6 +194,9 @@ def write_extraction(
         patient_id, how = prior, "document"
     if patient_id is None:
         patient_id, how = mpi.resolve_identity(conn, cand)
+        resolved = mpi.get_patient(conn, patient_id)
+        if how != "minted" and resolved is not None and check_mismatch(resolved, cand):
+            raise IdentityMismatch(document_id, resolved, cand)
     if cand.name or cand.sex or cand.dob or cand.age_text:
         mpi.add_alias(conn, patient_id, document_id, cand)
     repo.set_document_patient(conn, document_id, UUID(str(patient_id)))
@@ -263,13 +321,11 @@ def _complete(ctx: _Ctx, payload: dict[str, Any], vlm: MLClient, *,
 def _record_failure(ctx: _Ctx, exc: Exception, actor: str, vlm: MLClient | None = None) -> None:
     if isinstance(exc, IdentityMismatch):
         with session_scope() as conn:
-            repo.purge_document_facts(conn, ctx.document_id)
             repo.fail_run(conn, ctx.run_id, error="identity_mismatch")
             repo.write_audit(conn, actor=actor, action="update", entity="source_document",
                              entity_id=ctx.document_id,
                              detail={"stage": "extract", "identity_mismatch": True})  # fmt: skip
-        log.warning("identity_mismatch", document_id=str(ctx.document_id),
-                    found=exc.found.as_json())  # fmt: skip
+        log.warning("identity_mismatch", document_id=str(ctx.document_id))
         return
     if vlm is not None:  # a failed extraction on this side of the rollout (E10-S5)
         metrics.MODEL_EXTRACTIONS.labels(vlm.role, "failed").inc()
@@ -277,7 +333,7 @@ def _record_failure(ctx: _Ctx, exc: Exception, actor: str, vlm: MLClient | None 
         repo.fail_run(conn, ctx.run_id, error=f"{type(exc).__name__}: {exc}")
         repo.set_document_status(conn, ctx.document_id, "error",
                                  error={"stage": "extract", "message": str(exc)})  # fmt: skip
-    log.error("extract_failed", document_id=str(ctx.document_id), error=str(exc))
+    log.error("extract_failed", document_id=str(ctx.document_id), error_type=type(exc).__name__)
 
 
 def extract_document(

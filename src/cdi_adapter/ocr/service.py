@@ -159,7 +159,7 @@ def ocr_document(
             repo.fail_run(conn, run_id, error=f"{type(exc).__name__}: {exc}")
             repo.set_document_status(conn, document_id, "error",
                                      error={"stage": "ocr", "message": str(exc)})  # fmt: skip
-        log.error("ocr_failed", document_id=str(document_id), error=str(exc))
+        log.error("ocr_failed", document_id=str(document_id), error_type=type(exc).__name__)
         raise
     log.info("ocr_done", document_id=str(document_id), **metrics)
     return metrics

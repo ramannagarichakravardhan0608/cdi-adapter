@@ -79,7 +79,8 @@ def build_bundle(conn: Connection, rv_item_id: UUID | str) -> dict[str, Any]:
                                            "code_system": r["code_system"],
                                            "code_display": r["display"],
                                            "icd10": _ICD10.get(r["code"] or ""),
-                                           "asserted_time": r["recorded_at"]},
+                                           "asserted_time": r["recorded_at"],
+                                           "clinical_status": r["clinical_status"]},
                                           ref, p_ref, e_ref))  # fmt: skip
     for r in _rows(conn, "cn_medication", item_id):
         ref = _ref("cn_medication", r["id"])
