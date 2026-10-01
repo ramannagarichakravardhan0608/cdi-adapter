@@ -1,7 +1,8 @@
 """E0-S11 integration: S4 -> S5 -> S6 -> S9 on real PostgreSQL.
 
-The test documents are recorded as > 700 KB, so the scan is referenced by its s3:// URL (the §7.2
-large-scan path) and the gated projection touches no object store. Inlining needs real MinIO.
+The test documents are recorded as > 700 KB, so the scan is also referenced by its s3:// URL (the
+§7.2 large-scan path). Every bundle embeds the scan itself (§5 S9, attachment.data), so these tests
+read a real MinIO (``seeded_scans``) and are skipped with the reason without one.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def url_scans(db_env):
+def url_scans(seeded_scans):
     yield
 
 

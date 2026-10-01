@@ -77,7 +77,12 @@ def test_registry_persist_new_patient_then_found(client):
     assert client.post("/api/registry", json={**body, "mobile": "abc"}).status_code == 422
 
 
-def test_document_evidence_and_bundle_endpoints(client):
+def test_document_evidence_and_bundle_endpoints(seeded_scans):
+    # the bundle embeds the scan (§5 S9): the real MinIO, not the fixture's dead endpoint
+    from cdi_adapter.webapp.app import app
+    from tests.helpers import signed_in
+
+    client = signed_in(app, "admin")
     doc, blocks = _doc_with_ocr(_rx())
     pid = _write(doc, blocks)["patient_id"]
     bind_document(doc)

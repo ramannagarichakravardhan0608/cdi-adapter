@@ -151,6 +151,13 @@ class Settings(BaseSettings):
     gate_review_floor: float = Field(default=0.85, ge=0, le=1)
     gate_partial_penalty: float = Field(default=0.30, ge=0, le=1)
     audit_sample_rate: float = Field(default=0.05, ge=0, le=1)
+    # E4-S2: the fitted calibrator the gate decides with (a calibration_model version). Unset:
+    # the fixed-penalty _calibrate score, as before. Only set it to a calibrator fitted on real
+    # clinician-adjudicated data (E14-S1).
+    calibrator_version: int | None = Field(default=None, ge=1)
+    # E4-S3: the derived per-class gate thresholds (a checked-in gate_thresholds.v1 JSON file, on
+    # the scale of CDI_CALIBRATOR_VERSION). Unset: the global constants above, as before.
+    gate_thresholds: str | None = None
 
     # jurisdiction packages (§2)
     # the NRCeS ABDM IG as published in the FHIR package registry: id "ndhm.in" (canonical

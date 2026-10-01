@@ -96,6 +96,22 @@ def test_the_guard_ignores_evidence_that_only_copies_the_option_and_vetoes():
     assert v["status"] == "vetoed" and v["confidence"] < 0.45
 
 
+def test_a_suggestion_always_carries_its_evidence_text_and_a_rationale():
+    """E12-S4 AC: suggested value + the exact evidence text it is grounded in + a one-sentence
+    rationale, even when the model left evidence or rationale empty."""
+    ln = _line(read_as="Thyronorm", options=[THYRONORM])
+    v = guard(ln, {"line": 1, "choice": 1, "evidence": None, "rationale": None,
+                   "confidence": 0.9}, 0.45)  # fmt: skip
+    assert v["status"] == "suggested" and v["product"]["name"] == "Thyronorm 62.5mcg Tablet"
+    assert v["evidence"] == "Thyronorm"  # the line's own reading: what the grounding measured
+    assert v["rationale"].startswith('"Thyronorm" as written on the page matches')
+    # an independent quote that grounds better is the evidence; the model's rationale is kept
+    ln = _line(read_as="Thyr", options=[THYRONORM])
+    v = guard(ln, {"line": 1, "choice": 1, "evidence": "Thyronorn", "rationale": "as written",
+                   "confidence": 0.9}, 0.45)  # fmt: skip
+    assert v["evidence"] == "Thyronorn" and v["rationale"] == "as written"
+
+
 def test_the_guard_drops_none_and_out_of_range_choices():
     ln = _line(options=[THYRONORM])
     assert guard(ln, {"line": 1, "choice": 0, "evidence": None, "rationale": None,

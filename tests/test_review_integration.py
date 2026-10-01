@@ -81,7 +81,7 @@ def test_accept_confirms_signs_provenance_and_audits(client):
     assert again.status_code == 409
 
 
-def test_correct_supersedes_and_reject_closes_the_task(client):
+def test_correct_supersedes_and_reject_closes_the_task(seeded_scans, client):
     doc = _held_doc()
     facts = {f["local_text"]: f["id"] for f in _task_for(client, doc)["facts"]}
     met, aml = facts["Tab Metformin"], facts["Tab Amlodipine"]
@@ -188,7 +188,7 @@ def test_the_review_console_needs_a_clinician_session(db_env, role, status):
     assert state == before
 
 
-def test_job_generate_edits_are_signed_by_the_session_user(client):
+def test_job_generate_edits_are_signed_by_the_session_user(seeded_scans, client):
     """The Generate EMR edits (keep / drop / correct) are clinical decisions too (§7.2)."""
     import uuid
 

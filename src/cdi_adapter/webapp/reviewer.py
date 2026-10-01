@@ -12,11 +12,14 @@
 | POST /api/reviewer/items/{id}/agent             | run the medication agent again (E12-S4)     |
 | GET  /api/reviewer/facts/{id}/replacements      | products to replace a medicine with         |
 | POST /api/reviewer/facts/{id}/replace           | replace the medicine with the chosen one    |
+| GET  /reviewer/c360                             | Customer 360 page (``?mpi=``)               |
+| GET  /api/reviewer/c360/{mpi}                   | Customer 360 read model (backlog E7-S8)     |
 
 Held facts inside an item are decided with the S8 endpoint (``POST /api/facts/{id}/review``).
 The reviewer is the signed-in user (backlog E7-S1): a ``reviewer`` sent by the client is ignored.
 Only the reviewer who claimed an item may approve or reject it; an admin may act on any claimed
-item, recorded under the admin's own name. The Customer-360 read model is backlog E7-S8.
+item, recorded under the admin's own name. Customer 360 (backlog E7-S8) reads one patient's
+canonical record (the ``cn_*`` tables) with both identifiers, linked from every worklist row.
 """
 
 from __future__ import annotations
@@ -36,6 +39,7 @@ from cdi_adapter.canon import repo as canon
 from cdi_adapter.catalogue.service import matches_for_facts
 from cdi_adapter.db import session_scope
 from cdi_adapter.webapp import auth, med_replace
+from cdi_adapter.webapp.c360_page import c360_page
 from cdi_adapter.webapp.reviewer_page import reviewer_page
 
 router = APIRouter()
@@ -56,6 +60,20 @@ def _call(fn):
 @router.get("/reviewer", response_class=HTMLResponse)
 def page() -> str:
     return reviewer_page()
+
+
+@router.get("/reviewer/c360", response_class=HTMLResponse)
+def c360_view() -> str:
+    return c360_page()
+
+
+@router.get("/api/reviewer/c360/{mpi}")
+def c360(mpi: str) -> dict[str, Any]:
+    with session_scope() as c:
+        out = canon.customer_360(c, mpi)
+    if out is None:
+        raise HTTPException(404, "no patient with that MPI id")
+    return out
 
 
 @router.get("/api/reviewer/workbasket")

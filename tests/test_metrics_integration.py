@@ -39,7 +39,7 @@ def test_gate_decisions_count_what_the_gate_decided(db_env):
     assert value("cdi_gate_decisions_total", decision="in_review") == held0 + out["in_review"]
 
 
-def test_reviewer_throughput_and_backlog(db_env):
+def test_reviewer_throughput_and_backlog(seeded_scans, db_env):
     from cdi_adapter.webapp.app import app
     from tests.helpers import signed_in
 

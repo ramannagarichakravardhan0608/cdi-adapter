@@ -33,7 +33,9 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;
 // the reviewer is the signed-in user (backlog E7-S1): the server takes it from the session
 fetch('/api/me').then(r => r.json()).then(u => { $('#me').textContent = u.display_name + ' (' + u.username + ')'; });
 const post = (url, body) => fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
-const row = (i, btn) => `<tr><td>${esc(i.patient_name)} <span class=muted>${esc(i.mpi_id)}</span><br><small>${esc(i.filename)} · ${esc(i.doc_type)}</small></td>
+// Customer 360 (backlog E7-S8): the patient's canonical record across documents
+const c360 = mpi => mpi ? ` <a href="/reviewer/c360?mpi=${encodeURIComponent(mpi)}" title="The patient's record across documents">Customer 360</a>` : '';
+const row = (i, btn) => `<tr><td>${esc(i.patient_name)} <span class=muted>${esc(i.mpi_id)}</span>${c360(i.mpi_id)}<br><small>${esc(i.filename)} · ${esc(i.doc_type)}</small></td>
   <td>${i.held ? `<span class="pill warn">${i.held} held</span>` : '<span class="pill ok">ready</span>'} ${i.elements} facts</td><td>${btn}</td></tr>`;
 async function load(){
   const wb = await (await fetch('/api/reviewer/workbasket')).json();
@@ -41,7 +43,7 @@ async function load(){
   const wl = await (await fetch('/api/reviewer/worklist')).json();
   $('#wl').innerHTML = wl.length ? '<table>' + wl.map(i => row(i, `<button onclick="openItem('${i.id}')">Open</button>`)).join('') + '</table>' : 'Empty.';
   const ap = await (await fetch('/api/reviewer/approved')).json();
-  $('#ap').innerHTML = ap.length ? '<table>' + ap.map(i => `<tr><td>${esc(i.patient_name)} <span class=muted>${esc(i.mpi_id)}</span><br><small>${esc(i.filename)} · ${esc(i.doc_type)}</small></td>
+  $('#ap').innerHTML = ap.length ? '<table>' + ap.map(i => `<tr><td>${esc(i.patient_name)} <span class=muted>${esc(i.mpi_id)}</span>${c360(i.mpi_id)}<br><small>${esc(i.filename)} · ${esc(i.doc_type)}</small></td>
     <td>${i.bundle_status === 'ready_to_share' ? '<span class="pill ok">ready to share</span>' : `<span class="pill warn">${esc(i.bundle_status || 'no bundle')}</span>`}</td>
     <td>${i.bundle_status ? `<a href="${download(i.id)}">Download FHIR bundle</a>` : ''}</td></tr>`).join('') + '</table>' : 'None yet.';
 }
@@ -237,7 +239,7 @@ async function openItem(id){
     return `<h3 style="margin:18px 0 6px">${esc(label)} <span class=muted style="font-weight:400;font-size:14px">${g.length}${h ? ` · <span class="pill warn">${h} held</span>` : ''}</span></h3>
       <div style="overflow-x:auto"><table><tr>${cols.map(([c]) => `<th>${esc(c)}</th>`).join('')}<th>Code</th><th>State</th><th></th></tr>${g.map(e => factRows(e, id, cols)).join('')}</table></div>`; }).join('');
   $('#item').innerHTML = `<div class=rv-split><div>
-    <h2 style="margin:0 0 2px">${esc(d.item.patient_name)} <span class=muted style="font-weight:400">${esc(d.item.mpi_id || '')}</span></h2>
+    <h2 style="margin:0 0 2px">${esc(d.item.patient_name)} <span class=muted style="font-weight:400">${esc(d.item.mpi_id || '')}</span><span style="font-size:14px;font-weight:400">${c360(d.item.mpi_id)}</span></h2>
     <p class=muted style="margin:0 0 8px">${esc(d.item.filename)} · ${esc(d.item.doc_type)} · ${d.elements.length} facts${held ? ` · <span class="pill warn">${held} held</span>` : ''}</p>
     <div>${chips}</div>${groups.medication ? `<p class=muted style="margin:10px 0 0">Medication agent: <span id=agentst>${esc(agentRun(d.agent_run))}</span> <button onclick="rerunAgent('${id}')" title="Re-read the medicines with the diagnoses and the catalogue">Run agent again</button></p>` : ''}${sections || '<p class=muted>No facts.</p>'}
     <p style="margin-top:18px"><button class=primary onclick="approve('${id}')">Approve &amp; promote</button> <button onclick="rejectItem('${id}')">Reject item</button> <span id=msg></span></p><pre id=out style="white-space:pre-wrap"></pre>

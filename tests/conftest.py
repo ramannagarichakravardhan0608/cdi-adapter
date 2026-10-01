@@ -121,6 +121,18 @@ def app_env(migrated_db, minio_endpoint, monkeypatch):
 
 
 @pytest.fixture
+def seeded_scans(app_env):
+    """A FHIR bundle embeds the original scan (ARCHITECTURE §5 S9: DocumentReference
+    ``attachment.data``, <= 12 MB; the ABDM profiles make it 1..1), so a test that builds one reads
+    a REAL MinIO: skipped with the reason when CDI_TEST_S3_ENDPOINT is unset. The synthetic test
+    documents (``tests.test_extract_integration._doc_with_ocr``) all point at the key "unused"."""
+    from cdi_adapter.storage import get_store
+    from tests.helpers import make_pdf
+
+    get_store().put_bytes("unused", make_pdf([["Synthetic test scan"]]), "application/pdf")
+
+
+@pytest.fixture
 def db_env(migrated_db, monkeypatch):
     """Point CDI_DATABASE_URL at the test Postgres for code paths that touch no object store."""
     from cdi_adapter import db

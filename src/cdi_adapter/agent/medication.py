@@ -245,16 +245,23 @@ def guard(line: Line, choice: dict[str, Any] | None, min_grounding: float) -> di
         return {"status": "none", "reason": "none of the catalogue options is written here"}
     product = line.options[k - 1]
     brand = product["brand"]
-    evidence = (choice.get("evidence") or "").strip()
-    readings = [split_name(line.read_as)[0]]
-    ev_key = split_name(evidence)[0]
-    if ev_key and nearness(ev_key, brand) < 0.99:  # an independent reading, not a copy
-        readings.append(ev_key)
-    grounding = max(nearness(r, brand) for r in readings)
+    quoted = (choice.get("evidence") or "").strip()
+    # (the text on the page, its name key): the line's own reading, and the model's quote when it
+    # is an independent reading rather than the option's name copied back
+    readings = [(line.read_as, split_name(line.read_as)[0])]
+    ev_key = split_name(quoted)[0]
+    if ev_key and nearness(ev_key, brand) < 0.99:
+        readings.append((quoted, ev_key))
+    evidence, grounding = max(((t, nearness(k, brand)) for t, k in readings), key=lambda r: r[1])
     conf = choice.get("confidence")
     conf = float(conf) if isinstance(conf, int | float) else 0.5
-    out = {"product": _public(product), "evidence": evidence or None,
-           "rationale": (choice.get("rationale") or "").strip() or None,
+    # backlog E12-S4: a suggestion always carries the exact evidence text it is grounded in and a
+    # one-sentence rationale; when the model gave none, a factual one from the grounding
+    written = f'"{evidence}" as written on the page' if evidence else "The line"
+    rationale = (choice.get("rationale") or "").strip() or (
+        f"{written} matches {brand} (name similarity {grounding:.2f})."
+    )
+    out = {"product": _public(product), "evidence": evidence or None, "rationale": rationale,
            "grounding": round(grounding, 3)}  # fmt: skip
     if grounding < min_grounding:
         return out | {

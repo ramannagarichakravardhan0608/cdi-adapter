@@ -46,7 +46,8 @@ async function showFact(id){
       <tr><th>Fact</th><td>${esc(f.local_text)} ${f.value_num??''} ${esc(f.value_unit_ucum)} ${esc(f.value_text)}</td></tr>
       <tr><th>Code</th><td>${esc(f.code_system)} ${esc(f.code)} ${esc(f.code_display)}</td></tr>
       <tr><th>Confidence</th><td>${(f.confidence_overall??0).toFixed(3)}</td></tr>
-      <tr><th>Findings</th><td>${(d.findings||[]).map(x => `<span class="pill ${x.severity==='blocker'?'bad':'warn'}">${esc(x.code)}</span> ${esc(x.message)}`).join('<br>')||'—'}</td></tr></table>
+      <tr><th>Findings</th><td>${(d.findings||[]).map(x => `<span class="pill ${x.severity==='blocker'?'bad':'warn'}">${esc(x.code)}</span> ${esc(x.message)}`).join('<br>')||'—'}</td></tr>
+      ${resolutionRows(d.resolution)}</table>
     <p class=muted>Your decision is signed with your sign-in name.</p>
     <p><label>Correct text <input id=c_text value="${esc(f.local_text)}"></label>
        <label>value <input id=c_val size=6 value="${f.value_num??''}"></label>
@@ -60,6 +61,19 @@ async function showFact(id){
     Object.assign(h.style, {left:box[0]*s+'px', top:box[1]*s+'px', width:(box[2]-box[0])*s+'px',
                             height:(box[3]-box[1])*s+'px', display:'block'});
   };
+}
+// backlog E4-S8: the level that resolved the fact (or why it escalated) and its evidence matrix
+function resolutionRows(r){
+  const x = (r || {}).decision;
+  if (!x) return '';
+  const tier = t => t == null ? 'constraint' : 'tier ' + t;
+  const matrix = (x.matrix || []).map(s => `<tr><td>${esc(tier(s.tier))}</td><td>${esc(s.source)}</td><td>${esc(s.candidate)}</td>
+    <td>${esc(s.relation)}</td><td>${s.score == null ? '' : Number(s.score).toFixed(2)}</td><td>${esc(s.reason)}</td></tr>`).join('');
+  const verified = (r.verified || []).map(v => `${esc(v.verification_method)} (${esc(v.resolved_by_level)})${v.reviewer_id ? ' by ' + esc(v.reviewer_id) : ''}`).join(', ');
+  return `<tr><th>Resolution</th><td><span class="pill ${x.outcome === 'accept' ? 'ok' : 'warn'}">${esc(x.resolved_by_level)} ${esc(x.level_name)}</span>
+      ${x.outcome === 'accept' ? 'resolved' : 'sent to review: ' + esc(x.escalation_cause)} <span class=muted>${esc(x.policy)}</span></td></tr>
+    <tr><th>Evidence matrix</th><td><table><tr><th>Tier</th><th>Source</th><th>Candidate</th><th>Says</th><th>Score</th><th>Why</th></tr>${matrix || '<tr><td colspan=6>—</td></tr>'}</table></td></tr>
+    ${verified ? `<tr><th>Verified</th><td>${verified}</td></tr>` : ''}`;
 }
 async function act(id, action){
   const body = {action};  // the reviewer is the signed-in user (backlog E7-S1)

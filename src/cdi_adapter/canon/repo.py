@@ -150,3 +150,82 @@ def list_items(conn: Connection, *, status: str, assignee: str | None = None,
         out.append({**dict(r), "elements": len(els),
                     "held": sum(e["state"] == "held" for e in els)})  # fmt: skip
     return out
+
+
+# Customer 360 (backlog E7-S8, ARCHITECTURE §4.5 / §7.1): one patient's canonical record read from
+# the cn_* tables, not from the per-document clinical_fact rows. Each section's columns, in order.
+C360_SECTIONS: dict[str, tuple[str, str]] = {
+    "conditions": ("cn_condition", "code_system, code, display, clinical_status, verification, "
+                   "onset"),
+    "medications": ("cn_medication", "code_system, code, drug_text, strength_num, strength_unit, "
+                    "dose_num, dose_unit_ucum, route, frequency_code, frequency_per_day, "
+                    "duration_days, instructions, status"),
+    "lab_results": ("cn_lab_result", "test_system, test_code, test_display, value_num, value_text, "
+                    "unit_ucum, ref_range_low, ref_range_high, ref_range_text, abnormal_flag, "
+                    "effective_time"),
+    "lab_orders": ("cn_lab_order", "code_system, code, test_text, status"),
+    "vital_signs": ("cn_vital_sign", "code_system, code, display, value_num, value_text, "
+                    "unit_ucum, effective_time"),
+    "allergies": ("cn_allergy", "code_system, code, substance, reaction, clinical_status"),
+}  # fmt: skip
+
+
+def identifiers(p: dict[str, Any]) -> list[dict[str, str]]:
+    """The patient's identifiers, each kept as its own entry: the ABHA number and a legacy MRN
+    coexist; neither stands in for the other (ARCHITECTURE §6)."""
+    out = [{"type": "MPI", "value": p["mpi_id"]}] if p.get("mpi_id") else []
+    for key, label in (("abha_number", "ABHA number"), ("abha_address", "ABHA address"),
+                       ("legacy_mrn", "Legacy MRN")):  # fmt: skip
+        if p.get(key):
+            out.append({"type": label, "value": p[key]})
+    return out
+
+
+def customer_360(conn: Connection, mpi_id: str) -> dict[str, Any] | None:
+    """Demographics, identifiers, documents and the canonical clinical facts of one patient,
+    across every document. A re-approved item keeps only its latest promotion: each approval
+    writes all of an item's rows in one transaction, so they share one ``recorded_at``."""
+    p = conn.execute(
+        text("SELECT id, mpi_id, name, sex, birth_date, abha_number, abha_address, legacy_mrn, "
+             "identity_confidence FROM patient_identity WHERE mpi_id = :m"), {"m": mpi_id},
+    ).mappings().first()  # fmt: skip
+    if p is None:
+        return None
+    pid = str(p["id"])
+    docs = conn.execute(
+        text("SELECT d.id, d.filename, d.status, d.page_count, d.created_at, "
+             "  (SELECT c.doc_type FROM doc_classification c WHERE c.document_id = d.id "
+             "   ORDER BY c.created_at DESC LIMIT 1) AS doc_type, "
+             "  (SELECT i.status FROM rv_item i WHERE i.source_document_id = d.id "
+             "   ORDER BY i.created_at DESC LIMIT 1) AS review_status "
+             "FROM source_document d WHERE d.patient_id = :p ORDER BY d.created_at DESC"),
+        {"p": pid},
+    ).mappings().all()  # fmt: skip
+    out: dict[str, Any] = {
+        "patient": {
+            k: p[k] for k in ("mpi_id", "name", "sex", "birth_date", "identity_confidence")
+        },  # fmt: skip
+        "identifiers": identifiers(dict(p)),
+        "documents": [dict(d) for d in docs],
+    }
+    for key, (table, cols) in C360_SECTIONS.items():
+        own = ", ".join("t." + c.strip() for c in cols.split(","))
+        rows = conn.execute(
+            text(f"SELECT {own}, t.review_state, t.recorded_by, t.recorded_at, "
+                 "  d.id AS document_id, d.filename AS document "
+                 f"FROM {table} t "
+                 "LEFT JOIN rv_item i ON i.id = t.rv_item_id "
+                 "LEFT JOIN source_document d ON d.id = i.source_document_id "
+                 "WHERE t.patient_id = :p AND (t.rv_item_id IS NULL OR t.recorded_at = "
+                 f"  (SELECT max(u.recorded_at) FROM {table} u WHERE u.rv_item_id = t.rv_item_id)) "
+                 "ORDER BY t.recorded_at DESC"),
+            {"p": pid},
+        ).mappings().all()  # fmt: skip
+        out[key] = [dict(r) for r in rows]
+    out["bundles"] = [dict(r) for r in conn.execute(
+        text("SELECT b.artifact_type, b.status, b.created_at, d.filename AS document "
+             "FROM cn_fhir_bundle b LEFT JOIN rv_item i ON i.id = b.rv_item_id "
+             "LEFT JOIN source_document d ON d.id = i.source_document_id "
+             "WHERE b.patient_id = :p ORDER BY b.created_at DESC"), {"p": pid},
+    ).mappings()]  # fmt: skip
+    return out

@@ -220,10 +220,12 @@ fi
 # ---------------------------------------------------------------- 6. cron: DB snapshot every 15 min
 service cron start >/dev/null 2>&1 || cron || true
 ( crontab -l 2>/dev/null | grep -v -e 'infra/runpod/snapshot.sh' -e 'infra/runpod/golden_nightly.sh' \
-    -e 'cdi_adapter.dr drill'
+    -e 'cdi_adapter.dr drill' -e 'cdi_adapter.training export'
   echo "*/15 * * * * bash $REPO/infra/runpod/snapshot.sh >>$WS/logs/snapshot.log 2>&1"
   # E1-S6: nightly golden path on the real model (isolated DB + bucket; drift -> golden_alerts.log)
   echo "30 2 * * * bash $REPO/infra/runpod/golden_nightly.sh >>$WS/logs/golden.log 2>&1"
+  # E4-S1: nightly export of the reviewers' decisions into the calibration training table
+  echo "45 2 * * * cd $REPO && $REPO/.venv/bin/python -m cdi_adapter.training export >>$WS/logs/calibration_export.log 2>&1"
   # E10-S11: weekly restore drill from the backups alone (docs/dr.md); its report feeds the alerts
   echo "30 3 * * 0 cd $REPO && CDI_MINIO_BIN=$MINIO_BIN $REPO/.venv/bin/python -m cdi_adapter.dr drill >>$WS/logs/dr.log 2>&1" ) | crontab -
 

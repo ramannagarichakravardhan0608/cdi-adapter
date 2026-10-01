@@ -25,7 +25,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import Connection, text
 
-from cdi_adapter import metrics, repo
+from cdi_adapter import evidence, longitudinal, metrics, repo
 from cdi_adapter.db import session_scope
 from cdi_adapter.terminology.parse import freq_per_day, is_prn, to_ucum
 from cdi_adapter.terminology.service import bind_text
@@ -255,11 +255,15 @@ def decide(conn: Connection, fact_id: UUID | str, d: ReviewDecision,
 
             rematch_fact(conn, result_id)
     _reviewer_provenance(conn, result_id, fact, reviewer)
+    # backlog E4-S7: the decision as a reviewer candidate + verified_fact (append-only)
+    evidence.record_reviewer_decision(conn, result_id, d.action, reviewer, fact["id"])
     repo.write_audit(conn, actor=reviewer, action="update", entity="clinical_fact",
                      entity_id=fact["id"],
                      detail={"action": d.action, "result_fact": str(result_id),
                              "corrections": d.corrections, "note": d.note})  # fmt: skip
     closed = _close_tasks(conn, [str(fact["id"]), str(result_id)])
+    if fact["fact_type"] == "medication":  # E5-S1: a decided order may now (not) supersede
+        longitudinal.reconcile_patient_medications(conn, fact["patient_id"], actor=reviewer)
     metrics.REVIEW_DECISIONS.labels(d.action).inc()
     return {"fact_id": str(fact["id"]), "result_fact_id": str(result_id), "review_state": state,
             "tasks_closed": closed}  # fmt: skip
@@ -288,7 +292,22 @@ def fact_detail(conn: Connection, fact_id: UUID | str) -> dict[str, Any]:
                                if page_no and p["source_doc_id"] else None),
         })  # fmt: skip
     return {"fact": fact, "medication": dict(med) if med else None, "provenance": prov,
-            "findings": (fact.get("review_note") or {}).get("findings", [])}  # fmt: skip
+            "findings": (fact.get("review_note") or {}).get("findings", []),
+            "resolution": _resolution(conn, fact["id"])}  # fmt: skip
+
+
+def _resolution(conn: Connection, fact_id: Any) -> dict[str, Any]:
+    """Backlog E4-S8: how the fact was resolved - the cascade's latest decision (level, outcome,
+    escalation cause, per-signal evidence matrix) and every verification recorded for it."""
+    from cdi_adapter.resolution.facts import latest_decision
+
+    verified = conn.execute(
+        text("SELECT v.verification_method, v.review_state, v.reviewer_id, v.policy_id, "
+             "  v.created_at, c.resolved_by_level FROM verified_fact v "
+             "JOIN interpretation_candidate c ON c.id = v.candidate_id "
+             "WHERE v.fact_id = :f ORDER BY v.created_at"), {"f": str(fact_id)},
+    ).mappings().all()  # fmt: skip
+    return {"decision": latest_decision(conn, fact_id), "verified": [dict(v) for v in verified]}
 
 
 def open_tasks(conn: Connection) -> list[dict[str, Any]]:

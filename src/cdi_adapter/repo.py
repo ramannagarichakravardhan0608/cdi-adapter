@@ -214,25 +214,48 @@ def set_page_count(conn: Connection, document_id: UUID | str, page_count: int) -
 # ------------------------------------------------------------------ OCR blocks (S3)
 
 
-def delete_ocr_blocks_for_document(conn: Connection, document_id: UUID | str) -> int:
+def supersede_ocr_observations(conn: Connection, document_id: UUID | str,
+                               run_id: UUID | str) -> int:  # fmt: skip
+    """A new OCR run of the document points its current observations at itself (backlog E4-S7):
+    raw evidence is never deleted, and ``ocr_block`` then shows only the new run's."""
     return conn.execute(
-        text("DELETE FROM ocr_block WHERE document_id = :d"), {"d": document_id}
-    ).rowcount
+        text("UPDATE ocr_observation SET superseded_by = :r, superseded_at = now() "
+             "WHERE document_id = :d AND superseded_by IS NULL"),
+        {"d": document_id, "r": run_id},
+    ).rowcount  # fmt: skip
+
+
+# recognizer metadata an observation may carry (E4-S7); none of it is a code or a concept
+OBSERVATION_EXTRA = ("crop_hash", "region_kind", "field_domain", "engine_version", "prompt_hash",
+                     "token_confidences")  # fmt: skip
 
 
 def insert_ocr_blocks(conn: Connection, rows: list[dict[str, Any]]) -> None:
-    """Bulk insert. Each row: document_id, page_id, block_type, text, bbox, polygon, ocr_conf,
-    reading_order, engine, pipeline_run_id."""
+    """Bulk insert of raw observations (``ocr_observation``, append-only). Each row: document_id,
+    page_id, block_type, text, bbox, polygon, ocr_conf, reading_order, engine, pipeline_run_id,
+    and optionally the ``OBSERVATION_EXTRA`` recognizer metadata."""
     if not rows:
         return
     conn.execute(
         text(
-            "INSERT INTO ocr_block (document_id, page_id, block_type, text, bbox, polygon, "
-            "  ocr_conf, reading_order, engine, pipeline_run_id) "
+            "INSERT INTO ocr_observation (document_id, page_id, block_type, raw_text, bbox, "
+            "  polygon, ocr_conf, reading_order, engine, pipeline_run_id, crop_hash, region_kind, "
+            "  field_domain, engine_version, prompt_hash, token_confidences) "
             "VALUES (:document_id, :page_id, :block_type, :text, :bbox, CAST(:polygon AS jsonb), "
-            "  :ocr_conf, :reading_order, :engine, :pipeline_run_id)"
+            "  :ocr_conf, :reading_order, :engine, :pipeline_run_id, :crop_hash, :region_kind, "
+            "  :field_domain, :engine_version, :prompt_hash, CAST(:token_confidences AS jsonb))"
         ),
-        [{**r, "polygon": json.dumps(r.get("polygon"))} for r in rows],
+        [
+            {
+                **{k: None for k in OBSERVATION_EXTRA},
+                **r,
+                "polygon": json.dumps(r.get("polygon")),
+                "token_confidences": (
+                    json.dumps(r["token_confidences"]) if r.get("token_confidences") else None
+                ),
+            }
+            for r in rows
+        ],
     )
 
 

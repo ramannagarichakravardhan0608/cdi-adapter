@@ -54,7 +54,7 @@ def _count(sql: str, **p: object) -> int:
         return int(c.execute(text(sql), p).scalar_one())
 
 
-def test_merge_moves_the_duplicates_records_and_removes_its_extra_approval(db_env):
+def test_merge_moves_the_duplicates_records_and_removes_its_extra_approval(seeded_scans, db_env):
     doc1, item1, keep = _approved_doc()
     doc2, item2, drop = _approved_doc()
     assert _count("SELECT count(*) FROM cn_fhir_bundle WHERE rv_item_id = :i", i=item2) == 1
@@ -92,7 +92,7 @@ def test_merge_moves_the_duplicates_records_and_removes_its_extra_approval(db_en
     assert audit["merged"] == drop and item2 in audit["removed_approvals"]
 
 
-def test_merge_refuses_to_remove_what_is_not_an_approval(db_env):
+def test_merge_refuses_to_remove_what_is_not_an_approval(seeded_scans, db_env):
     _, _, keep = _approved_doc()
     _, _, drop = _approved_doc()
     lines = _rx()[:4] + ["Rx", "Tab Amlodipine 5 mg OD"]

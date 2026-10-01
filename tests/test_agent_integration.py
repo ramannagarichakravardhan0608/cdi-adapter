@@ -146,8 +146,10 @@ def test_the_agent_suggests_the_written_product_from_the_diagnoses(rx):
         by_text = {s["read_as"]: s for s in got["by_fact"].values()}
         after = {str(f["id"]): f["review_state"] for f in repo.get_facts_for_document(c, rx)
                  if f["fact_type"] == "medication" and f["is_current"]}  # fmt: skip
+        # the medication agent's own steps (the gate's E4-S8 cascade logs its steps here too)
         trace = c.execute(text("SELECT step FROM agent_trace WHERE document_id = :d "
-                               "ORDER BY seq"), {"d": rx}).scalars().all()  # fmt: skip
+                               "AND agent = 'medication_agent.v1' ORDER BY seq"),
+                          {"d": rx}).scalars().all()  # fmt: skip
     assert got["run"]["status"] == "ok"
     muro = next(v for k, v in by_text.items() if "Muronorm" in k)
     assert (muro["status"], muro["product"]["name"], muro["treats"]) == (

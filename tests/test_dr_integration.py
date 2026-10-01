@@ -6,7 +6,9 @@ an (in-memory) object store, a web user, the lot at Alembic head. It is backed u
 it in a clean throwaway cluster from the backup folder alone, proves every scan byte-identical,
 runs the golden path there and measures RPO and RTO. A corrupted backup must fail the drill.
 Needs the Postgres tools (``CDI_PG_BIN`` or the local dev build); with a real MinIO the same
-drill runs on Colab / the pod.
+drill runs on Colab / the pod. There the drill also runs the golden path against the restored
+environment; that step stores its scans in the restored MinIO (S9 embeds each scan, §5 S9), so the
+in-memory store here runs the drill without it (``golden=False``).
 """
 
 from __future__ import annotations
@@ -83,13 +85,14 @@ def test_the_data_tier_is_rebuilt_from_the_backups_alone(source, tmp_path):
     taken = _snapshot(url, store, bindir, backup)
     restored = FakeStore()
     rep = dr.run_drill(backup, pg_bin=bindir, store_factory=lambda *_: restored,
-                       ports=(55471, 0), report_dir=tmp_path / "dr",
+                       ports=(55471, 0), report_dir=tmp_path / "dr", golden=False,
                        loss_at=taken + dt.timedelta(minutes=7))  # fmt: skip
     assert rep["ok"], rep
     assert rep["rows"]["source_document"] == 4
     assert rep["scans"] == {"documents": 4, "intact": 4, "missing": [], "mismatched": []}
     assert rep["objects"] == {"objects": 4, "restored": 4, "corrupt_in_backup": 0}
-    assert rep["schema_at_head"] and rep["pg_restore_ok"] and rep["golden_path_ok"]
+    assert rep["schema_at_head"] and rep["pg_restore_ok"]
+    assert "golden path passes on the restored environment" not in rep["checks"]  # pod / Colab
     assert rep["rpo_s"] == 420.0  # 7 minutes after the snapshot
     assert 0 < rep["rto_s"] < dr.RTO_TARGET_S
     assert restored.objects == store.objects

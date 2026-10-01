@@ -102,7 +102,7 @@ def test_a_document_uploaded_again_refreshes_its_item_and_tops_the_workbasket(cl
     assert wb[0]["elements"] == facts == 4 and wb[0]["held"] == 1  # 2 dx, 2 meds
 
 
-def test_full_workbasket_flow_promotes_and_builds_canonical_bundle(client, other):
+def test_full_workbasket_flow_promotes_and_builds_canonical_bundle(seeded_scans, client, other):
     doc, item = _item_with_held_facts(["Tab Metformin 5000 mg 1-1-1", "Tab Amlodipine 5 mg OD",
                                        "BP: 138/86 mmHg"])  # fmt: skip
     wb = {i["id"]: i for i in client.get("/api/reviewer/workbasket").json()}
@@ -166,7 +166,7 @@ def test_full_workbasket_flow_promotes_and_builds_canonical_bundle(client, other
     assert approved[0]["id"] == item and approved[0]["bundle_status"] == b["status"]
 
 
-def test_approving_with_a_held_fact_never_promotes_it(client):
+def test_approving_with_a_held_fact_never_promotes_it(seeded_scans, client):
     _, item = _item_with_held_facts(["Tab Metformin 5000 mg 1-1-1", "Tab Amlodipine 5 mg OD"])
     _post(client, f"/api/reviewer/items/{item}/claim")
     r = _post(client, f"/api/reviewer/items/{item}/approve")  # §4.5: approve
@@ -183,7 +183,7 @@ def test_approving_with_a_held_fact_never_promotes_it(client):
     assert n_verif == 3  # nobody decided the held fact: no verification is recorded for it
 
 
-def test_lab_item_promotes_into_cn_lab_result_test_code(client, admin):
+def test_lab_item_promotes_into_cn_lab_result_test_code(seeded_scans, client, admin):
     lines = ["Name: Canonlab Qz  Age: 50 Y", "Date: 02/09/2026", "LABORATORY REPORT",
              "HbA1c 7.8 % 4.0-5.6 H", "Serum Creatinine 1.1 mg/dL 0.6-1.3"]  # fmt: skip
     doc, blocks = _doc_with_ocr(lines, doc_type="lab_report")
@@ -254,7 +254,7 @@ def test_a_spoofed_reviewer_is_ignored_on_claim_and_worklist(client, other):
     assert item not in [i["id"] for i in theirs]
 
 
-def test_only_the_claiming_reviewer_may_decide_an_item(client, other):
+def test_only_the_claiming_reviewer_may_decide_an_item(seeded_scans, client, other):
     _, item = _item_with_held_facts(["Tab Metformin 500 mg BD"])
     assert _post(client, f"/api/reviewer/items/{item}/claim").status_code == 200
     for action in ("approve", "reject"):
@@ -292,7 +292,7 @@ def test_the_reviewer_console_needs_a_clinician_session(db_env):
                          {"i": item}).scalar_one() == "workbasket"  # fmt: skip
 
 
-def test_a_decided_fact_stays_editable_until_its_item_is_approved(client):
+def test_a_decided_fact_stays_editable_until_its_item_is_approved(seeded_scans, client):
     # 2026-09-25 (owner): an Edit for every fact on the Reviewer page. A fact already accepted can
     # still be corrected, a medication's detail with it, until the item is approved
     _, item = _item_with_held_facts(["Tab Metformin 5000 mg 1-1-1", "Tab Amlodipine 5 mg OD"])
@@ -348,7 +348,7 @@ def test_a_decided_fact_stays_editable_until_its_item_is_approved(client):
     assert late.status_code == 409 and "approved" in late.json()["detail"]
 
 
-def test_a_second_approve_waits_for_the_first_and_is_refused(client):
+def test_a_second_approve_waits_for_the_first_and_is_refused(seeded_scans, client):
     # 2026-09-25: approve runs the validator for seconds; clicks during that time each read the
     # item as still "claimed" and promoted it again (5 approvals, 5 copies in the canonical EMR)
     import threading
@@ -388,7 +388,7 @@ def test_a_second_approve_waits_for_the_first_and_is_refused(client):
     assert n == 1 and approvals == 1
 
 
-def test_approved_lists_a_document_once_its_latest_approval(client):
+def test_approved_lists_a_document_once_its_latest_approval(seeded_scans, client):
     lines = _rx()[:4] + ["Rx", "Tab Amlodipine 5 mg OD"]
     doc, blocks = _doc_with_ocr(lines)
     items = []

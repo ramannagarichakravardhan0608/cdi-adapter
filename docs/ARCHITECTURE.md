@@ -32,8 +32,38 @@ records into a structured EMR and **ABDM/ABHA FHIR R4** record bundles.
   > names, function names, endpoint paths and one specific bug fix — not a
   > fresh schema dump. Treat it as **MEASURED-but-not-current**, and re-run a
   > schema/endpoint reconciliation pass the next time the pod is live.
+- **Update note 2 (2026-09-29) — recognition architecture frozen, NOT built.** A
+  design review of the handwritten branch (TrOCR vs Qwen2.5-VL, Bengali + English
+  prescriptions, a closed ~100-doctor polyclinic) converged on a target
+  recognition architecture. It is recorded in **§15** and is **design only**:
+  nothing in §15 exists in code yet, and every section from §0 to §14 still describes
+  the as-built system. The main decisions were:
+  (1) RapidOCR stays on printed regions; handwritten *line crops* go to **TrOCR/HTR and
+  Qwen2.5-VL independently**, never one prompted with the other's answer;
+  (2) an **immutable 3-table evidence schema** (`ocr_observation` →
+  `interpretation_candidate` → `verified_fact`) enforced at the DB level;
+  (3) **recognition is never merged with normalization** — no OCR model emits a
+  LOINC/SNOMED code;
+  (4) a **strict evidence hierarchy** with a cheapest-first resolution cascade
+  replaces "signals vote";
+  (5) **per-field calibrated confidence** and precision-at-coverage replace a
+  single "99 % OCR accuracy" target;
+  (6) personalization comes from a **DoctorNode data object** (vocabulary priors,
+  exemplar memory, novelty detection). Per-doctor LoRA is the *last* step, not
+  the first.
+  Build order is HW-Phase A → E (§15.14). **Phase A is the near-term target. Phases
+  B–E are sequenced but not yet scoped.** FHIR/ABDM corrections from the
+  `emr.docx` review are in §6.1, and the legacy read-only/FHIR-façade boundary is in
+  §6.2. Open discrepancies are listed in §15.15. This revision also **merges a
+  parallel draft** (`ARCHITECTURE-emr-OCR-Target-Updated.md`) into one superset.
+  The merge brought in the recognition contract, decision-trace rules, the
+  locum-doctor case, pgvector exemplars, the release-claim rule and the façade
+  boundary.
 - **Companion docs:** [`DESIGN.md`](DESIGN.md) is the north-star design + 10-country
-  research; this document is **what is actually built and running**.
+  research; this document is **what is actually built and running** (plus §15, the
+  frozen-but-unbuilt recognition target). Backlog:
+  `CDI-Adapter-Production-Backlog-Enhanced.xlsx` (20 epics / 150 stories, plus a
+  *Coverage Matrix* sheet); §15.14 maps each design element to its story.
 - **Governing principle** (adopted verbatim from external review):
   > *AI proposes clinical facts. Evidence proves them. Deterministic validation
   > governs them. Human adjudication resolves uncertainty. FHIR represents the
@@ -73,7 +103,9 @@ but the temporal-merge/supersedes **engine** does not), ABDM gateway,
 auth/DPDP, HA/DR — see §13. **S8 human review has since been substantially
 hardened** (dedicated `/reviewer` app, workbasket→worklist assignment,
 Customer-360 read-model, admin inspector — §4.5, §7.1) though auth and
-SLA-timer alerting on the queue are still open.
+SLA-timer alerting on the queue are still open. **Also not built:** the §15 target
+recognition architecture. Today handwriting is still read by Qwen2.5-VL alone, per
+*page*, with no line crops, no second engine and no immutable raw-evidence layer.
 
 ---
 
@@ -117,8 +149,7 @@ Constraints that shaped the build:
 - Two synchronized outputs per document: **relational rows** and a **FHIR bundle**.
 - Portability: every jurisdiction difference is isolated into two swappable
   packages — a **Terminology Package** and a **Profile/IG Package** (`CDI_IG_PACKAGE`,
-  `CDI_TERMINOLOGY_PACKAGE`). India (`ndhm.in#6.5.0`, the NRCeS ABDM IG's FHIR registry id;
-  written `nrces.fhir.r4.ndhm` before E6-S1, which is not a registry id) is the default.
+  `CDI_TERMINOLOGY_PACKAGE`). India (`nrces.fhir.r4.ndhm#6.5.0`) is the default.
 
 ---
 
@@ -137,7 +168,7 @@ Constraints that shaped the build:
                          │  - POST /api/jobs       start a job       │
                          │  - GET  /api/jobs/{id}[ /fhir | /download]│
                          │  - GET  /api/patients/{id}/fhir           │
-                         │  ThreadPool ── runs the pipeline ─────────┼──┐
+                         │  ThreadPool(1) ── runs the pipeline ──────┼──┐
                          └──────────────────────────────────────────┘  │
                                                                        │ in-process calls
    ┌───────────────────────────────────────────────────────────────────┘
@@ -162,10 +193,6 @@ Constraints that shaped the build:
  └─────────────┘   └──────────────┘   └─────────────────────────────┘
 ```
 
-> *Reconciled (E1-S8):* the job pool is `max(2, CDI_JOB_MAX_WORKERS)` threads for Phase 1 and one
-> serial thread for Phase 2 (extract), as §7.2 describes; the earlier "ThreadPool(1)" label was stale.
-> *(E2-S2: with `vllm`, Phase 2 uses up to `vllm_max_num_seqs` threads; with `hf` it stays one.)*
-
 Optional / not on the hot path: `cdi_adapter.worker` (Celery) chains the same
 stages for the **folder-watch** ingestion path; `cdi_adapter.api` is the original
 ingest-only API; `cdi_adapter.ingest.watcher` watches a drop folder.
@@ -180,7 +207,7 @@ ingest-only API; `cdi_adapter.ingest.watcher` watches a drop folder.
 
 | S1 | Ingest & normalize | `ingest/pages.py`, `ingest/service.py` | PyMuPDF render; OpenCV deskew (min-area-rect) + denoise + CLAHE; SHA-256 dedupe (race-safe: `IntegrityError` → reuse existing row) | `source_document`, `document_page`, original+pages → MinIO |
 | S2 | Classify | `classify/service.py`, `classify/prompt.py` | **scored keyword heuristic** over the S3 OCR text (`_heuristic_classify`): a type only when it scores ≥5 *and* leads the runner-up by ≥3 on a legible page (≥180 chars, ≥75% alnum); otherwise Qwen2.5-VL, schema `classification.v1` | `doc_classification` |
-| S3 | OCR / layout | `ocr/service.py`, `ocr/rapid.py`, `ocr/vlm_ocr.py` | **runs before classify.** printed → RapidOCR (boxes+conf+reading order); a page the classifier later calls handwritten gets a second VLM-transcription pass that replaces the blocks. `ocr_document(force_engine="rapidocr"|"vlm")` | `ocr_block` |
+| S3 | OCR / layout | `ocr/service.py`, `ocr/rapid.py`, `ocr/vlm_ocr.py` | **runs before classify.** printed → RapidOCR (boxes+conf+reading order); a page the classifier later calls handwritten gets a second VLM-transcription pass that replaces the blocks. `ocr_document(force_engine="rapidocr"|"vlm")`. *Target (§15, not built): per-region printed/handwritten routing, TrOCR + Qwen on line crops, append-only `ocr_observation`.* | `ocr_block` |
 | S4 | Extract | `extract/service.py`, `extract/prompt.py` | Qwen2.5-VL, schema-locked JSON per `doc_type`, evidence = OCR block ids; **repair + one retry + lenient fallback** (marks `_partial`); re-extract purges the prior attempt's rows first | `extraction`, `clinical_fact` (+ `medication_detail`), `fact_provenance`, `patient_identity`, `encounter` |
 | S5 | Terminology | `terminology/service.py`, `terminology/seed.py` | curated exact + alias + `difflib` fuzzy → SNOMED CT / LOINC; UCUM unit parse; frequency parse | updates `clinical_fact.code_*`, `medication_detail` |
 | **S6** | **Validation + gate** | `validate/rules.py`, `validate/service.py` | **deterministic rules** (value ranges, unit sanity, dose/frequency ceilings, impossible dates, evidence-present, unmapped-critical, duplicate & cross-document contradiction) + confidence calibration + **routing** | `clinical_fact.review_state`, `review_note`, calibrated `confidence_overall`, `fact_conflict`, `review_task` |
@@ -210,25 +237,6 @@ therefore ephemeral and **reconstructed from `/workspace/backup/cdi.dump` on eac
 boot**. Nothing unique is lost: the scan bytes live in MinIO on `/workspace`, and
 every derived row is reproducible from those by re-running the pipeline *and* is
 captured in the 15-minute dump.
-
-**Data-tier HA (E10-S6):** optionally, a hot Postgres standby streams WAL from the primary
-through a replication slot (RPO = the replication lag, normally under 1 s; fenced failover with
-`python -m cdi_adapter.ha pg failover`; the app follows through `CDI_DATABASE_HOSTS`), and MinIO
-is erasure-coded over 4 drives (one drive lost: no data or writes lost). On one host this
-covers a crashed database or a lost MinIO drive, not the loss of the pod; that needs the standby
-and MinIO on other hosts (MinIO refuses loopback multi-node in a container, and §12 keeps
-services on loopback). Runbook: `docs/ha.md`.
-
-**Fallback host (E1-S3, owner decision 2026-09-21: native, no Docker):** the same scripts run on
-any Ubuntu 24.04 host with an NVIDIA GPU. The only differences are handled in the scripts: torch
-2.8.0+cu128 is installed when it is not inherited (App. B), and the printed address is the host's
-own (`infra/runpod/lib.sh`). Runbook: `docs/fallback-host.md`.
-
-**Stable address (E1-S9):** because the pod's own URL changes on every restart, staff use one
-hostname served by Caddy on a small India-region ingress VM. TLS ends there, and the pod keeps a
-reverse SSH tunnel (autossh) open to it, so replacing the pod or failing over to the E1-S3 host
-keeps the URL. A dead backend gets a real 503 (`CDI_BACKEND_DOWN`), never a 200 error page.
-Runbook: `docs/ingress.md`.
 
 **One-command lifecycle:** `bash /workspace/cdi/infra/runpod/start_all.sh`
 → `bootstrap_pod.sh` (apt, initdb, restore, `alembic upgrade head`, venv) → start
@@ -263,8 +271,7 @@ Client side (`cdi_adapter.ml.client`):
 
 | Process | Port | Exposure | Notes |
 |---|---|---|---|
-| `cdi_adapter.webapp` | 8888 | **public** via `https://<pod-id>-8888.proxy.runpod.net`; the address of record is the stable ingress hostname (E1-S9) | 8888 is the only RunPod-proxied HTTP port on this pod (was Jupyter; Jupyter stopped) |
-| `autossh` → ingress VM | outbound SSH | pod dials out; no inbound port | reverse tunnel VM `127.0.0.1:18888` → pod `127.0.0.1:8888` (E1-S9, `infra/runpod/start_tunnel.sh`) |
+| `cdi_adapter.webapp` | 8888 | **public** via `https://<pod-id>-8888.proxy.runpod.net` | 8888 is the only RunPod-proxied HTTP port on this pod (was Jupyter; Jupyter stopped) |
 | `cdi_adapter.mlserve` | 8077 | localhost only | GPU model gateway |
 | PostgreSQL | 5432 | localhost | overlay `PGDATA`, `-k /tmp` |
 | Redis | 6379 | localhost | Celery broker (folder-watch path) |
@@ -294,19 +301,11 @@ read-model views: [`db/views.sql`](../db/views.sql); migration:
 | **Provenance** | `fact_provenance` | see §4.3 |
 | Conflicts | `fact_conflict` | 3-valued evidence state (`SUPPORTED` / `CONTRADICTED` / `UNKNOWN_NOT_MENTIONED`) — table exists, engine not built |
 | FHIR projection | `fhir_resource`, `fhir_bundle` | see §4.4 |
-| Human review | `review_task` | queue — one task per validated document, written by S6 (§5 S6 step 5) *(reconciled E1-S8)* |
+| Human review | `review_task` | queue — not yet populated |
 | ABDM | `abdm_care_context`, `abdm_consent`, `abdm_transfer` | linking / consent / encrypted push — schema only |
 | Audit | `audit_log` | every create/update/read with actor + detail |
 | Read model (views) | `v_problem_list`, `v_medication_list`, `v_allergy_list`, `v_results_grid`, `v_encounter_timeline` | flattened lists clinicians read |
 
-> *Reconciled (E1-S8):* both models are authoritative — §4.1–§4.4 for the per-document pipeline and
-> §4.6 (re-derived from the live schema) for the canonical / review layer. Live totals: 37 tables
-> (20 per-document, listed above and created by `db/schema.sql` / migration 0001; plus
-> `patient_registry`, the clinic's own master list from migration 0003 (§5 "Patient registry"); plus
-> 15 canonical/review tables (§4.6); plus `alembic_version`) and 5 views. Since then: `web_user` /
-> `web_session` (migration 0005, E11-S1) and `model_version` / `model_rollout` (migration 0006,
-> E10-S5, `docs/model-rollout.md`).
->
 > This table describes the **per-document** schema (S1–S9, unchanged). A second,
 > **longitudinal/review** schema (`cn_*`, `ops_*`/`fin_*`, `ai_*`, `rv_*`) was
 > added on top of it later in this cycle — see §4.5 for what it is and the
@@ -420,47 +419,6 @@ ER-level detail §4.2–§4.4 give the document-scoped model. Treat §4.1–§4.
 authoritative for the **per-document** pipeline (S1–S9, unchanged) and this
 section as the **longitudinal/review** layer built alongside it.
 
-### 4.6 Canonical EMR + review layer — re-derived from the live schema (E1-S8)
-
-> Source: `pg_dump --schema-only` of a live database at Alembic head `0004`, taken 2026-09-21 and
-> kept at [`docs/schema/cdi_schema.sql`](schema/cdi_schema.sql). This replaces the caveated,
-> recorded-not-dumped description in §4.5 as the authoritative column list. It describes the
-> rebuilt system in this repository; the reconciliation against the original pod (§16) is still
-> scheduled.
-
-| Table | Columns (live catalogue) |
-|---|---|
-| `ai_clinical_verification` | id, ai_suggestion_id, reviewer, decision, final_value, decided_at |
-| `ai_event` | id, rv_item_id, source_document_id, kind, model_stack, created_at |
-| `ai_suggestion` | id, ai_event_id, fact_id, element_type, suggested, confidence, created_at |
-| `cn_allergy` | id, patient_id, rv_item_id, source_fact_id, encounter_id, review_state, recorded_by, recorded_at, code_system, code, substance, reaction, clinical_status |
-| `cn_clinical_note` | id, patient_id, encounter_id, note_type, body, author, source, created_at |
-| `cn_condition` | id, patient_id, rv_item_id, source_fact_id, encounter_id, review_state, recorded_by, recorded_at, code_system, code, display, clinical_status, verification, onset |
-| `cn_fhir_bundle` | id, patient_id, rv_item_id, artifact_type, bundle, bundle_hash, validation, status, created_at |
-| `cn_lab_result` | id, patient_id, rv_item_id, source_fact_id, encounter_id, review_state, recorded_by, recorded_at, test_system, test_code, test_display, value_num, value_text, unit_ucum, ref_range_low, ref_range_high, ref_range_text, abnormal_flag, effective_time |
-| `cn_medication` | id, patient_id, rv_item_id, source_fact_id, encounter_id, review_state, recorded_by, recorded_at, code_system, code, drug_text, strength_num, strength_unit, dose_num, dose_unit_ucum, route, frequency_code, frequency_per_day, duration_days, instructions, status |
-| `cn_vital_sign` | id, patient_id, rv_item_id, source_fact_id, encounter_id, review_state, recorded_by, recorded_at, code_system, code, display, value_num, value_text, unit_ucum, effective_time |
-| `fin_billing_item` | id, patient_id, visit_id, source_cn_table, source_cn_id, description, amount, status, created_at |
-| `ops_patient_visit` | id, patient_id, visit_date, counter, status, created_at |
-| `patient_registry` | patient_id, name, mobile, dob, gender, address, abha_id, created_at, updated_at |
-| `rv_action` | id, rv_item_id, actor, action, detail, at |
-| `rv_item` | id, patient_id, source_document_id, job_id, doc_type, status, assigned_to, claimed_at, decided_at, created_at |
-| `rv_item_element` | id, rv_item_id, fact_id, element_type, payload, state, created_at |
-
-**Promotion path (as built):** `/reviewer` workbasket → claim into a worklist → reviewers decide
-held facts with the S8 endpoint → approve → `canon.promote.promote_review_item` copies every
-**governed** fact into `cn_*` (a fact still held is not promoted and gets no verification record),
-records `ai_event → ai_suggestion → ai_clinical_verification`, builds the bundle with
-`fhir.canonical.build_bundle`, checks it with `fhir.validate_abdm.validate`, and stores it in
-`cn_fhir_bundle`. `ops_patient_visit`, `fin_billing_item` and `cn_clinical_note` exist but are not
-fed yet (backlog E5-S4, E7-S7). The §4.5 bug fix holds: `cn_lab_result`'s test-code column is
-`test_code`.
-
-**Pages / endpoints of this layer:** `GET /reviewer`, `GET /api/reviewer/workbasket`,
-`GET /api/reviewer/worklist`, `POST /api/reviewer/items/{id}/claim|approve|reject`,
-`GET /api/reviewer/items/{id}/elements|bundle`, `GET /admin` (server-rendered; `?table=`, `?mpi=`).
-Customer 360 (`/reviewer/c360`) is backlog E7-S8.
-
 ---
 
 ## 5. Pipeline implementation — stage by stage
@@ -536,6 +494,19 @@ Runs **after S3**, so the full page OCR text is already on hand.
 - One `pipeline_run(stage='ocr')`; `delete_ocr_blocks_for_document` first
   (idempotent re-run); bulk `insert_ocr_blocks`; `status='ocr_done'`; audit; enqueue S4.
 - Observed: printed lab report → 23–39 blocks, line confidences 0.94–1.00.
+- **Known limitations against the §15 target** (as-built behaviour, recorded so
+  nobody mistakes it for the design):
+  1. **Raw evidence is deleted, not superseded.** The handwritten second pass calls
+     `delete_ocr_blocks` and re-inserts, so the RapidOCR reading of that page is
+     gone. §15.4 requires append-only observations per engine run.
+  2. **Handwriting has no usable pixel evidence.** `vlm_ocr.run_vlm_transcription`
+     returns a page-level bbox at a fixed conf of 0.55, so the grounding verifier
+     (E4-S4) has nothing narrower than the whole page to re-crop. It needs line-
+     or field-level crops (§15.2, E2-S13) first.
+  3. **"Handwritten" is a page flag, not a region label.** A printed letterhead
+     with a handwritten Rx body is treated as all-VLM. That wastes the cheap
+     RapidOCR read of the header, which is also the deterministic doctor-ID signal
+     (§15.11).
 
 ### Patient registry — look up an existing patient first · `cdi_adapter.mpi.registry`
 
@@ -786,10 +757,46 @@ never silently becomes trusted clinical data").
 - **FHIR content validation today = structural lint only** (`_lint`: Composition
   first, no dangling `urn:uuid:`, Observations valued, Conditions coded). Full HAPI
   + `nrces.fhir.r4.ndhm` IG profile validation is a named gap (§13).
-  *E6-S1 (2026-09-22):* the real validator is now deployable, pinned (`docs/ig-upgrade.md`) and
-  auto-selected by `validate_abdm.validate`; on the E6-S4 golden bundles it reports 120 IG errors
-  that the lint does not see (baseline `tests/golden/fhir/validation-baseline.json`). S9 gating
-  on it is E6-S2.
+
+### 6.1 Known conformance gaps from the ABDM v7 review (`emr.docx`, not yet fixed)
+
+An external correctness review of the FHIR/ABDM model (recorded in `emr.docx`)
+checked the design against **ABDM FHIR IG v7.0.0** (HL7 FHIR R4.0.1). The review
+found these gaps in what is built:
+
+| # | Finding | As built | Target | Story |
+|---|---|---|---|---|
+| 1 | Current IG is **v7.0.0** | `CDI_IG_PACKAGE = nrces.fhir.r4.ndhm#6.5.0` (§9) | pin v7.0.0 through the E6-S5 staging lane | E6-S9 |
+| 2 | v7 replaces generic `ObservationVitalSigns` with dedicated profiles (`ObservationBP`, `…HeartRate`, `…BodyTemp`, `…OxygenSat`, `…RespRate`, `…BMI`, `…BodyHeight`, `…BodyWeight`, `…HeadCircum`) | generic vital-signs profile | profile by LOINC | E6-S8 |
+| 3 | 7 clinical artifacts **+ `InvoiceRecord`**; `ImmunizationRecord` exists | 6 artifact types, no Immunization, no Invoice | full artifact map | E6-S8 |
+| 4 | Composition sections must reference their entries | PrescriptionRecord references only Medications; Condition/Observation are carried in the bundle but not referenced by any section | every clinical resource referenced from a section | E6-S7 |
+| 5 | **Investigation advice → `ServiceRequest`** (section *Investigation Advice*) | no `ServiceRequest`; `fact_type` has no investigation-order kind, so a prescribed "CBC, KFT, S.Creat" has nowhere correct to go | new `investigation_order` fact → `ServiceRequest`, coded from the lab-order ontology (§15.7) | E6-S10 |
+| 6 | **Chief complaint ≠ Condition** — "fever for 3 days" is a presenting complaint, "viral fever" is a diagnosis | depends on per-doc handler | complaints never emitted as a confirmed `Condition` | E6-S10 |
+| 7 | `Composition.type` codes are profile-/version-specific (binding: FHIRDocumentTypeCodes preferred, SNOMED where possible) | hard-coded SNOMED codes in `ARTIFACT` (§5 S9) | read from the pinned IG package; golden tests per version | E6-S10 |
+| 8 | Patient identifiers are **typed**; ABHA ≠ hospital MRN | ABHA + `urn:cdi:legacy-mrn` coexist (§6) | explicit `identifier.type` coding for each | E6-S3 / E6-S10 |
+| 9 | Bundle must carry `Practitioner` (HPR) **and `PractitionerRole`** as author | `Practitioner` emitted, not linked to a real doctor | practitioner linked at ingestion (§15.11) | E6-S11 |
+| 10 | v7 introduces **INPS** (Indian Patient Summary, 28 profiles, aligned to ISO 27269 IPS) | no patient-summary projection | project the S7 derived summary as INPS | E5-S5 |
+
+The recommended layering is the one this adapter already follows: *internal
+clinical model → ABDM FHIR mapping layer → artifact → document Bundle*. ABDM does
+not require the internal DB to look like FHIR.
+
+### 6.2 Legacy integration boundary — FHIR façade, no write-back by default (E6-S12)
+
+The adapter principle (§2) stays as it is: **the legacy HMS database is read-only by
+default**, and the adapter owns the canonical structured record.
+
+- **How downstream systems read data:** through a stable FHIR/read API façade over
+  *governed* canonical data. They never read CDI internal tables.
+- **Write-back to the legacy HMS** is not implied by FHIR projection. It would be a
+  separately approved, explicitly enabled, idempotent adapter, and before production
+  use it must define source-of-truth, conflict handling, field-level provenance,
+  rollback and audit.
+- **Guard:** a configuration boundary stops write-back from being switched on by
+  accident.
+
+This closes the §13 row "Legacy write-back / FHIR façade ❌", which had no owning
+story before.
 
 ---
 
@@ -838,15 +845,10 @@ reflects the latest review decisions.
   [OCR(vlm) if handwritten]` concurrently. `classify` is the scored heuristic
   (`config.fast_classify` ON); it makes **no VLM call** for a clean printed
   prescription / lab report / vitals / radiology report.
-- **Phase 2 (serial with `hf`).** `extract → terminology → validate` per document, serialised
+- **Phase 2 (serial).** `extract → terminology → validate` per document, serialised
   on the single GPU **because the `hf` backend does one forward pass at a time** —
   firing them concurrently would OOM, not speed up. This lock is removed only once
-  the `vllm` backend lands (Roadmap #1 / §7.4). *(Backlog E2-S2:* the number of
-  extractions in flight is `extract_slots()`: always 1 with `hf`, and with `vllm`
-  `CDI_EXTRACT_CONCURRENCY`, or `vllm_max_num_seqs` when that is 0. The slots are shared by
-  every job. With no chosen patient, the first document runs alone and fixes the patient;
-  the rest then run in parallel. `resolve_identity` holds a transaction advisory lock, so
-  parallel jobs never mint the same new patient twice. Backlog E2-S8, off by default:* with `CDI_EXTRACT_BATCH_MAX` > 1, short documents of one type (one page, at most `CDI_EXTRACT_BATCH_MAX_BLOCKS` OCR blocks) share one batched model call and one slot; each is still its own sequence with its own prompt and evidence map.*)* Extract uses one retry
+  the `vllm` backend lands (Roadmap #1 / §7.4). Extract uses one retry
   (`config.extract_retries = 1`). No document ever shows "queued" — the grid shows
   each cell `pending → running → done`.
 - The job then stops at **`state = review`** (it does **not** auto-project).
@@ -856,13 +858,10 @@ reflects the latest review decisions.
   Unit / Code; untick a row to drop it; row hover highlights the bbox on the scan).
 - **`POST /api/jobs/{id}/generate`** `{edits:[{fact_id, action:keep|drop, corrections?}]}` —
   applies the reviewer's decisions (`keep`→`clinician_confirmed`, `corrections`→
-  `corrected`, `drop`→`rejected`) then re-projects. The scan is base64-inlined in every
-  bundle, because the ABDM 6.5.0 profiles require the bytes (`DocumentReference` / `Binary` /
-  `Media` `data` 1..1); a scan over 700 KB also carries its object-store URL (2026-09-28: it used
-  to carry the URL only, which the HL7 validator rejects). All kept facts are governed → the
-  bundles come back `ready_to_share`. Every artifact's golden bundle validates with **0 errors**
-  against `ndhm.in#6.5.0` (HL7 validator 6.10.4; `tests/golden/fhir/`, empty baseline; see
-  `docs/fhir-abdm.md`).
+  `corrected`, `drop`→`rejected`) then re-projects. Because scans over 700 KB are
+  referenced by URL rather than base64-inlined, **bundle generation is ~140 ms for
+  3 documents**. All kept facts are governed → the bundles come back
+  `ready_to_share`.
 - The front page (`/`) header is **"Intelligent OCR driven Agentic EMR
   generation"**; the "Generate EMR" card shows a stage-tab row (Ingest…Validate) and
   a document × stage grid with a green tick per completed cell.
@@ -899,9 +898,8 @@ Planned changes and their honest effect:
 |---|---|---|---|
 | 1 | **`hf` → `vllm` async engine** (`AsyncLLMEngine`, paged KV, continuous batching) | *Projected* 2–3× throughput on Phase 2. **Built, deployed and A/B tested later this cycle — measured effect was zero** (72–74 s, unchanged); reverted to `hf`. See §3.4 for the finding and root-cause analysis; the code stays in the tree, dormant. | 32 GB ⇒ ~15 GB weights + ~12–14 GB KV ⇒ 3–4 concurrent page extractions, not 5 (large image prefill still serialises on compute). |
 | 2 | **Remove the Phase-2 serialisation lock** in `webapp/jobs.py` | Built alongside #1 (`_extract_sem`/`_stage2_pool` fan-out) — only overlapped 2 of 3 documents in the measured run, part of why #1 showed no gain. Dormant with #1 since the revert to `hf`. | Phase 1 is *already* parallel (`ThreadPoolExecutor`, 6 workers); the "`max_workers=1`" premise is not the current code. Celery for web uploads is a *scaling/durability* change (Roadmap #8), not a latency lever. |
-| 3 | **Grammar-locked decoding** (vLLM `guided_json` / XGrammar) | Built and tested as part of the same #1 effort — guarantees JSON *validity* but adds token-level decode overhead; contributed to, not against, the flat result. **Not clinical fidelity** either way — S6 + human review stay load-bearing. | Needs the v3 schemas *re-tightened* (they were loosened to stop retries) so the grammar actually constrains. Currently dormant with #1. *(E2-S3 rebuild: `mlserve/grammar.py`. Checked token by token with the real XGrammar 0.1.25 and Qwen tokenizer, XGrammar let `confidence: 1.8` through a 0–1 range, so that rule is now written exactly. A schema feature that cannot be enforced exactly is refused (HTTP 422), never sent loosely. The schemas are **not** re-tightened yet: the grammar enforces them as they stand.)* |
+| 3 | **Grammar-locked decoding** (vLLM `guided_json` / XGrammar) | Built and tested as part of the same #1 effort — guarantees JSON *validity* but adds token-level decode overhead; contributed to, not against, the flat result. **Not clinical fidelity** either way — S6 + human review stay load-bearing. | Needs the v3 schemas *re-tightened* (they were loosened to stop retries) so the grammar actually constrains. Currently dormant with #1. |
 | 4 | **CPU thread hygiene** — *done (2026-09-09).* `cdi_adapter/_cpu.py` reads the cgroup CPU quota (pod: ~13.6, not the 128 the host reports) and caps `OMP`/`OPENBLAS`/`MKL`/`RAYON`/ORT threads to `(budget-1) ÷ job_max_workers` before NumPy/OpenCV/ONNXRuntime load; `cv2.setNumThreads` + `RapidOCR(intra_op_num_threads=…)`. | ingest 16 s → ~7 s, RapidOCR 7–23 s → ~2 s (it was thrashing 128 threads on 13 cores). 3-doc wall **90 s → 74 s**. | shipped. |
-| 5 | **Batch short documents into one model call** (backlog E2-S8) — *built, off by default (`CDI_EXTRACT_BATCH_MAX=1`).* Short documents of one type (one page, few OCR blocks) go to `POST /vlm/generate_batch` together: one padded `generate` with `hf`, submitted together with `vllm`. | *Expected* to help `hf` most: the output tokens of the batch are produced in the same decode steps instead of one document after another. **Not measured yet**; it needs the E1-S7 A/B on the GPU. | Each document stays its **own sequence** (own prompt, image, schema, evidence map), deliberately not one merged prompt, so evidence can never be tied to the wrong document (§0 evidence rule). A batch that runs out of memory is split; a failed batch call falls back to one call per document. |
 
 **Realistic target with #1–3 also done:** a 5-document job in **~20–35 s wall**,
 ~12–18 s perceived per document, `_partial` effectively gone — a solid **3–4×**
@@ -948,13 +946,6 @@ Output: `GET /api/jobs/{id}/fhir` → 3 `Bundle(type=document)`; each downloadab
 15 `clinical_fact` rows + 15 `fact_provenance` rows + 35 `fhir_resource` rows in
 Postgres.
 
-> *Golden path (E1-S6):* this table is the recorded run of the real 7B model and is the nightly
-> `real_vlm` baseline in `tests/golden/anjali_das.json`. The deterministic stub backend follows §5
-> S4 and emits all six numeric vitals on the vitals sheet plus the allergy (7 facts), so the CI
-> `stub` baseline is 9 + 5 + 7 = 21 facts, 37 resources, 3 bundles, 0 structural errors — the
-> difference is the 7B vitals weak spot recorded in §13. Counts are on a fresh database: the
-> Patient and Organization are attributed to the first document that creates them.
-
 ---
 
 ## 9. Configuration (`cdi_adapter.config.Settings`, env prefix `CDI_`)
@@ -964,39 +955,19 @@ Postgres.
 | `CDI_DATABASE_URL` | `postgresql+psycopg://cdi:cdi@127.0.0.1:5432/cdi` | adapter DB |
 | `CDI_REDIS_URL` | `redis://127.0.0.1:6379/0` | Celery broker |
 | `CDI_S3_ENDPOINT_URL` / `_ACCESS_KEY` / `_SECRET_KEY` / `_BUCKET` | MinIO on `127.0.0.1:9000`, `cdi-documents` | object store |
-| `CDI_SECRETS_DIR` | `/run/cdi-secrets` (pod) | secrets store for the four credentials above (DB/Redis URLs, S3 keys): one 0600 file each, loaded by `get_settings()`; the defaults above are local-dev only — see `docs/secrets.md` *(added E1-S5)* |
 | `CDI_INBOX_DIR` / `_PROCESSED_DIR` / `_FAILED_DIR` | `/workspace/data/*` | folder-watch |
 | `CDI_PAGE_DPI` | 200 | render resolution |
 | `CDI_WEBAPP_PORT` | **8888** | the RunPod-proxied port |
-| `CDI_OTEL_TRACES_ENDPOINT` / `CDI_OTEL_LOGS_ENDPOINT` | empty (off) | E10-S3: OTLP/HTTP export to the local Tempo (`http://127.0.0.1:4318/v1/traces`) and Loki (`http://127.0.0.1:3100/otlp/v1/logs`); spans exist either way, so logs always carry `trace_id` |
-| `CDI_METRICS_PORT` | 9464 | E10-S1: the web app's Prometheus `/metrics`, on its own port bound to 127.0.0.1 (never the staff port); 0 = off. The gateway's `/metrics` is on its own loopback port 8077 |
 | `CDI_MLSERVE_URL` / `_PORT` | `http://127.0.0.1:8077` / 8077 | model gateway |
-| `CDI_MLSERVE_BACKEND` | `hf` | `hf` \| `stub` \| `vllm`; `vllm` was built, A/B tested and reverted (§3.4); rebuilt under backlog E2-S1 (own venv, see App. B), still not the active path *(reconciled E1-S8)* |
-| `CDI_VLLM_GPU_MEMORY_UTILIZATION` / `_MAX_MODEL_LEN` / `_MAX_NUM_SEQS` | 0.88 / 16384 / 4 | vLLM engine (E2-S1): ~15 GB weights + KV cache on 32 GB, 3–4 concurrent page extractions |
-| `CDI_VLLM_GUIDED` | `true` | grammar-locked JSON with XGrammar (E2-S3): every extraction schema becomes an exact grammar; vLLM rejects any token that would break it |
+| `CDI_MLSERVE_BACKEND` | `hf` | `hf` \| `stub` (`vllm` planned — §7.4) |
 | `CDI_VLM_MODEL_ID` / `_FALLBACK_MODEL_ID` | `Qwen/Qwen2.5-VL-7B-Instruct` / `…-3B-…` | VLM + OOM fallback |
-| `CDI_MODEL_VERSION` / `CDI_VLM_MODEL_REVISION` | empty | E10-S5: the registered model version a gateway serves (on `/healthz`) and the revision it loads; set by `python -m cdi_adapter.modelops serve` (`docs/model-rollout.md`) |
-| `CDI_MODEL_ROUTE_TTL_S` | `5` | E10-S5: how often the web app re-reads the rollout (primary / canary share); a rollback reaches every worker within this |
-| `CDI_DATABASE_HOSTS` | empty | E10-S6: primary and standby, e.g. `127.0.0.1:5432,127.0.0.1:5433`; the app connects to the writable one (libpq `target_session_attrs=read-write`), so a failover needs no config change (`docs/ha.md`) |
-| `CDI_PG_STANDBY_PORT` / `CDI_MINIO_MODE` | empty / `single` | E10-S6: opt-in hot standby (built by the bootstrap); MinIO `erasure` (one host, `CDI_MINIO_DRIVES` drives) or `cluster` (one process per host of `CDI_MINIO_ADDRESSES`; `CDI_S3_ENDPOINT_URL` then lists every host) |
 | `CDI_VLM_MAX_PIXELS_OCR` | 2 000 000 | processor cap (VRAM bound) |
-| `CDI_VLM_QUANTIZE` | empty (bf16) | `8bit` = bitsandbytes LLM.int8 weights, **test hosts below 24 GB only** (a 15 GB T4 cannot hold the 7B's ~16 GB bf16 weights); the pod stays bf16. `start_mlserve.sh` installs the pinned `BITSANDBYTES_VERSION` (versions.env) when set (`docs/fallback-host.md`) |
 | `CDI_FAST_CLASSIFY` | `true` | S2 scored heuristic first; VLM only on ambiguous/handwritten |
-| `CDI_FAST_CLASSIFY_MIN_OCR_CONF` | 0.88 | the fast path only for a confidently OCR'd page; below it the VLM classifies (and can route handwriting to the VLM OCR pass) |
-| `CDI_CATALOGUE_ENABLED` / `_MIN_SCORE` / `_MIN_MARGIN` / `_STRENGTH_MUST_AGREE` | `true` / 0.85 / 0.05 / `true` | medicine catalogue (Tata 1mg) identification after S5: a fuzzy match needs the score AND a lead over every other brand, else `UNKNOWN_MEDICATION` (`docs/medicine-catalogue.md`) |
-| `CDI_AGENT_ENABLED` / `_MAX_OPTIONS` / `_MIN_GROUNDING` | `true` / 10 / 0.45 | medication agent (backlog E12-S4, ADR-0003): after a document is filed for review, re-reads each medicine line with the prescription's diagnoses and the catalogue and **suggests** a product (advisory; the reviewer applies it); a choice whose written evidence does not look like the product is vetoed; steps in `agent_trace` (`docs/medication-agent.md`) |
 | `CDI_EXTRACT_RETRIES` | `1` | S4 VLM re-tries on schema failure (schemas relaxed → rare) |
 | `CDI_JOB_MAX_WORKERS` | 6 | Phase-1 documents in flight concurrently |
-| `CDI_EXTRACT_BATCH_MAX` | 1 (off) | E2-S8: up to this many short documents of one doc_type share one batched model call (`POST /vlm/generate_batch`); every document stays its own sequence. Off until the GPU A/B shows a gain |
-| `CDI_EXTRACT_BATCH_MAX_BLOCKS` | 40 | E2-S8: a document is short enough to batch when it has one page and at most this many OCR blocks |
-| `CDI_EXTRACT_CONCURRENCY` | 0 (auto) | Phase-2 extractions in flight across all jobs (E2-S2): always 1 with `hf`; with `vllm`, this value or `CDI_VLLM_MAX_NUM_SEQS` when 0 |
 | `CDI_OCR_ENGINE` / `CDI_HANDWRITTEN_USES_VLM` | `rapidocr` / `true` | S3 routing |
-| `CDI_IG_PACKAGE` | `ndhm.in#6.5.0` | Profile/IG package: the NRCeS ABDM IG by its FHIR registry id, pinned with every package it uses (`infra/fhir/packages.lock`, E6-S1); upgrades via `docs/ig-upgrade.md` (E6-S5) |
+| `CDI_IG_PACKAGE` | `ndhm.in#6.5.0` | Profile/IG package |
 | `CDI_TERMINOLOGY_PACKAGE` | `in-snomed-loinc-icd10` | Terminology package |
-| `CDI_SESSION_IDLE_MINUTES` / `_MAX_HOURS` / `_COOKIE_SECURE` | 30 / 12 / `true` | staff sign-in sessions (E11-S1); `false` only for plain-http local development |
-| `CDI_LOGIN_MAX_FAILURES` / `CDI_LOGIN_LOCKOUT_MINUTES` | 5 / 15 | account lockout (E11-S1) |
-| `CDI_DEID_SPACY_MODEL` / `_NER_MODEL` / `_NER_REVISION` / `_MIN_SCORE` | `en_core_web_lg` / `obi/deid_roberta_i2b2` / `78f2152e…` / 0.35 | de-identification before training use (E11-S4) |
-| `CDI_FHIR_VALIDATOR_JAR` / `CDI_FHIR_JAVA` / `CDI_FHIR_PACKAGE_HOME` | `/workspace/tools/validator_cli.jar` / `java` / `/workspace/tools/fhir-home` | HL7 validator (E6-S1): jar 6.10.4 (sha256-pinned); the package home holds the pinned IG tarball (`ig/`) and the frozen package cache; used offline only, else the Python fallback |
 
 Pod file: `/workspace/cdi/.env` (copied from `.env.runpod`).
 
@@ -1022,28 +993,9 @@ head`, rebuilds the venv if missing; then the gateway and web app start. Model
 weights are already in `/workspace/hf-cache`; scans are already in
 `/workspace/minio-data`.
 
-*Pinned (E1-S4):* every version the bootstrap installs comes from `infra/runpod/versions.env`
-(Ubuntu snapshot + apt versions, Go + checksum, MinIO tag + commit, torch) and
-`infra/runpod/requirements.lock` (hash-locked Python packages). The last step writes a version
-manifest to `/workspace/logs/manifests/` and stops the boot on drift from those pins, so the web
-app never starts on unpinned versions. Runbook: `infra/runpod/README.md`.
-
 ### 10.3 DB snapshots
 `snapshot.sh` (`pg_dump -Fc` → `/workspace/backup/cdi.dump`, keeps last 10) is on
 `cron` every 15 min; run it manually before a planned pod stop.
-
-*E10-S11 (2026-09-24):* each snapshot also copies every new MinIO object (scans, pages) to
-`objects/<key>` in the backup folder, sha256-checked, and writes `last_backup.json`. A weekly
-restore drill (`python -m cdi_adapter.dr drill`, cron Sundays 03:30) does four things:
-
-1. rebuilds Postgres and MinIO in a clean environment from the backups alone;
-2. proves every original scan byte-identical against `source_document.sha256`;
-3. runs the golden path on the restored stack;
-4. measures RPO and RTO against the targets (20 min / 30 min).
-
-Alerts: `CdiBackupStale`, `CdiRestoreDrillFailed`, `CdiRestoreDrillOverdue`. For real disaster
-recovery the backup folder (`CDI_BACKUP_DIR`) must live off the pod. Runbook, including which
-rows a restore cannot bring back: `docs/dr.md`.
 
 ### 10.4 Logs & health
 ```
@@ -1086,14 +1038,14 @@ checks must grep a content marker); `psql`/`pg_restore` need the URL with
 |---|---|---|
 | Data residency | all inference + PHI on the pod; no external API calls in the hot path | — |
 | Legacy DB | strictly read-only; never touched | — |
-| Web UI auth | *E11-S1 (2026-09-22):* every route needs a signed-in staff account with a role (`intake` / `reviewer` / `admin`, fail-closed policy in `webapp/auth.py`); local accounts (`web_user`, scrypt), server-side sessions (`web_session`, token hash only; HttpOnly + Secure + SameSite=Strict; 30 min idle / 12 h max), lockout after 5 failures, same-origin check on writes, sign-in audited. Runbook `docs/auth.md`. *E7-S1 (2026-09-24):* every clinical decision (S8 fact review, `/reviewer` claim/approve/reject, Generate EMR edits) is recorded under the signed-in user; a client-sent reviewer is ignored; only the claimer (or an admin, under the admin's name) decides a review item | SSO/OIDC when the clinic has an IdP |
-| Transport | Staff use a stable hostname; TLS ends at Caddy on our own India-region ingress VM, which reaches the pod over an SSH tunnel the pod opens (E1-S9, `docs/ingress.md`). The UI is limited to clinic CIDRs until E11-S1. The RunPod proxy URL is for diagnostics only. Internal traffic is plaintext localhost. | mTLS for a multi-node deployment |
+| Web UI auth | **none** | add auth before any real data |
+| Transport | RunPod proxy provides TLS to the browser; internal is plaintext localhost | mTLS for a multi-node deployment |
 | At rest | MinIO + Postgres on the pod; DB dump on `/workspace` | encryption at rest, KMS |
 | Audit | `audit_log` on every create/update/read | ship to a WORM store |
-| De-identification | *E11-S4 (2026-09-22):* `cdi_adapter.deid` — Presidio + spaCy `en_core_web_lg` + clinical NER `obi/deid_roberta_i2b2` (pinned commit, local files only) + Indian recognizers (ABHA, Aadhaar/Verhoeff, PAN, phone, PIN, MRN/UHID, address); surrogates, per-document date shift, typed placeholders; page images blacked out and re-OCR-verified; red-team re-identification check (`scripts/deid_redteam.py`). Runbook `docs/deid.md` | the human release review of each corpus (E2-S4 🔒) |
+| De-identification | none (demo data) | Presidio + clinical NER before any training corpus |
 | ABDM | schema for `abdm_care_context/consent/transfer`; **no gateway, no Fidelius** | build the DMZ edge (§14) |
 | DPDP Act 2023 | not addressed | consent, purpose limitation, retention, data-principal rights |
-| Secret hygiene | note: `RUNPOD_API_KEY` is readable in `/proc/1/environ` on this pod. *(E1-S5)* DB/Redis/MinIO credentials come from a 0700/0600 secrets store (`CDI_SECRETS_DIR`), not `.env`; no password on any command line (pgpass, Redis `requirepass` file); repo secret scan in CI | rotate the RunPod key (owner); don't share pods; the persistent store copy on `/workspace` (MooseFS, 0777) → KMS on the production host (E1-S10) |
+| Secret hygiene | note: `RUNPOD_API_KEY` is readable in `/proc/1/environ` on this pod | rotate; don't share pods |
 
 ---
 
@@ -1102,7 +1054,7 @@ checks must grep a content marker); `psql`/`pg_restore` need the URL with
 | Capability | State | Notes |
 |---|---|---|
 | S1 ingest + normalize | ✅ built, tested | dedupe, deskew/denoise, page store |
-| S2 classify (heuristic first, VLM fallback) | ✅ built, 9/9 on samples | scored keyword heuristic; Qwen2.5-VL-7B only for ambiguous / handwritten pages (§5 S2) *(reconciled E1-S8)* |
+| S2 classify (real VLM) | ✅ built, 9/9 on samples | Qwen2.5-VL-7B |
 | S3 OCR (printed + handwriting) | ✅ built | RapidOCR + VLM; printed strong, handwriting untested at scale |
 | S4 extract (schema-locked) | ⚠️ built, **quality-limited** | 7B mis-slots JSON often → repair marks `_partial`; **the S6 gate now holds all `_partial` facts for review** rather than trusting them. Medication dose parsing and vitals extraction are still the weak spots — fixed properly by the fine-tuned DSLM |
 | S5 terminology | ⚠️ **seed map only** | ~120 concepts; no Snowstorm, no SapBERT/FAISS, no ICD, no ConceptMap `$translate` |
@@ -1110,15 +1062,22 @@ checks must grep a content marker); `psql`/`pg_restore` need the URL with
 | S7 longitudinal reconciliation | ⚠️ **foundation added, engine not built** | canonical `cn_*` tables + Customer-360 read-model now exist (§4.5, caveat applies); temporal merge, `supersedes` chains beyond corrections, and a derived summary *graph* are still not built on top of it |
 | **S8 human review console** | ✅ **built, since hardened** | `/review`: image + bbox + OCR + fact + code + confidence + findings → accept/correct/reject; reviewer-signed provenance; live re-projection. **Added (§4.5, caveat applies):** dedicated `/reviewer` workbasket→worklist assignment queue, Customer-360 view, `/admin` inspector, canonical-layer promotion. Not yet: auth, SLA-timer/queue-age alerting, throughput tooling |
 | S9 FHIR projection (gated) | ✅ built | asserts only governed facts; `ready_to_share` vs `draft`; 0 structural errors on last clean run |
-| FHIR/IG validation | ⚠️ **structural lint only** | no HAPI validator, no `nrces.fhir.r4.ndhm` package check, no terminology `$validate-code` |
+| FHIR/IG validation | ⚠️ **structural lint only** | no HAPI validator, no `ndhm.in` package check, no terminology `$validate-code` |
 | Fine-tuned DSLM (`cdi-dslm`, Llama/Qwen-7B + LoRA) | ❌ not built | **the biggest gap** — Qwen2.5-VL currently does extraction; no QLoRA training, no eval harness, no structured decoding (XGrammar) |
 | Identity / MPI | ⚠️ minimal | form-driven `get_or_create_patient`; no blocking/scoring, no ABHA verification |
 | ABDM HIP/HRP gateway + consent + Fidelius | ❌ not built | schema only |
-| Legacy write-back / FHIR façade | ❌ not built | |
+| Legacy write-back / FHIR façade | ❌ not built | read-only façade by default, write-back opt-in only — §6.2, E6-S12 |
 | Ingestion at scale | ⚠️ | web app is a single-thread `ThreadPool`; Celery chain exists but unused here; no queue backpressure, no retries tuning |
-| Observability | ⚠️ | structlog to files. *E10-S1 (2026-09-24):* Prometheus `/metrics` on loopback only (web app `:9464`, gateway `:8077`): per-stage latency histograms, extraction queue depth, jobs, human review backlog, GPU utilization/memory (`nvidia-smi`), S6 gate `auto_accepted` vs `in_review`, reviewer throughput, gateway call time/outcome (`docs/metrics.md`). *E10-S2 (2026-09-24):* native Prometheus 3.14.0 + Alertmanager 0.34.1 + Grafana 13.2.2 on loopback (`infra/monitoring/`, pinned + sha256), dashboard "CDI-Adapter overview", 4 alerts (SLA-window breach, GPU OOM, queue backlog, `_partial` rate above its 7-day baseline) with synthetic-trigger tests and on-call responses (`docs/alerts.md`). *E10-S3 (2026-09-24):* OpenTelemetry: one trace per job (every stage of every document, the gateway via `traceparent`, the FHIR projection), `trace_id`/`span_id` on every log line; Tempo 3.0.3 (traces) + Loki 3.7.8 (logs) on loopback, linked both ways in Grafana (`docs/tracing.md`). *E10-S4 (2026-09-24):* drift monitors: `cdi_fact_confidence` per fact at the S6 gate and alert `CdiConfidenceDrift` (KS distance, last 6 h vs the previous 7 days, > 0.25); human-override and unmapped-code rates as daily trend lines on the dashboard; checked by an injected shift in a staging Prometheus (`scripts/drift_staging_check.py`). *E10-S5 (2026-09-24):* model registry (`model_version`, pinned revision) + append-only rollout log (`model_rollout`); the web app routes a share of documents by id to a canary gateway, a failing canary falls back to the primary, `extraction.model_version` records who answered; `compare` gates promotion on live `_partial` / failure / reviewer rejection and correction rates (+ the E2-S7 offline report when registered); `python -m cdi_adapter.modelops rollback` is the one-command undo (`docs/model-rollout.md`) |
-| HA / DR | ⚠️ | single pod; DB dump every 15 min. *E10-S6 (2026-09-24):* optional hot Postgres standby (streaming, replication slot; RPO = replication lag, drill-measured; fenced failover, the app follows via `CDI_DATABASE_HOSTS`) and erasure-coded MinIO over 4 drives (one drive lost: no data or writes lost; `docs/ha.md`). Covers a crashed database or a lost MinIO drive on the pod; a lost host needs the standby and MinIO on other hosts |
+| Observability | ⚠️ | structlog to files; no Prometheus/Grafana/OTel |
+| HA / DR | ❌ | single pod; DB dump is the only backup |
 | AuthN/AuthZ, rate limiting, DPDP workflow | ❌ | |
+| Handwriting: second engine (TrOCR/HTR) + disagreement engine | ❌ designed (§15.3) | gated on the E2-S10 Bengali benchmark; its dataset does not exist yet |
+| Line/region detection (printed / handwritten / mixed / uncertain) | ❌ designed (§15.2) | today the "handwritten" flag is per page (§5 S3 limitations) |
+| Immutable evidence schema (`ocr_observation` / `interpretation_candidate` / `verified_fact`) | ❌ designed (§15.4) | today `ocr_block` is deleted and re-inserted on the VLM pass |
+| Evidence hierarchy + resolution cascade | ❌ designed (§15.6) | — |
+| Lab-order ontology, drug master, alias engine | ❌ designed (§15.7) | seed map only (S5) |
+| Per-field calibrated confidence, precision-at-coverage | ❌ designed (§15.10) | `_calibrate` placeholder (S6) |
+| Practitioner link at ingestion / DoctorNode | ❌ designed (§15.11–§15.12) | FHIR `Practitioner` is not linked to a real doctor |
 
 **Honest summary:** a functional, on-prem, open-source **prototype** that takes real
 scanned documents to ABDM-shaped FHIR — not a production system.
@@ -1134,7 +1093,7 @@ placeholder-grade:
 
 | # | Work | Status |
 |---|---|---|
-| 1 | **Harden + accelerate S4.** (a) **Swap the gateway to a `vllm` `AsyncLLMEngine`** — paged KV cache + continuous batching; deprecate `hf`. (b) **Remove the Phase-2 serialisation lock** in `webapp/jobs.py` so concurrent extracts batch on vLLM. (c) **Grammar-locked decoding** (vLLM `guided_json` / XGrammar) — JSON valid by construction, deletes the repair + retry path; re-tighten the v3 schemas so the grammar constrains. (d) **Fine-tune `cdi-dslm`** (Qwen2.5-VL-7B or a 2–3 B distil + QLoRA, AWQ/INT4) on synthetic + de-identified gold; eval harness (field F1, numeric exactness, hallucination, FHIR validity). Expected: 3-doc job ~90 s → ~30–40 s; 5-doc ~20–35 s. **Floor stays ~8–15 s/doc** for a 7B — sub-5 s needs the small DSLM (d). Grammar fixes JSON validity, **not** clinical fidelity. | **(a)(b)(c) built + tested, measured no gain, reverted to `hf` — see §3.4/§7.4. (d) fine-tune not started — see `CDI-Adapter-Finetuning-Plan.md`; its AWQ/INT4 quantize + benchmark tooling is built (E2-S6, `docs/quantization.md`) and waits on the checkpoint** |
+| 1 | **Harden + accelerate S4.** (a) **Swap the gateway to a `vllm` `AsyncLLMEngine`** — paged KV cache + continuous batching; deprecate `hf`. (b) **Remove the Phase-2 serialisation lock** in `webapp/jobs.py` so concurrent extracts batch on vLLM. (c) **Grammar-locked decoding** (vLLM `guided_json` / XGrammar) — JSON valid by construction, deletes the repair + retry path; re-tighten the v3 schemas so the grammar constrains. (d) **Fine-tune `cdi-dslm`** (Qwen2.5-VL-7B or a 2–3 B distil + QLoRA, AWQ/INT4) on synthetic + de-identified gold; eval harness (field F1, numeric exactness, hallucination, FHIR validity). Expected: 3-doc job ~90 s → ~30–40 s; 5-doc ~20–35 s. **Floor stays ~8–15 s/doc** for a 7B — sub-5 s needs the small DSLM (d). Grammar fixes JSON validity, **not** clinical fidelity. | **(a)(b)(c) built + tested, measured no gain, reverted to `hf` — see §3.4/§7.4. (d) not started — see `CDI-Adapter-Finetuning-Plan.md`** |
 | 2 | **Real terminology service** — Snowstorm-lite (SNOMED CT India) + LOINC/ICD in Postgres; SapBERT/BioLORD + FAISS candidate gen + rule reranker; `$validate-code` / `$translate`; local-code minting. Replaces `seed.py`. | next |
 | 3 | **Fit the S6 calibrator** — replace `_calibrate` with isotonic regression per `doc_type × fact_type` on clinician-adjudicated data; derive the gate thresholds empirically per class. | after data |
 | 4 | **S7 longitudinal reconciliation** — temporal merge across encounters, `supersedes` chains, medication continuity, derived patient-summary view. | — |
@@ -1144,6 +1103,8 @@ placeholder-grade:
 | 8 | **Scale** — durable queue (Temporal / tuned Celery) for web-app uploads too, separate ingest/OCR/VLM worker pools, priority + dead-letter queues, idempotency keys, autoscaling. Replaces the in-process `ThreadPool` (robustness / back-pressure — not a single-job latency win). | — |
 | 9 | **Ops & governance** — Prometheus/Grafana/Loki + OTel; drift monitors (confidence dist, human-override rate, unmapped-code rate); model registry + canary/rollback; Postgres primary+standby; MinIO 3-node; KMS; web-app AuthN/AuthZ; DPDP data-principal workflow; WORM audit. | — |
 | 10 | **Shadow-mode pilot** on real historical documents with clinician adjudication before anything is trusted or shared. | — |
+| 11 | **HW-Phase A — core immutable recognition pipeline** (§15): immutable evidence schema, lab + drug ontologies, alias cascade, line detection, TrOCR + Qwen disagreement under the evidence-hierarchy precedence rule, pixel grounding on line crops, per-field calibrated review. | **near-term target** — E4-S7, E4-S8, E3-S6/S7/S8, E2-S13, E2-S10→S11, E4-S4, E4-S2/S3 |
+| 12 | **HW-Phases B–E** — numeric recognizer + field grammars + negative constraints (B); practitioner-linked DoctorNode, vocabulary priors, bidirectional exemplar memory, novelty detection (C); adjudication learning loops, confusion/digit/layout/sequence profiles (D); per-doctor adapters only if a held-out benchmark proves them (E). | **sequenced, not scoped** — epic E15 |
 
 ### The gate, as implemented
 
@@ -1178,36 +1139,517 @@ clinical_fact + terminology binding + provenance ──────┤
 
 ---
 
-## 15. Mandates accepted into the architecture (E1-S8, 2026-09-21)
+## 15. Target recognition architecture — handwriting, evidence hierarchy, DoctorNode
 
-Four requirements that the brief and the planning backlogs carried, but this document did not, are
-now part of the architecture. Each has an ADR with its constraints; none of them relaxes the §0
-governing principle.
+> **Status: DESIGNED and FROZEN (2026-09-29), NOT BUILT.** This section came out of
+> a multi-round design review: a proposed TrOCR + Qwen ensemble, a
+> production-pipeline critique, and a closed-polyclinic personalization design. It
+> is the *target*, not the as-built system, so nothing here may be cited as
+> existing behaviour. HW-Phase A is committed as the near-term target. HW-Phases
+> B–E are sequenced but not yet scoped (§15.14).
 
-| # | Mandate | ADR | Key constraint |
+### 15.1 Why the handwritten branch changes
+
+- **Qwen2.5-VL reads messy handwriting well because it reasons about context, and
+  that same reasoning is the risk.** Faced with ambiguous strokes, it can produce a
+  fluent, plausible, *wrong* drug name (e.g. resolving to "Montek LC" when the pixels
+  don't support it). A confident wrong answer and a confident right answer look the
+  same to a threshold gate, so confidence alone cannot catch this.
+- **Two independent engines disagreeing is a much stronger ambiguity signal** than
+  either engine's own confidence.
+- **Qwen's general OCR ability says nothing about Bengali doctors' handwriting.**
+  Only a West Bengal benchmark can answer that (E2-S10), and it gates the whole
+  ensemble.
+- **The product objective is selective, not universal.** The target is not "99 %
+  handwriting OCR". It is **precision on auto-accepted critical fields ≥ 99 % at a
+  measured coverage**, with everything else going to review, and the job is to raise
+  coverage without letting that precision fall (§15.10).
+- **The polyclinic is a closed world** (~100 known doctors, a finite local
+  vocabulary). The problem therefore changes from "read arbitrary handwriting" to
+  *"identify which known clinical concept this known doctor intended, from pixel
+  evidence, and abstain when ambiguous"*. That is a much easier ML problem (§15.12).
+
+**Governing recognition contract** (the §15 counterpart of the header's governing
+principle):
+
+> *Pixels are evidence. OCR/HTR observes. Terminology interprets. Priors rank.
+> Grounding can veto. Calibration decides auto-accept eligibility. Humans resolve
+> residual uncertainty.*
+
+### 15.2 Frozen pipeline
+
+```
+                            PRESCRIPTION (any channel)
+                                     │
+                        ┌────────────▼────────────┐
+                        │ ORIGINAL IMMUTABLE IMAGE │  (sha256; never altered — S1 already)
+                        └────────────┬────────────┘
+                                     │
+                  [1] IMAGE QUALITY GATE  blur · glare · clipping · resolution · orientation
+                                     │        └─ fail → specific rescan request (E2-S12)
+                  [2] PREPROCESS  perspective · deskew · crop · CLAHE · light denoise
+                                     │        (derived render; original kept separately)
+                  [3] DOCUMENT CLASSIFICATION  heuristic → VLM fallback, schema-locked (as built)
+                                     │
+                  [4] PRACTITIONER LINK  Encounter.practitioner → reg. no. → header/template
+                                     │        → UNKNOWN  (never inferred from handwriting)  §15.11
+                  [5] REGION + LINE DETECTION  printed | handwritten | mixed | uncertain  (E2-S13)
+                                     │
+             ┌───────────────────────┴────────────────────────┐
+         PRINTED                                        HANDWRITTEN line crops
+         RapidOCR (CPU, as built)                ┌──────────────┴──────────────┐
+             │                                TrOCR / HTR                 Qwen2.5-VL(-AWQ)
+             │                                (literal)                   (contextual)
+             │                                   └── run INDEPENDENTLY — no shared candidate ──┘
+             └───────────────────────┬────────────────────────┘
+                                     ▼
+                  [6] RAW EVIDENCE  → ocr_observation  (append-only, DB-immutable)   §15.4
+                                     │
+                         ┌───────────┴───────────┐
+                     free text               numeric field → domain recognizer + grammar (B)
+                         └───────────┬───────────┘
+                                     ▼
+                  [7] CANDIDATE GENERATION  (resolution cascade, cheapest first)     §15.6
+                      global vocabulary (ALWAYS active) · doctor vocabulary (PRIOR only)
+                      · exemplar memory (VISUAL evidence) → top-K → reranker
+                                     │     → interpretation_candidate (never edits raw_text)
+                  [8] NEGATIVE CONSTRAINTS  eliminate impossible candidates; never invent (B)
+                  [9] PIXEL GROUNDING  enlarged crop from ORIGINAL image; independent check
+                 [10] DISAGREEMENT ENGINE  TrOCR↔Qwen · OCR↔terminology · OCR↔grounding · fields
+                 [11] CALIBRATED PER-FIELD CONFIDENCE  policy by field × evidence state
+                                     │
+                        ┌────────────┴────────────┐
+                   AUTO-ACCEPT                HUMAN REVIEW  (existing S8 / /reviewer; no parallel path)
+                        └────────────┬────────────┘
+                                     ▼
+                 [12] verified_fact + full provenance  →  FHIR / ABDM / EMR  (S9, as built)
+                                     │
+                    exemplars · training data · doctor stats   (HW-Phase D loops)
+```
+
+Stages 1–3 and 12 → S9 exist, or are already backlogged, in the as-built pipeline.
+The new work is stages 4–11.
+
+### 15.3 Independent inference and the disagreement engine (E2-S10 → E2-S11)
+
+- **Independence is a hard requirement.** Qwen must never be prompted with TrOCR's
+  output ("OCR thinks this is *Telma 40*, check it"). That is anchoring: the model
+  agrees with the supplied candidate even when the pixels are ambiguous. It is the
+  same bias E7-S9 measures in human reviewers, one layer earlier. A *separate*
+  adjudication pass that sees both candidates plus the crop is allowed, but only as
+  cascade level L7 (§15.6), after independent reads.
+- **Four disagreement sources** are compared, not two: (1) TrOCR vs Qwen on the same
+  crop, (2) selected OCR candidate vs terminology/formulary retrieval, (3) selected
+  candidate vs pixel grounding, (4) cross-field relations (e.g. a strength the
+  matched drug is not made in). Any disagreement beyond tolerance **forces review
+  regardless of VLM confidence**. When all four sources agree, the fact follows the
+  existing E4 gate unchanged.
+- **It hooks into the existing gate** (S6 → E4-S4 grounding → S8). It is one more
+  input to that gate, never a parallel review path.
+- **Scope:** handwritten regions only. The RapidOCR printed path and its cost are
+  unaffected.
+- **Gate:** built only if E2-S10 shows a measurable gain in **medicine-name
+  exact-match** accuracy over Qwen alone. CER/WER is reported separately, because a
+  name can be close in characters and still clinically wrong. Results are
+  stratified by Bengali / English / mixed script.
+- **Worked cases (test fixtures):**
+  - TrOCR "Telma 4O", Qwen "Telma 40". Lexical, embedding and reranker all favour
+    Telma 40 (0.995), and grounding supports both "Telma" and "40". → accept
+    *Telma 40*.
+  - TrOCR "Telma 40", Qwen "Telmikind 40". Both are valid products and grounding
+    cannot separate the names. → **REVIEW**. Never pick Telma because it is
+    prescribed more often.
+
+### 15.4 Immutable evidence schema (E4-S7)
+
+Three tables. The immutability is enforced **by the database** (trigger or
+permissions), not by coding convention, following the E4-S5 pattern:
+
+```
+ocr_observation                       -- RAW. append-only. never UPDATEd, never DELETEd.
+  id, document_id, page_id, region_id
+  bbox int[], polygon, crop_hash       -- crop taken from the ORIGINAL image
+  region_kind  printed|handwritten|mixed|uncertain
+  field_domain text|strength|dose|frequency|duration|lab_value|age|date|null
+  engine       rapidocr|trocr|htr|qwen2.5-vl|digit|...
+  engine_version, prompt_hash
+  raw_text                             -- IMMUTABLE
+  raw_confidence, token_confidences jsonb
+  run_id → pipeline_run, superseded_by (nullable; supersession is a pointer, not a delete)
+
+interpretation_candidate              -- SCORED + SOURCED. many per observation.
+  id, observation_id[] → ocr_observation
+  concept_id, normalized_text, code_system, code        -- normalization lives ONLY here
+  source   literal|verified_alias|generated_alias|doctor_alias|confusion_map|
+           doctor_exemplar|global_exemplar|embedding|reranker|qwen_adjudication
+  resolved_by_level  L1..L8 (§15.6)
+  score, evidence jsonb                 -- the per-signal evidence matrix
+  eliminated_by (negative constraint id, nullable)
+
+verified_fact                         -- FINAL. what S6/S9 consume.
+  id, observation_ids[], winning_candidate_ids[], concept_id, governed_value
+  verification_method  auto_accept|clinician_confirmed|corrected|rejected
+  confidence (calibrated, per field), policy_id, reviewer_id, model_stack, verified_at
+```
+
+**Traceability chain** (tested end to end): `verified_fact → winning candidate(s) →
+raw observation(s) → pixels (crop_hash on the original image) + model versions`. A
+**reviewer correction never edits an observation.** It adds a candidate
+(`source = reviewer`) and a `verified_fact` that points to it, so the literal
+reading and the human decision both survive.
+
+What this changes relative to what is built:
+
+- The S3 handwritten pass **stops deleting** RapidOCR blocks. Each engine run
+  appends its own observations.
+- Re-extraction may purge *machine-derived* candidates. It may **never** purge
+  `verified_fact` rows or reviewer decisions.
+- `clinical_fact` / `fact_provenance` (§4.2–§4.3) stay as the projection
+  contract. `fact_provenance.ocr_block_ids` maps to observation ids through a
+  compatibility view, so the S8 console keeps working during migration.
+- The handoff's "do not touch `rapid.py`" still holds for the **engine**. Only
+  where its output is **persisted** changes (`ocr_block` → `ocr_observation`). That
+  is a deliberate, recorded exception (§15.15).
+
+### 15.5 Recognition ≠ normalization
+
+The recognition layer outputs **transcription only**, e.g. `{"raw":"Sr Cr",
+"trocr":"Sr Cr","qwen":"Sr. Cr"}`. It never outputs `SERUM_CREATININE` / LOINC
+`2160-0`. That is reasoning, and it happens only in `interpretation_candidate`. This
+is an **acceptance criterion** in E2-S11 and E4-S7, and is owned end-to-end by
+**E4-S9**, not a guideline:
+- recognizer-output schemas contain no code fields;
+- API contracts carry *observed raw text* and *normalized concept/code* as separate
+  objects;
+- terminology and confusion maps cannot change the observation;
+- the **review UI shows both** — observed "Sr Cr" beside normalized "Creatinine
+  [Mass/volume] in Serum or Plasma, LOINC 2160-0" — each with its provenance.
+
+### 15.6 Evidence hierarchy and resolution cascade (E4-S8)
+
+Signals are **not** equal voters. Without a precedence rule the system becomes
+"nine signals vote and nobody can say why a fact was accepted", which contradicts
+the provenance principle.
+
+**Precedence (highest authority first):**
+
+| Tier | Evidence | May | May never |
 |---|---|---|---|
-| 15.1 | 30 concurrent patients × 5–10 documents; SLA 5 min from last upload to governed JSON/FHIR **or an explicit hold with an ETA** | [ADR-0002](adr/0002-load-and-sla-requirement.md) | the SLA is met by holds, never by auto-accepting |
-| 15.2 | Bounded agentic control plane under a persisted deterministic workflow / state machine | [ADR-0003](adr/0003-agentic-control-plane.md) | agents can never set `auto_accepted`, `clinician_confirmed`, `billing_ready`, `ready_to_share`; S6 stays the only machine authority |
-| 15.3 | GPU-class and cost policy: Blackwell 32 GB baseline, ₹75,000/month (Voice + CDI), two-GPU topology, India-resident production host | [ADR-0004](adr/0004-cost-and-gpu-policy.md) | cheapest configuration named only after real quotes and only among those passing the production gate |
-| 15.4 | Counter status board + billing handoff contract (`billing_ready` impossible while identity, billing-critical facts or FHIR validation are unresolved) | [ADR-0005](adr/0005-counter-billing-contract.md) | unresolved facts are serialised separately, never labelled confirmed |
+| 0 | **Pixels** (grounding on the original-image crop) | veto any candidate | be overridden by any lower tier |
+| 1 | **Independent recognizer readings** (RapidOCR / TrOCR / Qwen / numeric recognizer) and **visual exemplar similarity** | propose, support, contradict | be merged with normalization (§15.5) |
+| 2 | **Lexical mapping** (verified alias > observed doctor alias > generated alias candidate; terminology validity) | map a reading to a concept | turn a literal reading into another string |
+| 3 | **Priors** (doctor vocabulary frequency, co-order / sequence, specialty, layout zone) | re-rank candidates already supported by tiers 0–2 | pick between two valid, pixel-indistinguishable candidates, or override pixels ("usually orders HbA1c" never beats pixels showing HBeAg) |
+| — | **Negative constraints** (specimen marker, glyph extent, strength↔drug, grammar) | eliminate candidates | add or invent text |
 
-**Authoritative document state machine (from ADR-0003):**
-`UPLOADED → DURABLY_STORED → TRIAGED → {CPU_PATH | GPU_ESCALATED} → CANDIDATES → EVIDENCE_BOUND →
-VALIDATED → {GOVERNED | REVIEW_REQUIRED} → FHIR_VALIDATED → BILLING_READY`.
+**Cascade (each level runs only if the previous one is ambiguous; the resolving
+level is stored as `resolved_by_level`):**
 
-Not accepted here (still ⛔ HOLD, need an explicit owner decision): WhatsApp intake and HIS
-integration (epic E15), review-console draft persistence + optimistic concurrency (E7-S10),
-annotate-from-scratch mode (E7-S9), and the v7 vital-sign profiles / ImmunizationRecord half of
-E6-S8.
+```
+L1 exact verified alias ─▶ L2 normalized alias ─▶ L3 fuzzy lexical ─▶ L4 doctor exemplar retrieval
+─▶ L5 global exemplar retrieval ─▶ L6 embedding retrieval + reranker ─▶ L7 Qwen contextual
+adjudication (sees both candidates + crop, AFTER independent reads) ─▶ L8 human
+```
 
-## 16. Scheduled reconciliation pass (E1-S8)
+Most easy cases (e.g. OCR "S.Creat" is a verified alias → `SERUM_CREATININE`) stop
+at L1 at zero GPU cost.
 
-The next time a pod or GPU host is live, run and record:
+- **Short-circuiting needs validation.** A cheap level may end the cascade only
+  where its result has been *validated for that field and cohort* (e.g. L1 exact
+  alias for lab-order names on printed text). Otherwise escalation continues.
+- **Majority vote is never enough to auto-accept.** An explicit contradiction from
+  pixel grounding or from an independent HTR reading forces review, however many
+  priors support the candidate.
+- **The machine-readable decision trace** lists each evidence source, its tier, its
+  score and reason, and the escalation cause. It is persisted with the fact and
+  logged as an agent step (E12-S5). Every accepted fact carries its **evidence matrix**
+(one row per signal: TrOCR, Qwen, exemplars, alias, doctor vocabulary, co-order,
+grounding, negative constraints). An auditor can then see *why* it was accepted.
+When the matrix has any real conflict (e.g. TrOCR "S.Creat", Qwen "S.Ca", ambiguous
+exemplars, several alias hits), the fact goes to **review even when history favours
+one reading**.
 
-1. `pg_dump --schema-only` on that host and diff it against `docs/schema/cdi_schema.sql`.
-2. The endpoint list from the running web app (`/openapi.json`) against §7.1 + §4.6.
-3. The deferred integration tests: `CDI_TEST_S3_ENDPOINT=http://127.0.0.1:9000 pytest -m integration`.
-4. Update §4.5 / §4.6 and this section with the result and the date.
+### 15.7 Knowledge layer: lab-order ontology, drug master, alias classes (E3-S6/S7/S8)
+
+- **Global lab / investigation-order ontology (E3-S7).** Closed-world,
+  concept-centred. Each concept has: canonical name, LOINC mapping(s),
+  individual-vs-panel type, specimen, method constraints, panel components (*likely*
+  vs *optional*; composition varies by lab), aliases, Bengali aliases, OCR
+  confusions (as candidates), and co-order relations.
+  - **Size it from data, don't assume it.** The useful claim is "the top ~N
+    canonical orders cover ~95 % of *this polyclinic's* historical order volume",
+    with N measured from historical prescriptions. It is not "100 tests = 95 % of
+    all tests". At ~100 concepts × 10–30 aliases the lexicon is only a few thousand
+    strings, and a given doctor's vocabulary is smaller still.
+  - **Panels stay panels.** "KFT" → `raw_text "KFT"`, normalized order = KFT/RFT
+    panel. Never expand it into Urea/Creatinine/Na/K…, because labs define panels
+    differently. Panel composition is stored as lab-specific metadata. **The
+    constituent results come from the diagnostic lab report**, never from
+    inference.
+  - **Specimen is not assumed.** "Creat" → candidates {serum, blood, urine
+    creatinine}. Context ("KFT", an "S." marker) resolves it, or it goes to review.
+    LOINC keeps these as separate concepts on purpose.
+- **Indian drug master (E3-S6, already backlogged).** brand, generic, normalized
+  generic, strength + unit, dosage form, manufacturer, composition, aliases, Bengali
+  aliases, common abbreviations, OCR variants, active flag. SNOMED/LOINC/ICD do not
+  cover Indian brands, so this is required, not optional.
+- **Three alias classes with different evidence weights (E3-S8):**
+  - **A. Verified standard** — e.g. S. Creatinine, Sr. Creat, SCr. Clinician
+    sign-off required.
+  - **B. Generated candidates** — from abbreviation rules (Serum→S/S./Sr/Sr.,
+    Creatinine→Creat/Cr). These feed *candidate generation only* and are never
+    auto-promoted to A, because unrestricted combinatorial generation creates
+    collisions ("CR").
+  - **C. Observed doctor aliases** — learned from reviewed prescriptions in HW-Phase
+    D. Much stronger evidence than B.
+  - Any alias that maps to more than one concept is flagged as a collision.
+
+### 15.8 Numeric fields, grammars, negative constraints (HW-Phase B, E15-S1..S3)
+
+- **Numeric errors are the dangerous ones:** 20↔40, 5↔50, 0.5↔5, 1-0-1↔1-0-0.
+  Numeric recognition is split by domain because each domain has its own valid
+  grammar: strength `<number><unit>`; dose `d-d-d` (incl. ½); duration `x<n>d | x<n>
+  days | x<n>wk | x<n>/52`; frequency from a closed set (OD, BD, TDS, QID, HS, SOS,
+  PRN); lab values; age; dates.
+- **The grammars reuse E2-S3's dormant grammar-locked decoding** (XGrammar /
+  `guided_json`), extended from document schemas to field grammars. They are also
+  applied as a validator on TrOCR output. That makes this cheaper than it looks: the
+  infrastructure is already built.
+- Example: glyph probabilities for the third digit are 1 = 0.73, 7 = 0.21; the grammar
+  is `d-d-d`; the doctor's historical glyph "1" matches at 0.96 and "7" at 0.54. →
+  `1-0-1`. That is stronger than asking a 7B VLM "what dose was written?".
+- **Negative evidence eliminates candidates** that cannot be right. An "S." specimen
+  marker contradicts urine creatinine. A three-glyph extent contradicts "HbA1c". A
+  strength the product is not made in contradicts that product. It never adds text.
+
+### 15.9 Pixel grounding (E4-S4, sharpened)
+
+The selected candidate's bbox is re-cropped **from the original image** (not the
+preprocessed render), enlarged with margin, and independently checked: *"can this
+exact value be supported by these pixels?"* Grounding runs per field (name and
+strength separately: "Telma" yes, "40" yes). On handwriting it only means something
+once E2-S13 supplies line/field-level crops (§5 S3 limitation 2).
+
+### 15.10 Per-field calibrated confidence, policies and the headline metric (E4-S2/S3, E2-S7)
+
+- **Confidence is per field** (medicine, strength, dose, frequency, duration, lab
+  test, diagnosis), never one document-level score.
+- **Thresholds are keyed by field × evidence state.** Illustrative evidence states:
+  engines agree + grounding pass; known doctor + strong exemplar; known doctor, no
+  exemplar; unknown doctor; engine disagreement (= always review). Stricter for
+  higher clinical consequence, so strength and dose are the strictest. **Every value
+  comes from held-out adjudicated data.** No universal 0.99 constant. Novelty
+  (§15.12) always lowers eligibility.
+- **Headline metric = precision on auto-accepted fields, reported with coverage.**
+  Illustrative: 50,000 medication fields → 42,000 auto-accepted (84 % coverage) →
+  41,650 correct → 99.17 % precision. The engineering objective is to keep accepted
+  precision ≥ 99 % while coverage rises. The KPI is owned by **E4-S10**, and the CI
+  regression gate is E2-S7.
+  - **Reported separately:** auto-accept precision; auto-accept coverage;
+    human-review rate; medicine-name exact match; strength / dose / frequency /
+    duration exact match; lab-order exact match; CER/WER for literal OCR.
+  - **Sliced by:** field; printed vs handwritten; Bengali / English / mixed; known
+    vs unknown doctor; known vs novel concept; **image-quality bucket**.
+  - **Release-claim rule:** a release may state "≥ 99 %" only for the *exact*
+    held-out field/cohort metric that actually meets it. A clinical owner signs off
+    the definitions of the critical-field metrics.
+- **Error class → defence**:
+
+| Error source | Defence |
+|---|---|
+| Bad photograph | quality gate (E2-S12) |
+| Wrong doctor | Encounter link + registration no. + template (E6-S11, E15-S4) |
+| General handwriting error | TrOCR / HTR |
+| Contextual ambiguity | Qwen, *independent* |
+| Doctor-specific handwriting | exemplar memory (E15-S7) |
+| Repeated doctor OCR errors | confusion **candidate** map (E15-S10) |
+| Digits | numeric recognizer + grammar (E15-S1/S2) |
+| Known abbreviations | deterministic lexicon (E3-S8) |
+| New test / drug | global vocabulary always active; novelty detector (E15-S8) |
+| Over-personalization | novelty detector; priors tier 3 only (E4-S8) |
+| Wrong normalization | terminology constraints (E3) |
+| Plausible hallucination | pixel grounding (E4-S4) |
+| Model disagreement | disagreement gate (E2-S11) |
+| Residual uncertainty | human review (S8) |
+
+### 15.11 Practitioner link at ingestion (E6-S11) and deterministic doctor ID (E15-S4)
+
+Doctor identity is captured **at ingestion, for every source channel**, as data with
+a method and a confidence:
+
+| Channel | Primary signal | Fallback | Notes |
+|---|---|---|---|
+| **Fresh intake** (appointment / counter) | `Encounter.practitioner` from the booking — deterministic | — | no OCR of the doctor name at all |
+| **WhatsApp** submission | the sender number identifies the *patient/attendant*, **not the doctor** | printed registration no. → printed name → letterhead/template fingerprint | never use the sender as the doctor |
+| **Batch-digitized historical paper** | printed registration no. (very high) → printed name (high) → known template (high) | chamber (medium), signature (low–medium), handwriting style (low, fallback only, never sole basis) | no Encounter exists |
+
+Stored on the document: `practitioner_id` (nullable), `practitioner_link_method ∈
+{encounter, registration_no, printed_name, template, manual, unknown}`,
+`link_confidence`. **`unknown` is a valid, normal state.** An unknown or uncertain
+doctor runs the global system only. Doctor A's priors must never be applied to
+Doctor B's prescription. The same link feeds the FHIR `Practitioner` (HPR) +
+`PractitionerRole` + `Composition.author` (§6.1 #9).
+
+- **Locum / covering doctor.** A covering doctor may write on the regular doctor's
+  letterhead, or under the regular doctor's booking. If the Encounter, the printed
+  header and the handwriting signals **conflict**, the document goes to the global
+  path and to review. It never takes a guessed DoctorNode. Both the locum case and
+  the wrong-header case are required test fixtures.
+- **Practitioner routing is independent of patient MPI.** It must work before and
+  after patient identity is resolved (§5 Identity, E6-S6).
+- **It needs a practitioner master** that carries registration numbers. That master
+  is an external data dependency.
+
+### 15.12 DoctorNode: a data object, not a model (HW-Phase C, E15-S5..S8)
+
+```
+DoctorNode #017
+├── practitioner_id, specialty, identity features (reg. no., templates)
+├── vocabularies   tests · drugs · diagnoses · instructions · dosage patterns   (PRIOR only)
+├── aliases        observed doctor aliases (class C)
+├── exemplar memory  verified crops: words · tests · medicines · numerics  (VISUAL evidence)
+├── glyph / digit profile                                               (Phase D)
+├── OCR confusion map   → candidates only, never text.replace()          (Phase D)
+├── layout profile · co-order graph · sequence (n-gram/Markov) model      (Phase D)
+├── confidence calibration
+└── optional handwriting adapter (TrOCR/HTR LoRA)                        (Phase E, only if proven)
+```
+
+- **100 DoctorNodes are cheap. 100 models are not.** There is one global
+  recognition stack, and each node supplies conditional knowledge. The adapter is
+  level 4 of personalization (global model → profile → exemplar memory → adapter),
+  not level 2.
+- **The global vocabulary stays active**, whatever the doctor's history. Formally
+  P(concept | pixels, doctor) ∝ P(pixels | concept, doctor-handwriting) ×
+  P(concept | doctor). The first term decides. The second is only a prior.
+- **Exemplar retrieval runs in two directions:** doctor-specific (this doctor's
+  verified crops) *and* global-concept (every doctor's verified crops of each
+  concept). Doctor #17's first-ever "Anti-CCP" can then be matched through Doctors
+  #32/#44/#81's examples.
+  - **Storage:** embeddings go in **PostgreSQL + pgvector**; no second vector store.
+  - **What an exemplar is:** each one points to a `verified_fact` and its immutable
+    crop hash, and only clinician-verified crops qualify.
+  - **What retrieval may do:** it returns top-k similarities *as evidence*. It never
+    writes the clinical value.
+  - **When it switches on:** benchmark doctor-only, global-only and combined
+    retrieval. The feature stays disabled unless the combined path raises coverage
+    at the same target precision.
+  - **Why it comes before LoRA:** it helps from the first verified corrections and
+    needs no retraining.
+- **Novelty detector:** if the best doctor-exemplar similarity falls below a
+  threshold (e.g. CBC 0.51, HbA1c 0.48 …), the item is **NOVEL**. Confidence is
+  lowered and the search widens to global vocabulary and exemplars. The system must
+  never pick the nearest historical item by default.
+  - The threshold is calibrated on a held-out *"first-ever-for-this-doctor"*
+    drugs/tests slice.
+  - Novel status is visible in the decision trace.
+  - Personalization must **fail open** to the global vocabulary, never **fail
+    closed** to the doctor's history.
+  - Doctor priors (E15-S6) cannot be switched on until the novelty detector
+    (E15-S8) is live.
+- **Cold start** (doctor #101): day 1 uses the global stack. At ~20 reviewed
+  prescriptions a vocabulary starts to form, at ~50 aliases/confusions, at ~100
+  exemplar retrieval becomes useful. Adapters are *evaluated* after N validated
+  samples, never trained automatically at a count.
+
+### 15.13 Learning loops and adapters (HW-Phases D–E, E15-S9..S14)
+
+- **Every adjudicated crop feeds three loops:**
+  1. global (better global HTR, which helps everyone);
+  2. doctor (that doctor's DoctorNode);
+  3. concept (the concept exemplar bank).
+
+  Each crop is stored with doctor_id, raw OCR, canonical concept, confidence,
+  decision, timestamp and model version. That one record serves as training data,
+  exemplar, eval candidate, alias evidence and confusion evidence. This extends
+  E4-S1.
+- **Adapter benchmark matrix (E15-S13)**, on held-out per-doctor data:
+  - A. global TrOCR
+  - B. A + doctor exemplars
+  - C. doctor-adapted TrOCR
+  - D. global Qwen
+  - E. per-doctor Qwen LoRA
+  - F. TrOCR doctor adapter + global Qwen + exemplars
+
+  The working hypothesis is that **F, or even B**, beats E on accuracy per unit of
+  complexity. Style mostly affects the *recognition* problem, so if any adapter wins
+  it is more likely to belong on the HTR than on Qwen. The benchmark decides.
+- **An adapter is deployed per doctor only if** it improves held-out accuracy for
+  that doctor **without lowering auto-accept precision**. It is then registered
+  under E10-S5 with rollback.
+  - New and low-volume doctors stay on the global path.
+  - Adapters are MB-scale. Maintaining 100 full 7B models is never acceptable.
+  - Per-doctor Qwen LoRA (arm E) is tested **only if** HTR adaptation (C / F) leaves
+    a measured gap.
+- **Late priors** (layout, co-order, sequence, specialty) go through ablation one at
+  a time. Any prior with no measurable held-out gain is disabled. A prior may raise
+  or lower a score, or force review. It can never create a concept.
+
+### 15.14 Build order → backlog mapping (one engineer)
+
+| HW-Phase | Contents | Stories | State |
+|---|---|---|---|
+| **A — core immutable pipeline** | immutable 3-table schema; recognition/normalization boundary; evidence hierarchy + cascade; global lab-order ontology; drug master; alias engine (exact→normalized→fuzzy); line/region detection; Bengali benchmark → TrOCR + Qwen disagreement; pixel grounding; per-field calibrated review; selective-prediction KPI; practitioner link at ingestion; AWQ base-VLM validation | **E4-S7, E4-S9, E4-S8, E3-S7, E3-S6, E3-S8, E2-S13, E2-S10 → E2-S11, E4-S4, E4-S2/S3, E4-S10, E6-S11, E2-S14** (+ E2-S12 quality gate, E2-S7 CI gate) | **near-term target, scoped** |
+| B — safety | domain numeric recognizer; field grammars; negative constraints | E15-S1, E15-S2, E15-S3 | sequenced, **not scoped** (precision/coverage dashboard was pulled forward into A as E4-S10, because Phase A's exit and the E2-S10 go/no-go can't be measured without it) |
+| C — polyclinic advantage | deterministic doctor ID for unlinked documents + template fingerprints; DoctorNode; vocabulary priors; bidirectional exemplar memory; novelty detection | E15-S4 … E15-S8 | sequenced, **not scoped** |
+| D — learning | adjudication → three loops; confusion candidate maps; digit/glyph profiles; layout / co-order / sequence priors | E15-S9 … E15-S12 | sequenced, **not scoped** |
+| E — adapters, only if proven | benchmark matrix A–F; gated per-doctor adapter deployment | E15-S13, E15-S14 | sequenced, **not scoped** |
+
+**Non-blocking technology-radar arm:** E2-S15 (Could; depends only on E2-S4 + E2-S10) reuses the E2-S10 benchmark harness to compare any credible commercially usable/open-weight challenger OCR/VLM/HTR model available at execution time. It does **not** delay E2-S10/E2-S11, and it cannot change the production hot path without a separate architecture decision plus E10-S5 model-registry/canary governance.
+
+### 15.15 Discrepancies and open decisions (not silently resolved)
+
+1. **GPU / checkpoint size.** The pilot pod runs Qwen2.5-VL-7B in **bf16 (~15–16 GB)
+   on a 32 GB RTX PRO 4500** (§1, Appendix B), and this works. `emr.docx` states the
+   project "already chose the AWQ build (~6.92 GB)". That holds for the *production /
+   shared-GPU target* (E13-S2, E13-S6) and for keeping TrOCR resident alongside Qwen.
+   It does not hold for the pilot pod. E2-S14 validates AWQ as non-inferior before any
+   switch. Do not size hardware from the 16.6 GB published-checkpoint figure.
+2. **Classification order.** The E2-S10/S11 handoff (written from `DESIGN.md`) calls
+   classification "VLM-based, upstream of OCR". As built (§3.2, §5 S2) it is a
+   **scored heuristic that runs after RapidOCR**, with the VLM only as fallback.
+   The pod and this document win. The handoff is stale on this point.
+3. **"Do not touch `rapid.py`"** (handoff) vs the §15.4 schema: the engine is left
+   alone, only its persistence target moves. Recorded here as a deliberate exception.
+4. **E2-S10 dataset does not exist.** 500–1,000 de-identified West Bengal
+   prescription lines, sourcing owner TBD. **Do not synthesize.** De-identify via
+   E11-S4 first. This blocks the whole handwritten-ensemble decision.
+5. **Off-the-shelf TrOCR checkpoints are English** (trained on IAM). E2-S10 must name
+   the exact HTR checkpoint used for Bengali lines. If no Bengali-capable one exists,
+   report TrOCR as an English-only arm rather than claim a Bengali result.
+6. **IG version.** The code pins `nrces.fhir.r4.ndhm#6.5.0`, while the current IG is
+   v7.0.0 (§6.1 #1, E6-S9).
+7. **Parallel draft reconciled.** A second draft of this design
+   (`ARCHITECTURE-emr-OCR-Target-Updated.md` + `…-OCR-Updated.xlsx`, same day) used
+   **different story IDs**. For example, its E2-S13 is the numeric recognizer (here
+   E15-S1), its E6-S9 is practitioner routing (here E6-S11), its E4-S10 is the
+   recognition/normalization boundary (here E4-S9), and its E6-S10 is the FHIR façade
+   (here E6-S12). **This document and `D:\CDI-Adapter-Production-Backlog-Enhanced.xlsx` are the
+   superset of record** (a `…-Perfected.xlsx` copy in Downloads is identical apart from
+   pass-6 fixes). The parallel files should not be used for IDs.
+8. **Resolved as an optional, non-blocking story (E2-S15):** the wider challenger-model
+   bake-off is now explicitly backlogged under the same E2-S10 West Bengal handwriting
+   harness. It benchmarks whatever credible commercially usable/open-weight challenger
+   models exist at execution time against the same held-out crops, accuracy metrics,
+   latency/VRAM constraints and licence checks. It does **not** gate E2-S10/E2-S11 and
+   cannot alter the production architecture without a separate design decision plus
+   E10-S5 model-registry/canary governance.
+
+---
+
+## 16. Operational integration features (E16–E20) — DESIGNED, NOT BUILT
+
+> Added 2026-09-29 (backlog pass 7). **Repo of record is now
+> `manishtech0607-cmyk/CDI-Adapter`** (main). It is an architecture-driven rebuild and
+> does **not** contain the vLLM/XGrammar backend or the Customer-360 view that exist in
+> `sayantanIFAI/emr@fdd4aeb`. Its Repo Baseline sheet lists what each file proves.
+
+| Epic | Design rules (the acceptance criteria enforce them) | Builds on (in the repo today) |
+|---|---|---|
+| **E16 File listener** (most important) | One connector interface selected by config: local / network folder, **OneDrive** (Microsoft Graph delta + webhook, certificate auth, least-privilege scope), **SharePoint** (Sites.Selected). Persisted lifecycle: inbox → processing (lease) → **completed** \| **error** \| quarantine. A file moves to completed only after its pipeline run is durably recorded. Reliability features: upload-complete detection, dedupe, idempotency key per file version, backpressure, graceful drain. An **error-recovery agent** classifies each failure, retries **at most 3 times** (DB-enforced) with a remedy per class, then dead-letters to a human task. The agent can re-queue or quarantine only. It can never govern facts. | `ingest/watcher.py` (local only; moves to *processed* before the pipeline runs), `worker.py` (3 Celery retries per stage) |
+| **E17 Persistence + FHIR agent** | Everything extracted goes into normalized 3NF tables (prescription header, medication order, lab/investigation order, diagnosis, complaint, vitals…), each linked to its evidence. The write is one idempotent transaction per document. A transactional **outbox** feeds a **FHIR-builder agent** that reads **governed rows only**, runs the deterministic projector, validates, and stores the bundle as a **blob** (MinIO), with an index row holding key, hash, version and validation status. | `clinical_fact`, `medication_detail`, `cn_*`; `fhir/service.py`, `fhir/canonical.py` (synchronous today) |
+| **E18 Doctor master + matching** | `practitioner_master`, starting from a clearly marked sample: name variants, designation, specialty, registration no. Matching order: registration number (exact) → normalized, transliteration-aware name scoring, returning top-k candidates with a calibrated confidence. Below threshold there is no auto-link. The UI shows the **extracted name next to the DB-matched name** with the score and the match reasons. | `mpi/service.py` fuzzy matching is patients-only |
+| **E19 Medicine context plausibility** | Maps drugs to therapeutic class and indication. Drug–context plausibility is **tier-3 evidence plus a negative constraint** (§15.6): it can re-rank or eliminate look-alike candidates, e.g. no chest-pain drug for a spine prescription. It **never overrides clear pixels**, and a legitimate co-morbidity drug is **flagged for review, never removed**. It stays enabled only if auto-accept precision is equal or better. | `validate/rules.py` dose ceilings only |
+| **E20 Screen dispatch agent** | A versioned field-mapping registry per target screen. An agent sends **governed data only**, API/FHIR first, with UI automation as an opt-in fallback that reads back each field. Idempotent dispatch key, acknowledgement, nightly reconciliation and dead-letter. Disabled per target until approved, under the §6.2 write-back boundary (E6-S12). | none |
 
 ---
 
@@ -1239,7 +1681,7 @@ clinical-emr-adapter/
 │   ├── worker.py  api.py
 ├── infra/
 │   ├── runpod/   start_all.sh  bootstrap_pod.sh  start_mlserve.sh  snapshot.sh  README.md
-│   └── compose/  docker-compose.yml Dockerfile      (not used: pod and fallback host are native, E1-S3)
+│   └── compose/  docker-compose.yml Dockerfile      (not used on the no-Docker pod)
 ├── scripts/      make_sample_docs.py  pipeline_smoke.py  ingest_batch.py  verify_s3.sql
 └── tests/        test_pages / test_ingest_unit / test_ml_and_classify_unit /
                   test_ocr_order_unit / test_ingest_integration / test_pipeline_integration
@@ -1254,9 +1696,10 @@ clinical-emr-adapter/
 | Python | 3.12 |
 | torch / torchvision | 2.8.0+cu128 / 0.23.0+cu128 (inherited via `venv --system-site-packages`) |
 | transformers | 5.16.1 (current `hf` serving backend — one forward pass at a time) |
-| vLLM | **0.11.0** (the last release on torch 2.8; cu128 build with Blackwell sm_120) — *rebuilt under E2-S1, 2026-09-22*: `VLLMBackend`, selected by `CDI_MLSERVE_BACKEND=vllm`; runs the gateway from its own venv `.venv-vllm` (`infra/runpod/requirements-vllm.lock`, transformers 4.57.6) because vLLM 0.11.0 predates transformers 5; `hf` remains the active backend |
+| vLLM | *not installed* — planned serving backend (§7.4), needs a Blackwell sm_120 / torch 2.8 build |
 | VLM | `Qwen/Qwen2.5-VL-7B-Instruct` (Apache-2.0), bf16, ~15 GB VRAM, sdpa attention |
 | OCR | `rapidocr-onnxruntime` + `onnxruntime` (CPU) |
+| *Target, not installed (§15)* | TrOCR / HTR line recognizer (the Bengali-capable checkpoint is chosen by E2-S10); `Qwen2.5-VL-7B-Instruct-AWQ` candidate (E2-S14); vision-embedding index for exemplar memory (HW-Phase C) |
 | API / server | FastAPI + uvicorn |
 | DB / store / broker | PostgreSQL 16, MinIO (RELEASE.2025-09-07), Redis 7 |
 | schema validation | `jsonschema` + `referencing` registry |

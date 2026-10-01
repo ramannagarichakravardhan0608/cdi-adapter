@@ -71,8 +71,10 @@ def test_the_extracted_lines_and_diagnoses_go_to_the_model_and_widen_the_shortli
     assert out["suggested"] == 2
     with session_scope() as c:
         got = latest_for_document(c, doc)["by_fact"]
+        # the medication agent's own steps (the gate's E4-S8 cascade logs its steps here too)
         trace = c.execute(text("SELECT step, input FROM agent_trace WHERE document_id = :d "
-                               "ORDER BY seq"), {"d": doc}).all()  # fmt: skip
+                               "AND agent = 'medication_agent.v1' ORDER BY seq"),
+                          {"d": doc}).all()  # fmt: skip
     by_text = {s["read_as"]: s for s in got.values()}
     muro = next(v for k, v in by_text.items() if "Muronorm" in k)
     assert muro["status"] == "suggested" and muro["product"]["name"] == "Thyronorm 62.5mcg Tablet"
