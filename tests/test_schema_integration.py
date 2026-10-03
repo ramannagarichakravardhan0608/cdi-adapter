@@ -35,7 +35,8 @@ ORDER_TABLES = {"cn_lab_order"}  # migration 0011: tests a prescription advises
 # migration 0013 (backlog E4-S7): ocr_block became ocr_observation; ocr_block is now a view
 EVIDENCE_TABLES = {"ocr_observation", "interpretation_candidate", "verified_fact",
                    "ocr_agreement"}  # 0013 (E4-S7) + 0018 (E4-S11)
-LONGITUDINAL_TABLES = {"medication_supersession"}  # migration 0014 (backlog E5-S1)
+LONGITUDINAL_TABLES = {"medication_supersession",  # migration 0014 (backlog E5-S1)
+                       "problem_continuity"}  # migration 0023 (E5-S1 problem list)
 ORCHESTRATOR_TABLES = {"workflow_step", "workflow_replay", "agent_tool_call"}  # 0019 (E12-S1)
 # migration 0021 (backlog E9-S1): a schema change with the cluster up
 MIGRATION_TABLES = {"schema_gate", "migration_run"}
@@ -50,7 +51,8 @@ ALL_TABLES = ((PER_DOC_TABLES - {"ocr_block"}) | {"patient_registry"} | CANONICA
               | TRAINING_TABLES | ORCHESTRATOR_TABLES | MIGRATION_TABLES
               | QUEUE_TABLES)  # fmt: skip
 VIEWS = {"v_problem_list", "v_medication_list", "v_allergy_list", "v_results_grid",
-         "v_encounter_timeline", "ocr_block", "v_medication_history"}  # fmt: skip
+         "v_encounter_timeline", "ocr_block", "v_medication_history",
+         "v_problem_history"}  # fmt: skip
 
 
 def _tables(engine) -> set[str]:
@@ -84,7 +86,7 @@ def test_upgrade_head_creates_every_table_and_view(engine):
     assert _tables(engine) == ALL_TABLES
     assert _views(engine) == VIEWS
     with engine.connect() as c:
-        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0022"
+        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0023"
         assert c.execute(text("SELECT nextval('patient_mpi_seq')")).scalar_one() >= 1
 
 

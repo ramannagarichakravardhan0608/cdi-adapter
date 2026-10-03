@@ -129,3 +129,80 @@ def test_reconciliation_is_idempotent(db_env):
         n = c.execute(text("SELECT count(*) FROM medication_supersession WHERE patient_id = :p"),
                       {"p": p}).scalar_one()  # fmt: skip
     assert n == 1
+
+
+# ------------------------------------------------------------------ the problem list (E5-S1)
+
+
+def _problems(patient: str) -> list[dict]:
+    with session_scope() as c:
+        return [dict(r) for r in c.execute(
+            text("SELECT * FROM v_problem_list WHERE patient_id = :p ORDER BY problem"),
+            {"p": patient}).mappings()]  # fmt: skip
+
+
+def _problem_history(patient: str) -> list[dict]:
+    with session_scope() as c:
+        return [dict(r) for r in c.execute(
+            text("SELECT h.*, f.source_doc_ids[1]::text AS doc FROM v_problem_history h "
+                 "JOIN clinical_fact f ON f.id = h.fact_id WHERE h.patient_id = :p "
+                 "ORDER BY h.encounter_date"), {"p": patient}).mappings()]  # fmt: skip
+
+
+def test_one_problem_mentioned_at_three_visits_is_one_line_with_its_history(db_env):
+    """The second half of E5-S1: a condition carried across encounters is one problem on the
+    list - the latest mention - dated from its first, with every mention kept in the history."""
+    name = _name()
+    v1, p = _visit(name, "05/01/2026", ["Tab Amlodipine 5 mg OD x 30 days"])
+    v2, _ = _visit(name, "05/04/2026", ["Tab Amlodipine 5 mg OD x 30 days"])
+    v3, _ = _visit(name, "05/07/2026", ["Tab Amlodipine 10 mg OD x 30 days"])
+
+    problems = [r for r in _problems(p) if "ypertension" in (r["problem"] or "")]
+    assert len(problems) == 1, problems  # not three lines
+    assert problems[0]["mentions"] == 3
+    assert str(problems[0]["encounter_date"]) == "2026-07-05"  # the latest mention is shown
+    assert str(problems[0]["first_onset"]) == "2026-01-05"  # dated from the first
+
+    history = [r for r in _problem_history(p) if "ypertension" in (r["problem"] or "")]
+    assert len(history) == 3
+    assert [r["mention_status"] for r in history] == ["continued", "continued", "current"]
+    assert history[0]["continued_by_fact_id"] == history[1]["fact_id"]
+    assert history[1]["continued_by_fact_id"] == history[2]["fact_id"]
+    assert {r["chain_head_fact_id"] for r in history} == {history[0]["fact_id"]}
+    with session_scope() as c:  # nothing deleted; every link audited
+        kept = c.execute(text("SELECT count(*) FROM clinical_fact WHERE id = ANY(:i) "
+                              "AND is_current"),
+                         {"i": [r["fact_id"] for r in history]}).scalar_one()  # fmt: skip
+        audited = c.execute(text("SELECT count(*) FROM audit_log WHERE entity_id = ANY(:i) "
+                                 "AND detail ? 'problem_continued_by'"),
+                            {"i": [str(r["fact_id"]) for r in history]}).scalar_one()  # fmt: skip
+    assert kept == 3 and audited == 2
+    assert v1 != v2 != v3
+
+
+def test_a_problem_reconciliation_is_idempotent(db_env):
+    name = _name()
+    _visit(name, "05/01/2026", ["Tab Amlodipine 5 mg OD x 30 days"])
+    _, p = _visit(name, "05/04/2026", ["Tab Amlodipine 5 mg OD x 30 days"])
+    from cdi_adapter import longitudinal
+
+    with session_scope() as c:
+        first = longitudinal.reconcile_patient_problems(c, p)
+        second = longitudinal.reconcile_patient_problems(c, p)
+    assert first == {"added": 0, "removed": 0}  # the gate already did it
+    assert second == {"added": 0, "removed": 0}
+    assert len([r for r in _problems(p) if "ypertension" in (r["problem"] or "")]) == 1
+
+
+def test_both_halves_run_from_one_call(db_env):
+    """``reconcile_patient`` is what the S6 gate calls: medications and problems together."""
+    from cdi_adapter import longitudinal
+
+    name = _name()
+    _visit(name, "05/01/2026", ["Tab Amlodipine 5 mg OD x 30 days"])
+    _, p = _visit(name, "05/04/2026", ["Tab Amlodipine 10 mg OD x 30 days"])
+    with session_scope() as c:
+        out = longitudinal.reconcile_patient(c, p)
+    assert set(out) == {"medications", "problems"}
+    assert [d for m, d in _active(p) if "mlodipine" in m]  # one active order
+    assert len([r for r in _problems(p) if "ypertension" in (r["problem"] or "")]) == 1

@@ -282,7 +282,7 @@ def _validate(conn: Connection, doc_id: str, s: Settings,
                     audit.append(str(f["id"]))
 
     patient_id = facts[0]["patient_id"] if facts else None
-    longitudinal.reconcile_patient_medications(conn, patient_id)  # E5-S1
+    longitudinal.reconcile_patient(conn, patient_id)  # E5-S1: medications + problems
     if held:
         _task(conn, doc_id, patient_id, _task_kind(held), "normal", held)
     if audit:

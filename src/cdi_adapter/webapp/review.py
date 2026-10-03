@@ -262,8 +262,12 @@ def decide(conn: Connection, fact_id: UUID | str, d: ReviewDecision,
                      detail={"action": d.action, "result_fact": str(result_id),
                              "corrections": d.corrections, "note": d.note})  # fmt: skip
     closed = _close_tasks(conn, [str(fact["id"]), str(result_id)])
-    if fact["fact_type"] == "medication":  # E5-S1: a decided order may now (not) supersede
+    # E5-S1: a decided order may now (not) supersede, and a decided condition may now (not)
+    # continue an earlier mention
+    if fact["fact_type"] == "medication":
         longitudinal.reconcile_patient_medications(conn, fact["patient_id"], actor=reviewer)
+    elif fact["fact_type"] == "condition":
+        longitudinal.reconcile_patient_problems(conn, fact["patient_id"], actor=reviewer)
     metrics.REVIEW_DECISIONS.labels(d.action).inc()
     return {"fact_id": str(fact["id"]), "result_fact_id": str(result_id), "review_state": state,
             "tasks_closed": closed}  # fmt: skip

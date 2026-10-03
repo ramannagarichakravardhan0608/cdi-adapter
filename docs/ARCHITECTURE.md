@@ -305,6 +305,7 @@ read-model views: [`db/views.sql`](../db/views.sql); migration:
 | ABDM | `abdm_care_context`, `abdm_consent`, `abdm_transfer` | linking / consent / encrypted push — schema only |
 | Audit | `audit_log` | every create/update/read with actor + detail |
 | Read model (views) | `v_problem_list`, `v_medication_list`, `v_allergy_list`, `v_results_grid`, `v_encounter_timeline` | flattened lists clinicians read |
+| S7 continuity (E5-S1) | `medication_supersession` + `v_medication_history` (0014), `problem_continuity` + `v_problem_history` (0023) | across encounters: the latest order and the latest mention of each problem are what the two lists show; every earlier row is kept, linked and audited |
 
 > This table describes the **per-document** schema (S1–S9, unchanged). A second,
 > **longitudinal/review** schema (`cn_*`, `ops_*`/`fin_*`, `ai_*`, `rv_*`) was
