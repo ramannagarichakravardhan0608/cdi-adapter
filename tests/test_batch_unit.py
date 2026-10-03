@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import threading
 import time
 from types import SimpleNamespace
@@ -149,7 +150,8 @@ class FakeEngine:
         try:
             await asyncio.sleep(0.1)
             yield SimpleNamespace(prompt_token_ids=[1], outputs=[
-                SimpleNamespace(text=f"answer:{request['prompt']}", token_ids=[1])])  # fmt: skip
+                SimpleNamespace(text=json.dumps(f"answer:{request['prompt']}"), token_ids=[1])
+            ])  # fmt: skip
         finally:
             with self.lock:
                 self.inflight -= 1
@@ -164,7 +166,11 @@ def test_vllm_puts_every_batch_item_in_flight_together_each_with_its_grammar() -
                      grammar_builder=lambda schema: f"G[{schema['$id']}]")  # fmt: skip
     items = [GenItem(f"p{i}", max_tokens=10 * (i + 1), json_schema={"$id": f"s{i}"})
              for i in range(3)]  # fmt: skip
-    assert be.generate_batch(items) == ["answer:p0", "answer:p1", "answer:p2"]
+    assert [json.loads(t) for t in be.generate_batch(items)] == [
+        "answer:p0",
+        "answer:p1",
+        "answer:p2",
+    ]
     assert engine.peak == 3
     params = {req["prompt"]: p for req, p in engine.calls}
     assert params["p2"] == {"max_tokens": 30, "grammar": "G[s2]"}

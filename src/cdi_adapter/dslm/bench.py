@@ -92,6 +92,10 @@ def run_variant(
     gpu: Callable[[], dict[str, Any]] = _gpu_info,
     clock: Callable[[], float] = time.perf_counter,
 ) -> dict[str, Any]:
+    if not levels or any(isinstance(k, bool) or not isinstance(k, int) or k < 1 for k in levels):
+        raise ValueError("concurrency levels must be positive integers")
+    if len(set(levels)) != len(levels):
+        raise ValueError("concurrency levels must be unique")
     doc = read_corpus(corpus_dir)
     rows = doc["requests"]
     if not rows:
@@ -212,10 +216,11 @@ def agreement(baseline: Any, other: Any) -> float | None:
 
 
 def _parse(text: str, schema: str) -> tuple[Any, bool]:
-    from cdi_adapter.ml.client import extract_json, validate_schema
+    from cdi_adapter.ml.client import validate_schema
+    from cdi_adapter.mlserve.grammar import strict_json
 
     try:
-        payload = extract_json(text)
+        payload = strict_json(text)
     except ValueError:
         return None, False
     return payload, not validate_schema(payload, schema)
@@ -229,10 +234,50 @@ def _gib(mib: int) -> float:
     return round(mib / 1024, 1)
 
 
+def _check_comparable(results: Sequence[dict[str, Any]]) -> None:
+    base = results[0]
+    names = [r["variant"] for r in results]
+    if len(set(names)) != len(names):
+        raise ValueError("benchmark variant names must be unique")
+    expected = {s["id"]: s["schema"] for s in base["serial"]}
+    for r in results:
+        serial = r["serial"]
+        if not serial or len({s["id"] for s in serial}) != len(serial):
+            raise ValueError("benchmark requests must be nonempty and have unique ids")
+        if {s["id"]: s["schema"] for s in serial} != expected:
+            raise ValueError("benchmark request ids and schemas must match")
+        if r["corpus"] != base["corpus"] or r["corpus"]["requests"] != len(serial):
+            raise ValueError("benchmark corpus digests, classifications and counts must match")
+        if r["engine"] != base["engine"]:
+            raise ValueError("benchmark engine settings must match")
+        if any(r["gpu"][k] != base["gpu"][k] for k in ("name", "total_mib")):
+            raise ValueError("benchmark hardware must match")
+        if not r["concurrency"]:
+            raise ValueError("benchmark requires concurrency measurements")
+        levels = [c["concurrency"] for c in r["concurrency"]]
+        if len(set(levels)) != len(levels) or sorted(levels) != sorted(
+            c["concurrency"] for c in base["concurrency"]
+        ):
+            raise ValueError("benchmark concurrency levels must match and be unique")
+        values = [
+            r["extract_s_per_doc"]["median"],
+            r["extract_s_per_doc"]["p95"],
+            r["engine"]["max_num_seqs"],
+            *levels,
+            *(c["docs_per_min"] for c in r["concurrency"]),
+        ]
+        if any(
+            isinstance(v, bool) or not isinstance(v, int | float) or not math.isfinite(v) or v <= 0
+            for v in values
+        ):
+            raise ValueError("benchmark measurements must be finite and positive")
+
+
 def compare(results: Sequence[dict[str, Any]], *, target: str = TARGET_GPU) -> dict[str, Any]:
     """The first result is the baseline (the bf16 7B)."""
     if len(results) < 2:
         raise ValueError("compare needs the baseline and at least one variant")
+    _check_comparable(results)
     base = results[0]
     parsed = {r["variant"]: {s["id"]: _parse(s["text"], s["schema"]) for s in r["serial"]}
               for r in results}  # fmt: skip
@@ -258,8 +303,10 @@ def compare(results: Sequence[dict[str, Any]], *, target: str = TARGET_GPU) -> d
                                          / r["extract_s_per_doc"]["median"], 2),
             "docs_per_min": best["docs_per_min"], "at_concurrency": best["concurrency"],
             "vram_used_gib": _gib(r["gpu"]["used_mib"]),
-            "kv_cache_tokens": r["kv_cache_tokens"], "concurrent_slots": r["slots"],
-            "concurrent_slots_worst": r["slots_worst"],
+            "kv_cache_tokens": r["kv_cache_tokens"],
+            "concurrent_slots": min(r["slots"], r["engine"]["max_num_seqs"]),
+            "concurrent_slots_worst": min(r["slots_worst"], r["engine"]["max_num_seqs"]),
+            "kv_slot_estimate": r["slots"],
             "max_num_seqs": r["engine"]["max_num_seqs"],
             "schema_valid": f"{sum(valid)}/{len(valid)}",
             "agreement_with_baseline": round(statistics.fmean(agree), 3) if agree else None,
@@ -269,7 +316,9 @@ def compare(results: Sequence[dict[str, Any]], *, target: str = TARGET_GPU) -> d
             "baseline": base["variant"],
             "corpus": base["corpus"], "rows": rows,
             "note": "agreement_with_baseline is exact leaf agreement with the bf16 output, a "
-                    "regression signal only; accuracy is E2-S7 on the E2-S4 gold set."}  # fmt: skip
+                    "regression signal only; accuracy is E2-S7 on the E2-S4 gold set. "
+                    "Slots are KV estimates capped by max_num_seqs; safe capacity needs a load run."
+    }  # fmt: skip
 
 
 _COLUMNS = (
@@ -350,7 +399,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.archive:
         print(f"wrote {archive(summary, results, args.archive)}")
     print(render_markdown(summary))
-    return 0
+    return (
+        0
+        if all(
+            row["schema_valid"].split("/")[0] == row["schema_valid"].split("/")[1]
+            for row in summary["rows"]
+        )
+        else 1
+    )
 
 
 if __name__ == "__main__":

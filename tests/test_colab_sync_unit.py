@@ -108,7 +108,18 @@ FAKE_APPTIER = '#!/usr/bin/env bash\necho "apptier ${1:-start}" >>"$WS/apptier.c
 def _sync(repo: Path, ws: Path, arc: Path) -> subprocess.CompletedProcess[str]:
     run = ('to() { if command -v cygpath >/dev/null; then cygpath -u "$1"; else echo "$1"; fi; }; '
            'REPO=$(to "$R") WS=$(to "$W") exec bash "$(to "$S")" "$(to "$A")"')  # fmt: skip
-    env = {**os.environ, "R": str(repo), "W": str(ws), "S": str(SYNC), "A": str(arc)}
+    # The sync script stops its model gateway. A temporary fixture must never run
+    # pkill against real host processes (including a parent shell running the tests).
+    fake_bin = ws / "test-bin"
+    fake_bin.mkdir(parents=True, exist_ok=True)
+    pkill = fake_bin / "pkill"
+    pkill.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$W/pkill.calls"\nexit 1\n')
+    pkill.chmod(0o755)
+    pgrep = fake_bin / "pgrep"
+    pgrep.write_text("#!/bin/sh\nexit 0\n")  # synthetic running gateway, independent of host state
+    pgrep.chmod(0o755)
+    env = {**os.environ, "R": str(repo), "W": str(ws), "S": str(SYNC), "A": str(arc),
+           "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}"}  # fmt: skip
     return subprocess.run([_need_bash(), "-c", run], capture_output=True, text=True, env=env,
                           timeout=120)  # fmt: skip
 
@@ -128,7 +139,14 @@ def _host(tmp_path: Path) -> tuple[Path, Path]:
 
 def _bundle(tmp_path: Path, name: str, files: dict[str, bytes]) -> tuple[Path, str]:
     src = tmp_path / name
-    tree = _tree(src, {"infra/runpod/start_apptier.sh": FAKE_APPTIER.encode(), **files})
+    tree = _tree(
+        src,
+        {
+            "infra/runpod/start_apptier.sh": FAKE_APPTIER.encode(),
+            "infra/runpod/start_mlserve.sh": b'#!/bin/sh\necho restart >> "$WS/gateway.calls"\n',
+            **files,
+        },
+    )
     out = tmp_path / f"{name}.tar.gz"
     return out, colab_bundle.build(src, tree, out)
 
@@ -144,6 +162,8 @@ def test_sync_applies_exactly_the_bundle_and_keeps_host_state(tmp_path: Path) ->
     assert (repo / "docs" / "backlog 1.md").read_bytes() == b"# v1\n"
     assert "py -m alembic upgrade head" in (ws / "py.calls").read_text()
     assert "apptier start" in (ws / "apptier.calls").read_text()  # web + workers restarted
+    assert "-f cdi_adapter.mlserve" in (ws / "pkill.calls").read_text()
+    assert "restart" in (ws / "gateway.calls").read_text()
 
     arc2, id2 = _bundle(tmp_path, "v2", {"a.py": b"two\n", "docs/backlog 1.md": b"# v2\n"})
     r = _sync(repo, ws, arc2)

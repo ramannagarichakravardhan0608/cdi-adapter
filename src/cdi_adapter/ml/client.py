@@ -475,6 +475,17 @@ class JsonRequest:
 # ------------------------------------------------------------------ clients
 
 
+class GeneratedText(str):
+    """A response's decoding guarantee travels with its text, including through batches."""
+
+    grammar_locked: bool
+
+    def __new__(cls, text: str, *, grammar_locked: bool = False):
+        value = super().__new__(cls, text)
+        value.grammar_locked = grammar_locked
+        return value
+
+
 class MLClient:
     """Base client: subclasses implement :meth:`generate`."""
 
@@ -536,6 +547,15 @@ class MLClient:
                 text = first_text
             else:
                 text = self.generate(ask, image_png, max_tokens=max_tokens, json_schema=grammar)
+            if isinstance(text, GeneratedText) and text.grammar_locked:
+                # The gateway constrained every token. Never repair or retry an invalid
+                # constrained response: fail the document and expose the serving defect.
+                from cdi_adapter.mlserve.grammar import strict_json
+
+                raw = strict_json(text)
+                if validate_schema(raw, schema):
+                    raise ValueError("grammar-locked gateway returned schema-invalid JSON")
+                return raw
             try:
                 repaired = repair_payload(extract_json(text), schema)
             except ValueError as exc:
@@ -665,7 +685,9 @@ class HttpMLClient(MLClient):
         data = r.json()
         self.model = data.get("model", self.model)
         log.info("vlm_generate", model=self.model, seconds=round(time.perf_counter() - t0, 2))
-        return data["text"]
+        return GeneratedText(
+            data["text"], grammar_locked=data.get("usage", {}).get("grammar_locked") is True
+        )
 
     def generate_batch(self, items: list[GenItem]) -> list[str]:
         body = {"items": [{"prompt": i.prompt,
@@ -683,7 +705,13 @@ class HttpMLClient(MLClient):
             raise ValueError(f"gateway returned {len(texts)} texts for {len(items)} items")
         log.info("vlm_generate_batch", model=self.model, items=len(items),
                  seconds=round(time.perf_counter() - t0, 2))  # fmt: skip
-        return texts
+        locks = data.get("usage", {}).get("grammar_locked", [False] * len(texts))
+        if not isinstance(locks, list) or len(locks) != len(texts):
+            raise ValueError("gateway returned invalid grammar metadata")
+        return [
+            GeneratedText(t, grammar_locked=flag is True)
+            for t, flag in zip(texts, locks, strict=True)
+        ]
 
     def healthz(self) -> dict[str, Any]:
         """The first replica that answers (the web app's /healthz: can extraction run at all)."""

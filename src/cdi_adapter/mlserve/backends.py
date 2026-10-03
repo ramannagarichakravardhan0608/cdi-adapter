@@ -712,10 +712,12 @@ def structured_output_config(settings: Settings) -> dict[str, Any]:
     return {"backend": "xgrammar", "disable_fallback": True}
 
 
-def _default_prompt_builder(model_id: str) -> Callable[[str, bool], str]:  # pragma: no cover
+def _default_prompt_builder(
+    model_id: str, *, revision: str | None = None
+) -> Callable[[str, bool], str]:  # pragma: no cover
     from transformers import AutoProcessor
 
-    processor = AutoProcessor.from_pretrained(model_id)
+    processor = AutoProcessor.from_pretrained(model_id, revision=revision)
 
     def build(prompt: str, with_image: bool) -> str:
         content: list[dict[str, Any]] = [{"type": "image"}] if with_image else []
@@ -761,6 +763,7 @@ class VLLMBackend(Backend):
         self._loop: Any = None
         self._start_lock = threading.Lock()  # only engine start-up is serialised, not generation
         self._seq = 0
+        self._loop_thread: threading.Thread | None = None
 
     @property
     def loaded(self) -> bool:
@@ -775,15 +778,72 @@ class VLLMBackend(Backend):
             import asyncio
 
             loop = asyncio.new_event_loop()
-            threading.Thread(target=loop.run_forever, name="vllm-engine", daemon=True).start()
+
+            def serve_loop() -> None:
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_forever()
+                finally:
+                    pending = asyncio.all_tasks(loop)
+                    for task in pending:
+                        task.cancel()
+                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                    loop.close()
+
+            thread = threading.Thread(target=serve_loop, name="vllm-engine", daemon=True)
+            thread.start()
             t0 = time.perf_counter()
-            engine, self.model = _load_with_fallback(
-                lambda mid: self._engine_factory(mid, self.settings), self.settings, _release_cuda
-            )
-            self._build = self._prompt_builder(self.model)
-            self._loop, self._engine = loop, engine
+
+            async def initialize() -> tuple[Any, str, Callable[[str, bool], str]]:
+                engine, model = _load_with_fallback(
+                    lambda mid: self._engine_factory(mid, self.settings),
+                    self.settings,
+                    _release_cuda,
+                )
+                try:
+                    builder = (
+                        _default_prompt_builder(model, revision=_revision(model, self.settings))
+                        if self._prompt_builder is _default_prompt_builder
+                        else self._prompt_builder(model)
+                    )
+                except BaseException:
+                    if shutdown := getattr(engine, "shutdown", None):
+                        shutdown()
+                    raise
+                return engine, model, builder
+
+            try:
+                engine, self.model, self._build = asyncio.run_coroutine_threadsafe(
+                    initialize(), loop
+                ).result()
+            except BaseException:
+                loop.call_soon_threadsafe(loop.stop)
+                thread.join()
+                raise
+            self._loop, self._loop_thread, self._engine = loop, thread, engine
             log.info("vlm_loaded", backend="vllm", model=self.model,
                      seconds=round(time.perf_counter() - t0, 1))  # fmt: skip
+
+    def close(self) -> None:
+        """Release the engine process and its event loop when the gateway shuts down."""
+        import asyncio
+
+        with self._start_lock:
+            if self._loop is None:
+                return
+            loop, thread, engine = self._loop, self._loop_thread, self._engine
+
+            async def shutdown() -> None:
+                if stop := getattr(engine, "shutdown", None):
+                    stop()
+
+            try:
+                asyncio.run_coroutine_threadsafe(shutdown(), loop).result(timeout=10)
+            finally:
+                loop.call_soon_threadsafe(loop.stop)
+                if thread is not None:
+                    thread.join(timeout=10)
+                self._loop = self._loop_thread = self._engine = self._build = None
 
     async def _run(self, request: dict[str, Any], params: Any, request_id: str) -> Any:
         final = None
@@ -834,7 +894,7 @@ class VLLMBackend(Backend):
 
         # built before the engine is touched: a schema that cannot be locked exactly fails fast
         grammar = (self._grammar(json_schema)
-                   if json_schema and self.settings.vllm_guided else None)  # fmt: skip
+                   if json_schema is not None and self.settings.vllm_guided else None)  # fmt: skip
         self._ensure_loaded()
         assert self._build is not None
         request: dict[str, Any] = {"prompt": self._build(prompt, image_png is not None)}
@@ -847,8 +907,17 @@ class VLLMBackend(Backend):
         fut = asyncio.run_coroutine_threadsafe(
             self._run(request, self._sampling(max_tokens, grammar), request_id), self._loop
         )
-        final = fut.result()
+        try:
+            final = fut.result(timeout=self.settings.vllm_request_timeout_s)
+        except TimeoutError:
+            # Cancellation reaches vLLM's generate(), which aborts the engine request.
+            fut.cancel()
+            raise TimeoutError("vLLM generation exceeded its deadline") from None
         out = final.outputs[0]
+        if json_schema is not None and self.settings.vllm_guided:
+            from cdi_adapter.mlserve.grammar import validate_output
+
+            validate_output(str(out.text), json_schema)
         return (str(out.text), len(getattr(final, "prompt_token_ids", None) or ()),
                 len(getattr(out, "token_ids", None) or ()))  # fmt: skip
 

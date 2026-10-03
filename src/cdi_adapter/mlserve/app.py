@@ -15,6 +15,7 @@ from __future__ import annotations
 import base64
 import binascii
 import time
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -25,7 +26,7 @@ from cdi_adapter import metrics, tracing
 from cdi_adapter.config import get_settings
 from cdi_adapter.logging import get_logger
 from cdi_adapter.mlserve.backends import Backend, GenItem, _is_oom, make_backend
-from cdi_adapter.mlserve.grammar import GrammarError
+from cdi_adapter.mlserve.grammar import GenerationError, GrammarError
 
 log = get_logger(__name__)
 
@@ -67,10 +68,26 @@ def _image(b64: str | None) -> bytes | None:
 
 
 def create_app(backend: Backend | None = None, *, version: str | None = None) -> FastAPI:
-    app = FastAPI(telemetry={"tracing": False}, title="cdi-adapter model gateway")
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        try:
+            yield
+        finally:
+            if close := getattr(app.state.backend, "close", None):
+                from starlette.concurrency import run_in_threadpool
+
+                await run_in_threadpool(close)
+
+    app = FastAPI(
+        telemetry={"tracing": False}, title="cdi-adapter model gateway", lifespan=lifespan
+    )
     app.state.backend = backend or make_backend()
     app.state.version = version or get_settings().model_version or None
     metrics.register_once("gpu", metrics.GpuCollector())
+
+    def locked(schema: dict[str, Any] | None) -> bool:
+        be = app.state.backend
+        return be.name == "vllm" and be.settings.vllm_guided and schema is not None
 
     @app.post("/vlm/generate", response_model=GenerateResponse)
     def generate(req: GenerateRequest, request: Request) -> GenerateResponse:
@@ -86,6 +103,12 @@ def create_app(backend: Backend | None = None, *, version: str | None = None) ->
                 text = be.generate(
                     req.prompt, image, max_tokens=req.max_tokens, json_schema=req.json_schema
                 )
+        except GenerationError as exc:
+            metrics.VLM_REQUESTS.labels("single", "error").inc()
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except TimeoutError as exc:
+            metrics.VLM_REQUESTS.labels("single", "error").inc()
+            raise HTTPException(status_code=504, detail="model generation timed out") from exc
         except GrammarError as exc:  # E2-S3: never served unconstrained instead
             metrics.VLM_REQUESTS.labels("single", "refused").inc()
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -102,7 +125,12 @@ def create_app(backend: Backend | None = None, *, version: str | None = None) ->
             text=text,
             backend=be.name,
             model=be.model,
-            usage={"prompt_chars": len(req.prompt), "output_chars": len(text), "seconds": secs},
+            usage={
+                "prompt_chars": len(req.prompt),
+                "output_chars": len(text),
+                "seconds": secs,
+                **({"grammar_locked": True} if locked(req.json_schema) else {}),
+            },
         )
 
     @app.post("/vlm/generate_batch", response_model=BatchResponse)
@@ -118,6 +146,16 @@ def create_app(backend: Backend | None = None, *, version: str | None = None) ->
                 {"cdi.backend": be.name, "cdi.items": len(items)},
             ):
                 texts = be.generate_batch(items)
+                if len(texts) != len(items) or any(not isinstance(t, str) for t in texts):
+                    raise HTTPException(
+                        status_code=502, detail="model batch response is incomplete"
+                    )
+        except GenerationError as exc:
+            metrics.VLM_REQUESTS.labels("batch", "error").inc()
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except TimeoutError as exc:
+            metrics.VLM_REQUESTS.labels("batch", "error").inc()
+            raise HTTPException(status_code=504, detail="model generation timed out") from exc
         except GrammarError as exc:  # E2-S3: never served unconstrained instead
             metrics.VLM_REQUESTS.labels("batch", "refused").inc()
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -132,7 +170,10 @@ def create_app(backend: Backend | None = None, *, version: str | None = None) ->
         log.info("vlm_generate_batch", backend=be.name, model=be.model, items=len(items),
                  seconds=secs)  # fmt: skip
         return BatchResponse(texts=texts, backend=be.name, model=be.model,
-                             usage={"items": len(items), "seconds": secs})  # fmt: skip
+                             usage={"items": len(items), "seconds": secs,
+                                    **({"grammar_locked": [locked(i.json_schema) for i in items]}
+                                       if any(locked(i.json_schema) for i in items) else {})}
+        )  # fmt: skip
 
     @app.get("/metrics")
     def prometheus() -> Response:

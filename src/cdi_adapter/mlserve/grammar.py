@@ -29,7 +29,46 @@ _RULE_NAME = "cdi_unit_interval"
 # 0, 0.x (up to 6 decimals), 1, 1.0 (up to 6 zeros): every value is inside [0, 1]
 UNIT_INTERVAL_RULE = f'{_RULE_NAME} ::= ("0" ("." [0-9]{{1,6}})?) | ("1" ("." "0"{{1,6}})?)'
 
-_ANNOTATIONS = {"description", "title", "$id", "$comment", "examples", "default"}
+_ANNOTATIONS = {"description", "title", "$id", "$schema", "$comment", "examples", "default"}
+_SUPPORTED = _ANNOTATIONS | {
+    "type",
+    "properties",
+    "required",
+    "additionalProperties",
+    "enum",
+    "const",
+    "anyOf",
+    "items",
+    "minItems",
+    "minimum",
+    "maximum",
+    "exclusiveMinimum",
+    "exclusiveMaximum",
+    "$defs",
+}
+
+
+class GenerationError(RuntimeError):
+    """A constrained generation did not finish as a valid schema instance."""
+
+
+def strict_json(text: str) -> Any:
+    def reject_constant(value: str) -> None:
+        raise ValueError("non-finite JSON constant")
+
+    return json.loads(text, parse_constant=reject_constant)
+
+
+def validate_output(text: str, schema: dict[str, Any]) -> None:
+    """Never publish a truncated or invalid constrained response as successful generation."""
+    from jsonschema import Draft202012Validator
+
+    try:
+        value = strict_json(text)
+        if next(Draft202012Validator(schema).iter_errors(value), None) is not None:
+            raise GenerationError("constrained generation violated its schema")
+    except (ValueError, TypeError):
+        raise GenerationError("constrained generation did not produce complete JSON") from None
 
 
 class GrammarError(ValueError):
@@ -59,21 +98,23 @@ def unsupported(schema: Any, path: str = "#") -> list[str]:
         return out
     if _is_unit_interval(schema):
         return out
-    bad = [k for k in ("multipleOf", "uniqueItems", "contains", "minContains", "maxContains",
-                       "format", "minProperties", "maxProperties", "propertyNames",
-                       "patternProperties", "maxItems", "pattern", "minLength", "maxLength",
-                       "$ref", "not", "if", "allOf", "oneOf") if k in schema]  # fmt: skip
+    bad = [k for k in schema if k not in _SUPPORTED]
+    # The confidence grammar substitution must never rewrite a literal data value.
+    if any(_MARK in json.dumps(schema[k]) for k in ("const", "enum") if k in schema):
+        bad.append("reserved grammar marker in literal data")
     types = schema.get("type")
-    number = types == "number" or (isinstance(types, list) and "number" in types)
-    if number and any(k in schema for k in ("minimum", "maximum", "exclusiveMinimum",
+    if types != "integer" and any(k in schema for k in ("minimum", "maximum", "exclusiveMinimum",
                                             "exclusiveMaximum")):  # fmt: skip
-        bad.append("number range other than 0-1")
+        bad.append("number range other than 0-1 or range without integer type")
     out += [f"{path}: {k}" for k in bad]
     for k, v in schema.items():
         if k == "properties" and isinstance(v, dict):  # a map of names, not a schema itself
             for name, sub in v.items():
                 out += unsupported(sub, f"{path}/properties/{name}")
-        elif k not in ("enum", "const", "default", "examples") and isinstance(v, dict | list):
+        elif k == "$defs" and isinstance(v, dict):
+            for name, sub in v.items():
+                out += unsupported(sub, f"{path}/$defs/{name}")
+        elif k not in _ANNOTATIONS | {"enum", "const"} and isinstance(v, dict | list):
             out += unsupported(v, f"{path}/{k}")
     return out
 
@@ -83,7 +124,13 @@ def with_placeholders(schema: Any) -> Any:
     if isinstance(schema, dict):
         if _is_unit_interval(schema):
             return {"const": _MARK}
-        return {k: with_placeholders(v) for k, v in schema.items()}
+        result = {}
+        for k, v in schema.items():
+            if k in {"properties", "$defs"} and isinstance(v, dict):
+                result[k] = {name: with_placeholders(sub) for name, sub in v.items()}
+            else:
+                result[k] = v if k in _ANNOTATIONS | {"const", "enum"} else with_placeholders(v)
+        return result
     if isinstance(schema, list):
         return [with_placeholders(v) for v in schema]
     return schema
@@ -92,6 +139,12 @@ def with_placeholders(schema: Any) -> Any:
 def schema_to_ebnf(schema: dict[str, Any]) -> str:
     """The exact XGrammar EBNF for ``schema`` (cached per schema). Needs ``xgrammar``, which is
     in the gateway venv (``requirements-vllm.lock``)."""
+    from jsonschema import Draft202012Validator, SchemaError
+
+    try:
+        Draft202012Validator.check_schema(schema)
+    except SchemaError:
+        raise GrammarError("invalid JSON schema") from None
     # key order kept: XGrammar emits properties in schema order, which is the order the
     # prompt asks for (sorting would force ``confidence`` first)
     return _ebnf(json.dumps(schema))

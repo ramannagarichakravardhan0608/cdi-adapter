@@ -264,9 +264,16 @@ class UsageEngine:
         try:
             await asyncio.sleep(0.05)
             n_prompt = 100 + (300 if "multi_modal_data" in request else 0)
+            from cdi_adapter.mlserve.backends import StubBackend
+
+            text = (
+                StubBackend().generate(request["prompt"], json_schema=params["schema"])
+                if params.get("schema")
+                else '{"confidence": 0.9}'
+            )
             yield SimpleNamespace(
                 prompt_token_ids=list(range(n_prompt)),
-                outputs=[SimpleNamespace(text='{"confidence": 0.9}', token_ids=list(range(7)))],
+                outputs=[SimpleNamespace(text=text, token_ids=list(range(7)))],
             )
         finally:
             with self.lock:
@@ -282,8 +289,9 @@ def _vllm(engine: UsageEngine, settings: Settings | None = None,
 
     return VLLMBackend(settings or _settings(), engine_factory=factory,
                        prompt_builder=lambda mid: (lambda p, img: p),
-                       sampling=lambda n, g=None: {"max_tokens": n},
-                       grammar_builder=lambda schema: "root ::= ...")  # fmt: skip
+                       sampling=lambda n, g=None: {"max_tokens": n,
+                                                   "schema": json.loads(g) if g else None},
+                       grammar_builder=json.dumps)  # fmt: skip
 
 
 def test_generate_with_usage_reports_prompt_and_generated_tokens() -> None:
@@ -437,9 +445,15 @@ def test_compare_gives_speedup_validity_agreement_and_the_sizing_tag() -> None:
     s = bench.compare([
         _result("baseline-bf16", 12.0, [VITALS_OK, VITALS_OK], blackwell),
         _result("dslm-awq", 4.0, [VITALS_OK, drifted], blackwell, {"source_model": "/m/dslm"}),
-        _result("awq-on-l4", 6.0, [VITALS_OK, "not json"], l4, {"source_model": "/m/dslm"}),
     ])  # fmt: skip
-    base, awq, l4row = s["rows"]
+    base, awq = s["rows"]
+    l4row = bench.compare(
+        [
+            _result("baseline-l4", 12.0, [VITALS_OK, VITALS_OK], l4),
+            _result("awq-on-l4", 6.0, [VITALS_OK, "not json"], l4, {"source_model": "/m/dslm"}),
+        ]
+    )["rows"][1]
+    assert awq["concurrent_slots"] == 4 and awq["kv_slot_estimate"] == 6
     assert base["speedup_vs_baseline"] == 1.0 and base["quantization"] == "bf16"
     assert awq["speedup_vs_baseline"] == 3.0 and awq["quantization"] == "AWQ W4A16"
     assert awq["source_model"] == "/m/dslm" and awq["docs_per_min"] == 14.0

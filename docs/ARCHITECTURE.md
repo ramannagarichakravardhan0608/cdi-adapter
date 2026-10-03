@@ -1840,3 +1840,32 @@ Golden full runs process exactly the three PDFs in §8.2 order. The general stub
 requirement, not permission to claim E1-S6 complete. Nightly infrastructure/backend errors write
 an alert as well as exiting nonzero; successful scheduling/delivery needs deployment evidence.
 Load reports count only nonempty document-bundle responses as ready and fail on functional errors.
+
+
+## Epic 2 readiness review — 2026-10-03
+
+This supplement records code hardening after the historical deployment observations above.
+The supplied stories are E2-S1, E2-S2, E2-S3, E2-S6 and E2-S8. Their acceptance status and
+external release requirements are recorded in [epic-2-readiness.md](epic-2-readiness.md).
+The earlier 72–74 s vLLM result remains historical evidence; this review establishes no new GPU
+speedup, no 32 GB capacity measurement and no clinical evaluation of a fine-tuned checkpoint.
+
+- The vLLM engine initializes on its owned event loop, releases failed initialization state,
+  cancels generation after `CDI_VLLM_REQUEST_TIMEOUT_S` (default 240 seconds), and shuts down
+  with the gateway. Processor loading uses the same model revision as the registered model.
+  Initialization/model download time is separate from the generation deadline.
+- HF Phase-2 concurrency remains one even with constructor overrides. vLLM concurrency is
+  bounded by `CDI_VLLM_MAX_NUM_SEQS`. Batch cardinality failures mark every affected document
+  as failed, rather than leaving some documents running indefinitely.
+- The existing strict v3 schemas drive XGrammar token masks. Unknown schema features fail
+  closed; 0–1 confidence rules cannot rewrite literal data. Constrained responses receive
+  `usage.grammar_locked` metadata (a per-item list for batch responses). The HTTP client uses
+  that metadata to bypass repair/retry; incomplete or schema-invalid responses fail. HF and
+  stub response metadata retain their existing shape and repair behavior.
+- `start_mlserve.sh` verifies the requested backend against health output. Changing
+  `CDI_MLSERVE_BACKEND` requires restarting the existing gateway process; a stale healthy HF
+  process cannot be reported as a successful vLLM switch.
+- Quantization refuses overwriting nonempty output or overlapping source/corpus paths.
+  Benchmark comparison verifies matching input and execution conditions, rejects invalid raw
+  JSON, and limits reported KV slot estimates by the engine configuration. Clinical accuracy,
+  measured safe capacity, model registration and workbook changes remain separate release gates.

@@ -129,6 +129,7 @@ class Settings(BaseSettings):
     vllm_max_num_seqs: int = Field(default=4, ge=1)
     # grammar-locked JSON decoding with XGrammar (backlog E2-S3, §14 #3)
     vllm_guided: bool = True
+    vllm_request_timeout_s: float = Field(default=240.0, gt=0, allow_inf_nan=False)
 
     # pipeline behaviour
     fast_classify: bool = True

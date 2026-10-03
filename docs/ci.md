@@ -25,7 +25,7 @@ stub VLM backend (TECH_STACK "Model gateway pattern").
 
 ## Integration suite (backlog E1-S2)
 
-`python scripts/ci.py --suite integration`, run by the `integration-gate` job after `unit-gate`:
+`python scripts/ci.py --suite integration`, run by the `integration-gate` job after `unit-gate` and `grammar-gate`:
 
 | Stage | What | Fails when |
 |---|---|---|
@@ -65,10 +65,20 @@ with `tests/golden/anjali_das.json`. Any difference exits 1.
 ## Blocking merges on red
 
 GitHub Actions cannot configure branch protection through a YAML file. For the destination
-branch, require **unit-gate** and **integration-gate** (select the actual emitted check names
+branch, require **unit-gate**, **grammar-gate**, and **integration-gate** (select the actual emitted check names
 in GitHub), require up-to-date branches, and remove bypass permissions as appropriate.
 Verify with a deliberately failing PR: merging must remain blocked. A README badge or a green
 local run is not proof that protection is enabled.
 
 Both jobs fetch full history so secret scanning can inspect previous commits. Workflow token
 permissions are limited to repository reads. See `epic-1-readiness.md` for release blockers.
+
+## Epic 2 grammar gate
+
+`grammar-gate` uses CPU torch 2.8.0, XGrammar 0.1.25 and transformers 4.57.6, matching the
+serving grammar versions. It downloads the public Qwen tokenizer at the immutable revision in
+`tests/test_grammar_unit.py`, then runs that module with `CDI_TEST_REQUIRE_GRAMMAR=1`.
+Unavailable dependencies or tokenizer files fail this job; they cannot silently skip token-mask
+checks. The normal unit job can still skip these optional dependencies. Token-level validation
+proves the supported schema constraints, not model accuracy or GPU throughput. See
+[the Epic 2 readiness assessment](epic-2-readiness.md) for the remaining release evidence.

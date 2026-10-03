@@ -75,7 +75,11 @@ def extract_slots(settings: Settings | None = None) -> int:
     if s.mlserve_backend == "hf":
         return 1
     if s.extract_concurrency:
-        return s.extract_concurrency
+        return (
+            min(s.extract_concurrency, s.vllm_max_num_seqs)
+            if s.mlserve_backend == "vllm"
+            else s.extract_concurrency
+        )
     return s.vllm_max_num_seqs if s.mlserve_backend == "vllm" else 1
 
 
@@ -276,7 +280,12 @@ class JobRunner:
         self._pool = ThreadPoolExecutor(max_workers=n, thread_name_prefix="job-p1")
         # E2-S2: with one slot this is exactly the old behaviour (one job at a time, serial
         # Phase 2); with k slots, k jobs run and k extractions share the GPU at once
-        self.extract_slots = extract_concurrency or extract_slots()
+        settings = get_settings()
+        if extract_concurrency is not None:
+            if extract_concurrency < 1:
+                raise ValueError("extract_concurrency must be positive")
+            settings = settings.model_copy(update={"extract_concurrency": extract_concurrency})
+        self.extract_slots = extract_slots(settings)
         k = self.extract_slots
         self._job_pool = ThreadPoolExecutor(max_workers=k, thread_name_prefix="job")
         self._p2_pool = ThreadPoolExecutor(max_workers=k, thread_name_prefix="job-p2")
@@ -558,6 +567,8 @@ class JobRunner:
                 outs = self._with_slot(job, len(group), lambda: extract_batch(
                     [d.document_id for d in group], patient_id=job.patient_id,
                     expected_patient=job.registry_patient))  # fmt: skip
+            if len(outs) != len(group):
+                raise RuntimeError("batch extraction returned the wrong number of documents")
         except Exception as exc:
             outs = [exc] * len(group)
         took = time.perf_counter() - t0 - self._waited.get(threading.get_ident(), 0.0)

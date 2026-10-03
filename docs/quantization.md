@@ -97,16 +97,21 @@ The steps by hand:
 | docs/min, at k | Best throughput over concurrency levels 1, 2, 4 (continuous batching, E2-S1) |
 | VRAM GiB | Device memory in use once the engine is up: weights + the KV cache vLLM reserves at `gpu_memory_utilization` 0.88 |
 | KV tokens | vLLM's own KV sizing: `num_gpu_blocks × block_size` |
-| Slots | KV tokens ÷ the p95 request footprint (prompt incl. image tokens + generated tokens). **Slots (worst)** uses the full `max_tokens` budget. The gateway also caps concurrency at `CDI_VLLM_MAX_NUM_SEQS` (4). |
+| Slots | KV tokens ÷ the p95 request footprint (prompt incl. image tokens + generated tokens), capped at `CDI_VLLM_MAX_NUM_SEQS` (4). **Slots (worst)** uses the full `max_tokens` budget. These are capacity estimates; only the recorded concurrency load runs demonstrate successful measured throughput. |
 | Schema-valid | Raw outputs that pass the v3 schema (should be all of them under the XGrammar lock) |
 | Agreement | Share of the bf16 baseline's output fields reproduced exactly (`confidence` ignored). **A regression signal only.** Accuracy is E2-S7's harness on the E2-S4 held-out set (DoD-EVAL). |
 | Tag | `MEASURED` only on the 32 GB target GPU; otherwise `MEASURED on <gpu> (not the 32 GB target)` |
 
 ## Sizing & Capacity
 
-The block asks for the results in the Excel's *Sizing & Capacity* sheet (DSLM row, currently row
-32). That workbook is not in this repository. Copy the `dslm-awq` row from the archived `.md`
-into it, using that row's `Tag`.
+The block asks for the results in the Excel's *Sizing & Capacity* sheet (rows 26/27 in the supplied E2-S6 acceptance criteria). That workbook is not in this repository. Copy the `dslm-awq` row from the archived `.md`
+into it, using that row's `Tag`. Keep KV slot estimates labeled as estimates.
+
+Comparison refuses different corpus digests, request IDs/schemas, engine settings, GPU hardware,
+concurrency levels, duplicate variants and non-finite/nonpositive measurements. Raw responses
+must be complete JSON; surrounding prose is invalid. The CLI exits nonzero if any schema-valid
+count is incomplete. Calibration output must be empty and disjoint from its source checkpoint
+and corpus. Benchmark success does not satisfy held-out clinical evaluation or model registration.
 
 ## Checks before the numbers count
 

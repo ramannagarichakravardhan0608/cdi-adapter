@@ -39,7 +39,9 @@ class FakeEngine:
             self.in_flight += 1
             self.max_in_flight = max(self.max_in_flight, self.in_flight)
         try:
-            text = f"answer to {request['prompt'][-12:]}"
+            text = (
+                "{}" if params and params.get("grammar") else f"answer to {request['prompt'][-12:]}"
+            )
             for i in (1, 2, 3):  # vLLM streams growing partial outputs; the last is final
                 await asyncio.sleep(self.delay / 3)
                 yield SimpleNamespace(outputs=[SimpleNamespace(text=text[: len(text) * i // 3])])

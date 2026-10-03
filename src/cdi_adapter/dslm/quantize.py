@@ -162,10 +162,26 @@ def build_recipe() -> list[Any]:  # pragma: no cover - needs llmcompressor (.ven
                                   for m in MAPPINGS])]  # fmt: skip
 
 
+def check_paths(
+    checkpoint: str, corpus_dir: Path, out_dir: Path, *, samples: int, max_pixels: int
+) -> None:
+    if samples < 1 or max_pixels < 1:
+        raise ValueError("samples and max_pixels must be positive")
+    target = out_dir.resolve()
+    if target.exists() and any(target.iterdir()):
+        raise ValueError("quantization output must be an empty new directory")
+    for source in (corpus_dir, Path(checkpoint)):
+        if source.exists():
+            source = source.resolve()
+            if target.is_relative_to(source) or source.is_relative_to(target):
+                raise ValueError("quantization output must not overlap its checkpoint or corpus")
+
+
 def quantize(
     checkpoint: str, corpus_dir: Path, out_dir: Path, *, samples: int, max_pixels: int,
     log: Callable[[str], None] = print,
 ) -> dict[str, Any]:  # pragma: no cover - needs a GPU and .venv-quant  # fmt: skip
+    check_paths(checkpoint, corpus_dir, out_dir, samples=samples, max_pixels=max_pixels)
     import time
 
     import torch

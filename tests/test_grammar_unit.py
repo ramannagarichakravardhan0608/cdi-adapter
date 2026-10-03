@@ -23,6 +23,7 @@ from cdi_adapter.mlserve import grammar as g
 
 ROOT = Path(__file__).resolve().parents[1]
 EXTRACTION = [n for n in schema_names() if n != "common.defs"]
+TOKENIZER_REVISION = "66285546d2b821cf421d4f5eb2576359d3770cd3"
 TOKENIZER = "Qwen/Qwen2.5-VL-3B-Instruct"  # the 7B uses the same vocabulary
 
 
@@ -72,6 +73,12 @@ def test_a_property_named_like_a_keyword_is_not_a_keyword() -> None:
 # ------------------------------------------------------------------ the real grammar engine
 
 
+def unavailable(reason: str) -> None:
+    if os.environ.get("CDI_TEST_REQUIRE_GRAMMAR") == "1":
+        pytest.fail(reason)
+    pytest.skip(reason)
+
+
 @pytest.fixture(scope="module")
 def xgr() -> Any:
     try:
@@ -79,7 +86,7 @@ def xgr() -> Any:
     except ImportError:
         local = ROOT / ".tools" / "xgrammar"
         if not local.exists():
-            pytest.skip("xgrammar not installed (gateway venv, or .tools/xgrammar)")
+            unavailable("xgrammar not installed (gateway venv, or .tools/xgrammar)")
         sys.path.append(str(local))
         import xgrammar
     return xgrammar
@@ -88,11 +95,16 @@ def xgr() -> Any:
 @pytest.fixture(scope="module")
 def compiler(xgr: Any) -> tuple[Any, Any]:
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
-    transformers = pytest.importorskip("transformers")
     try:
-        tok = transformers.AutoTokenizer.from_pretrained(TOKENIZER, local_files_only=True)
+        import transformers
+    except ImportError:
+        unavailable("transformers not installed")
+    try:
+        tok = transformers.AutoTokenizer.from_pretrained(
+            TOKENIZER, revision=TOKENIZER_REVISION, local_files_only=True
+        )
     except OSError:
-        pytest.skip(f"{TOKENIZER} tokenizer not in the Hugging Face cache")
+        unavailable(f"{TOKENIZER} tokenizer not in the Hugging Face cache")
     info = xgr.TokenizerInfo.from_huggingface(tok)
     return xgr.GrammarCompiler(info), info
 
@@ -218,3 +230,9 @@ def test_every_output_the_grammar_allows_is_schema_valid(
         assert validate_schema(json.loads(text), name) == [], text[:300]
         confidences += text.count('"confidence"')
     assert confidences >= 15  # the 0-1 rule was exercised
+
+
+def test_schema_keyword_property_names_keep_confidence_bounds(xgr: Any, compiler: Any) -> None:
+    ctx = _locked(compiler, _obj({"const": g.UNIT_INTERVAL}))
+    assert _finishes(xgr, ctx, '{"const": 0.5}')
+    assert not _finishes(xgr, ctx, '{"const": 1.8}')
