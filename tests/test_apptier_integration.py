@@ -12,7 +12,7 @@ import pytest
 from sqlalchemy import text
 
 from cdi_adapter.db import session_scope
-from cdi_adapter.webapp.jobs import DocState, Job, JobRunner, Stages
+from cdi_adapter.webapp.jobs import DocState, Job, JobRunner, Stages, phase1_done
 from cdi_adapter.webapp.jobstore import PgJobStore
 
 pytestmark = pytest.mark.integration
@@ -105,6 +105,29 @@ def test_a_never_claimed_job_is_an_orphan_after_the_unclaimed_time(db_env) -> No
         c.execute(text("UPDATE web_job SET created_at = now() - interval '3 minutes' "
                        "WHERE id = :i"), {"i": job.id})  # fmt: skip
     assert job.id in st.orphans(120, 1000)  # the dispatch was lost: a sweep takes it
+    _drop(job.id)
+
+
+def test_the_gpu_pool_claiming_at_the_phase_boundary_is_not_another_attempt(db_env) -> None:
+    """E9-S2: the CPU pool releases the job at the phase boundary and the GPU pool claims it. That
+    is one run carrying on, so it must not spend one of CDI_JOB_MAX_ATTEMPTS - only a run that has
+    to start over does. Everything else about the claim is unchanged."""
+    st = PgJobStore(objects=_Objects())  # type: ignore[arg-type]
+    job = _job("a.pdf")
+    st.insert(job, _meta(job), actor="counter1", accepted_by="web1")
+    cpu = st.claim(job.id, "cpu1", 30)
+    assert cpu is not None and cpu.attempts == 1
+    cpu.docs[0].status = "running"
+    cpu.docs[0].document_id, cpu.docs[0].steps_done = "doc-1", ["ingest", "ocr", "classify"]
+    assert st.save(cpu, "cpu1")
+    st.release(job.id, "cpu1")  # the handoff: the lease goes, the queue message follows
+    gpu = st.claim(job.id, "gpu1", 30, attempt=False)
+    assert gpu is not None and gpu.attempts == 1  # still the first attempt
+    assert phase1_done(gpu.docs[0])  # and Phase 1 came back with it
+    assert st.claim(job.id, "gpu2", 30, attempt=False) is None  # the lease rules are unchanged
+    _expire(job.id)
+    again = st.claim(job.id, "gpu2", 30)  # a real retry still counts
+    assert again is not None and again.attempts == 2
     _drop(job.id)
 
 

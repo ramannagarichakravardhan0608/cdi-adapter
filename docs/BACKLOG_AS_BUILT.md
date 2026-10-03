@@ -136,6 +136,7 @@
 | Limit (where in the code) | Plan block |
 |---|---|
 | ~~Job state is in memory (`webapp/jobs.py` `_jobs`); a restart loses running jobs~~ Removed by E10-S9: jobs in `web_job`, run on the `cdi-web` queue with a lease, resumed after a crash | E9-S1 (E10-S9) |
+| ~~One worker pool runs the CPU stages and the GPU stage, so Phase-1 capacity cannot be bought without GPU capacity~~ Removed by E9-S2: `cdi` / `cdi-web` are the CPU pool, `cdi-gpu` the GPU pool, each sized on its own; a web job crosses the boundary once, repeating no Phase-1 work (ARCHITECTURE §7.5). The throughput figure itself is E9-S6's load test | E9-S2 (measured: E9-S6) |
 | No login: the reviewer id comes from the request body (`review.py`, `reviewer.py`) | E11-S1, E7-S1 |
 | Seed terminology codes are not verified against licensed releases (`terminology/seed.py`) | E3-S1…S5 |
 | Conformance uses Python checks until Java + the HL7 jar are deployed (`fhir/validate_abdm.py`) | E6-S1, E6-S2 |

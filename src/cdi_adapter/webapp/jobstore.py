@@ -13,6 +13,10 @@ one of them can be killed:
 * **Run** (``JobRunner.run_stored``): claims the row with a lease and keeps it current. A dispatch
   that is lost (Redis restarted before a worker took it) or a runner that dies is covered by the
   sweep in every runner (:meth:`PgJobStore.orphans`): the job is claimed again and resumed.
+* **Hold** (``cdi_adapter.migration``, backlog E9-S1): while a schema migration holds the gate,
+  :meth:`PgJobStore.claim` and :meth:`PgJobStore.orphans` refuse - the queue waits instead of
+  running against a schema this code does not match - and the claim is still the only thing that
+  decides who runs a job, so afterwards every waiting job runs exactly once.
 
 So an acknowledged upload is always in PostgreSQL + MinIO, and its job always ends, whichever
 process is killed. The staged files are removed once the job has finished (the original of
@@ -45,6 +49,15 @@ log = get_logger(__name__)
 
 WEB_QUEUE = "cdi-web"
 WEB_TASK = "cdi.web_job"
+# E9-S2: the GPU pool's queue. A job whose Phase 1 is done goes back on the queue - the same task,
+# addressed to the other pool - and the worker consuming cdi-gpu claims it and extracts.
+GPU_QUEUE = "cdi-gpu"
+# E9-S1: while a schema migration holds the gate (cdi_adapter.migration, migration 0021) no runner
+# takes a NEW job - neither by its queue message nor by the sweep - so the queue holds still
+# instead of being run against a schema this code does not match. Jobs already claimed keep their
+# lease and finish; an expired hold (a migrator that died) gates nothing.
+GATE_OPEN = ("NOT EXISTS (SELECT 1 FROM schema_gate WHERE closed "
+             "AND (expires_at IS NULL OR expires_at > now()))")  # fmt: skip
 # names this process's leases: unique per process start, readable in web_job.lease_owner
 OWNER = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:6]}"
 _JOB_ID = frozenset("0123456789abcdef")
@@ -126,14 +139,19 @@ class PgJobStore:
 
     # ------------------------------------------------------------ the runner's side
 
-    def claim(self, job_id: str, owner: str, lease_s: float) -> Job | None:
+    def claim(self, job_id: str, owner: str, lease_s: float, *,
+              attempt: bool = True) -> Job | None:  # fmt: skip
+        """``attempt=False`` (E9-S2): the GPU pool taking the job over at the phase boundary is
+        the one run carrying on, so it does not spend one of ``job_max_attempts``."""
+        n = "attempts + 1" if attempt else "attempts"
         with session_scope() as c:
             row = c.execute(text(
                 "UPDATE web_job SET lease_owner = :o, "
-                "lease_until = now() + make_interval(secs => :l), attempts = attempts + 1, "
+                f"lease_until = now() + make_interval(secs => :l), attempts = {n}, "
                 "started_at = coalesce(started_at, now()), updated_at = now() "
                 "WHERE id = :i AND finished_at IS NULL "
-                "AND (lease_until IS NULL OR lease_until < now()) RETURNING *"),
+                f"AND (lease_until IS NULL OR lease_until < now()) AND {GATE_OPEN} "
+                "RETURNING *"),
                 {"i": job_id, "o": owner, "l": lease_s}).mappings().first()  # fmt: skip
         return _job(row) if row else None
 
@@ -207,7 +225,7 @@ class PgJobStore:
             return list(c.execute(text(
                 "SELECT id FROM web_job WHERE finished_at IS NULL AND (lease_until < now() OR "
                 "(lease_until IS NULL AND created_at < now() - make_interval(secs => :u))) "
-                "ORDER BY created_at LIMIT :n"),
+                f"AND {GATE_OPEN} ORDER BY created_at LIMIT :n"),
                 {"u": unclaimed_s, "n": limit}).scalars())  # fmt: skip
 
     # ------------------------------------------------------------ metrics (E10-S1)
@@ -284,6 +302,15 @@ def dispatch(job_id: str) -> None:
             get_runner().submit_stored(job_id)
     except Exception as exc:  # noqa: BLE001
         log.warning("job_dispatch_failed", job=job_id, error=str(exc))
+
+
+def dispatch_extract(job_id: str) -> None:
+    """Hand a job whose Phase 1 is done to the GPU pool (backlog E9-S2). ``handoff`` tells the
+    runner there that this is the same run carrying on, not a retry of a failed one. Raises: the
+    caller (``JobRunner._hand_over``) logs it, and the job is an orphan a sweep sends on again."""
+    from cdi_adapter.worker import celery_app
+
+    celery_app.send_task(WEB_TASK, args=[job_id], kwargs={"handoff": True}, queue=GPU_QUEUE)
 
 
 def wait(job_id: str, timeout: float = 600, poll: float = 0.5) -> Job:

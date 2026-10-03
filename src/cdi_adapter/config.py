@@ -67,6 +67,26 @@ class Settings(BaseSettings):
     # a job never claimed this long after its upload (its queue message lost) is claimed anyway
     job_unclaimed_s: float = Field(default=120.0, ge=5)
     job_max_attempts: int = Field(default=3, ge=1)
+    # E9-S1 schema changes under load (cdi_adapter.migration): how long a migration waits for the
+    # jobs in flight to end before it gives up (nothing applied), and the longest it may hold the
+    # queue - a migrator that dies never gates new claims for more than this
+    migration_drain_s: float = Field(default=120.0, ge=0)
+    migration_hold_s: float = Field(default=900.0, ge=10)
+    # a pipeline_run still "running" after this long is a worker that died, not one in flight,
+    # and no longer holds a migration back
+    migration_stage_stale_s: float = Field(default=600.0, ge=1)
+    # E9-S2 pool split: which side of the pipeline this worker process serves. "cpu" runs the
+    # ingest/OCR/classify stages and hands extraction to the GPU pool; "gpu" runs extraction;
+    # "all" runs both in one worker (dev, a single-worker pod). "" = derive it from the queues the
+    # worker consumes (cdi/cdi-web -> cpu, cdi-gpu -> gpu, both -> all), which is what the start
+    # scripts rely on - so set this per worker process, never in a shared .env.
+    worker_role: Literal["", "all", "cpu", "gpu"] = ""
+    # how many documents one worker of each pool runs at once (Celery --concurrency). 0 = auto:
+    # the CPU pool takes job_max_workers (Phase 1 is I/O- and OCR-bound), the GPU pool takes
+    # extract_slots() (E2-S2, what the model gateway itself allows). Raising the CPU number buys
+    # Phase-1 throughput and never touches GPU spend; that independence is the point of E9-S2.
+    worker_cpu_concurrency: int = Field(default=0, ge=0)
+    worker_gpu_concurrency: int = Field(default=0, ge=0)
     # Prometheus /metrics of a Celery web-job worker (127.0.0.1 only; 0 = off)
     worker_metrics_port: int = Field(default=9470, ge=0, le=65535)
     # E10-S9: a model gateway replica that refused a connection is skipped this long

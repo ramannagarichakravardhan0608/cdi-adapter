@@ -148,15 +148,17 @@ it lost every job it was running, and a second copy could not see the first one'
 RunPod proxy / E1-S9 tunnel --> Caddy balancer :8888 (infra/runpod/Caddyfile.lb)
     --> web app web1 127.0.0.1:8881, web2 127.0.0.1:8882, ...   stateless: any one serves any request
           upload: files -> MinIO uploads/<job>/<n>, job -> web_job, THEN 202, then dispatch
-    --> Redis queue cdi-web --> job workers worker1, worker2 (Celery, threads pool)
-          claim the job with a lease, run the pipeline, save each step to web_job
+    --> Redis queue cdi-web --> CPU pool worker1, worker2 (Celery, threads pool)
+          claim the job with a lease, run Phase 1 of each document, save each step to web_job
+    --> Redis queue cdi-gpu --> GPU pool gpu1 (E9-S2): claims the job again and extracts
+          the CPU pool gives its lease up at the phase boundary; nothing is OCR'd twice
     --> model gateways: one or more replicas per model version (CDI_MLSERVE_URL, comma separated)
 ```
 
 | What dies | What happens | Lost |
 |---|---|---|
 | A web app instance | The balancer takes it out on the first failed connection (passive check) or the next `/readyz` check (every 2 s, 2 s timeout), whichever comes first. A request whose connection fails goes to another instance. | Only an upload that was still being sent to it: not acknowledged, so the counter sees an error and sends it again. **An acknowledged upload is already in MinIO + PostgreSQL.** |
-| A job worker | Its leases stop being renewed. After `CDI_JOB_LEASE_S` (30 s) another worker's sweep (every 10 s) claims each of its jobs and resumes it: finished documents stay, a document past extraction continues from there, the others run again from the staged files. | Nothing. At most the one stage each document was in runs again. |
+| A job worker (either pool) | Its leases stop being renewed. After `CDI_JOB_LEASE_S` (30 s) another worker's sweep (every 10 s) claims each of its jobs and resumes it: finished documents stay, a document past extraction continues from there, one through Phase 1 continues at extraction (E9-S2), the others run again from the staged files. A CPU-pool sweep that finds a job with only extraction left sends it to `cdi-gpu` instead of running it. | Nothing. At most the one stage each document was in runs again. |
 | A model gateway replica | The next call to it fails to connect; the call goes to the next replica, and the dead one is skipped for `CDI_MLSERVE_DOWN_S` (15 s). | Nothing: the document's call is answered by another replica. |
 | The queue message (Redis restarted) | A job nobody claimed `CDI_JOB_UNCLAIMED_S` (120 s) after its upload is claimed by a sweep. | Nothing. |
 
@@ -169,8 +171,11 @@ python scripts/app_ha_drill.py               # the kill-instance drill under loa
 ```
 
 Settings (`.env.runpod`): `CDI_WEBAPP_INSTANCES` (2), `CDI_WEBAPP_BASE_PORT` (8881),
-`CDI_JOB_EXECUTION=queue`, `CDI_WORKERS` (2), `CDI_WORKER_CONCURRENCY` (0 = the GPU extraction
-slots, E2-S2), `CDI_JOB_LEASE_S` (30), `CDI_JOB_UNCLAIMED_S` (120), `CDI_JOB_MAX_ATTEMPTS` (3),
+`CDI_JOB_EXECUTION=queue`, `CDI_WORKERS` (2) and `CDI_WORKER_CPU_CONCURRENCY` (0 = `CDI_JOB_MAX_WORKERS`)
+for the CPU pool, `CDI_GPU_WORKERS` (1) and `CDI_WORKER_GPU_CONCURRENCY` (0 = the GPU extraction
+slots, E2-S2) for the GPU pool (E9-S2; `CDI_WORKER_CONCURRENCY` still overrides the CPU pool's
+concurrency), `CDI_JOB_LEASE_S` (30), `CDI_JOB_UNCLAIMED_S` (120), `CDI_JOB_MAX_ATTEMPTS` (3),
+`CDI_MIGRATION_DRAIN_S` (120), `CDI_MIGRATION_HOLD_S` (900), `CDI_MIGRATION_STAGE_STALE_S` (600),
 `CDI_MLSERVE_DOWN_S` (15). Several gateway replicas: list them in `CDI_MLSERVE_URL`, or give a
 rollout side several URLs (`python -m cdi_adapter.modelops serve <version> --url
 http://127.0.0.1:8077,http://127.0.0.1:8078`, E10-S5); every replica must serve the version.
@@ -217,3 +222,48 @@ Tests: `tests/test_apptier_unit.py` (lease, resume, take-over, the sweep, replic
 PostgreSQL; an upload MinIO cannot store is refused with 503 and leaves nothing; a runner killed
 inside an extraction is taken over on real PostgreSQL + MinIO with no loss and no doubles; the
 ingest re-render).
+
+### A schema migration with the cluster up (backlog E9-S1)
+
+A forward-incompatible migration — a renamed or dropped column, a new constraint — breaks the SQL
+of the workers that are already running, and the cluster is not stopped for it: uploads keep
+arriving and `web_job` keeps jobs no runner has finished. So a migration is applied **through the
+gate**, never with bare `alembic upgrade`:
+
+```bash
+make schema-status                 # python -m cdi_adapter.migration status
+make migrate-live                  # upgrade head, with the queue held
+make migrate-rollback DOWN=0020    # the same, the other way
+```
+
+What `cdi_adapter.migration` does (migration 0021; the module docstring has the detail):
+
+1. Takes a PostgreSQL advisory lock, so there is one migrator.
+2. Closes `schema_gate`. From here no runner claims a **new** job — the claim and the orphan sweep
+   in `webapp/jobstore.py` both refuse while it is closed — so the queue holds still instead of
+   being run against a schema the code does not match. `expires_at` bounds the hold: a migrator
+   that dies gates nothing for longer than `CDI_MIGRATION_HOLD_S`.
+3. Waits (`CDI_MIGRATION_DRAIN_S`) for everything in flight to end: web jobs with a live lease,
+   and pipeline stages still running (the folder-watch path holds no lease, so an open
+   `pipeline_run` stands for a worker mid-document; one older than
+   `CDI_MIGRATION_STAGE_STALE_S` is a dead worker, not a live one). **Jobs in flight are never
+   interrupted** and keep their lease. If it does not drain, nothing is applied: the gate opens
+   again and the schema is untouched (`--force` applies it anyway, for a cluster already stopped).
+4. Runs Alembic, then opens the gate — also when the migration fails or is rolled back; it is
+   never left closed. The waiting jobs are claimed by the next sweep, each exactly once, because
+   the claim is still the only thing that decides who runs a job.
+
+Each window writes a `migration_run` row (direction, revisions, what was in flight, whether it
+drained, outcome), so what happened to the queue during a migration is on the record. A migrator
+killed mid-window: `python -m cdi_adapter.migration open-gate` releases the queue at once, and the
+hold would have expired by itself anyway.
+
+Still the operator's job: writing migrations **expand/contract** (add, backfill, then drop in a
+later release) is what keeps a rolling deploy possible at all; the gate makes the one
+incompatible step safe, it does not make an incompatible schema compatible.
+
+Tests: `tests/test_migration_integration.py` — a real forward-incompatible Alembic revision
+applied and rolled back on PostgreSQL with three jobs queued and one in flight, then each queued
+job runs exactly once; a migration with a job in flight is aborted and changes nothing; one
+migrator at a time; a closed gate stops new claims but never takes a job from a live runner; an
+expired hold gates nothing.

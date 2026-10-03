@@ -905,6 +905,43 @@ Planned changes and their honest effect:
 ~12–18 s perceived per document, `_partial` effectively gone — a solid **3–4×**
 on top of today's 74 s, "review starts in well under a minute". Not "almost zero".
 
+### 7.5 Separate CPU and GPU worker pools (backlog E9-S2)
+
+§7.3 measures extraction as **86 % of wall time and the only GPU-bound stage**. One
+worker pool doing both halves therefore has to be sized for the GPU, so buying
+Phase-1 capacity would mean buying GPU capacity with it. The two halves are split
+across queues, and so across pools, each started and sized on its own
+(`cdi_adapter.worker`):
+
+| Queue | Work | Pool | Size |
+|---|---|---|---|
+| `cdi` | folder-watch CPU stages: `ingest_file`, `classify_document`, `ocr_document`, `bind_document` | CPU (`role=cpu`) | `CDI_WORKERS` × `CDI_WORKER_CPU_CONCURRENCY` (0 = `job_max_workers`) |
+| `cdi-web` | web-app jobs: **Phase 1** of every document (§7.2) | CPU (`role=cpu`) | as above — the same workers consume both |
+| `cdi-gpu` | `extract_document`, and the web job's **Phase 2** | GPU (`role=gpu`) | `CDI_GPU_WORKERS` × `CDI_WORKER_GPU_CONCURRENCY` (0 = `extract_slots()`, E2-S2) |
+
+- **The folder-watch chain is unchanged** apart from routing: `cdi.extract_document`
+  goes to `cdi-gpu`, every other stage stays on `cdi` under its old name, and the
+  chain itself is the same five tasks.
+- **A web job crosses the boundary once.** The CPU-pool runner finishes Phase 1,
+  saves it, **gives its lease up and puts the job back on the queue addressed to
+  `cdi-gpu`** (`jobstore.dispatch_extract`); the GPU-pool runner claims it and
+  resumes at extraction. Nothing is ingested or OCR'd twice: `jobs.phase1_done`
+  says that work is already in the database, so no staged upload is fetched for it.
+  The handoff claim does not spend one of `job_max_attempts` — it is the same run
+  carrying on, not a retry — and a handoff message that is lost leaves an ordinary
+  orphan whose Phase 1 is saved, which the next sweep (E10-S9) sends on to `cdi-gpu`.
+- **A runner's role follows the queues its worker consumes** (`worker.role_for_queues`),
+  so it can never contradict the work it actually takes. A worker consuming
+  everything is `role=all` — both phases in one process, nothing handed over, which
+  is what `make worker`, the compose stack and every in-process runner (dev, tests,
+  `CDI_JOB_EXECUTION=inprocess`) do. `CDI_WORKER_ROLE` overrides the derivation; it
+  belongs on one worker's command line, never in a shared `.env`.
+- **What this buys:** `CDI_WORKERS` / `CDI_WORKER_CPU_CONCURRENCY` can be raised for
+  Phase-1 throughput with the GPU pool, and so GPU spend, untouched — the lever
+  E9-S4/S5 autoscale and E13 cost work both need. The medication agent (E12-S4)
+  still runs from the CPU pool: it is advisory and outside the job's critical path,
+  so it holds no extraction slot.
+
 ---
 
 ## 8. End-to-end flow

@@ -185,7 +185,11 @@ Compose deployment · **Declared only** = listed as a dependency but never impor
 - **Why:** Runs the pipeline stages as retryable background tasks, separate from HTTP requests.
 - **Where:** `worker.py`: `celery_app` with tasks `cdi.ingest_file`, `cdi.classify_document`,
   `cdi.ocr_document`, `cdi.extract_document`, `cdi.bind_document` (with `max_retries`); the compose
-  `worker` service (`celery -A cdi_adapter.worker.celery_app worker -Q cdi`); `make worker`.
+  `worker` service (`-Q cdi,cdi-web,cdi-gpu`, both pools in one worker); `make worker`.
+- **Pools (E9-S2, ARCHITECTURE §7.5):** three queues - `cdi` (folder-watch CPU stages),
+  `cdi-web` (web-app Phase 1) and `cdi-gpu` (`cdi.extract_document` and the web job's Phase 2) -
+  so the CPU and GPU halves are started and sized independently: `make worker-cpu`,
+  `make worker-gpu`, or `queues_for_role` / `concurrency_for_role` for a start script.
 - **When:** For documents dropped into the inbox folder (or queued by the ingest API).
 
 ### watchdog — Active (folder-watch path)
@@ -572,7 +576,7 @@ this repo today; the block IDs are in `backlog 1.md` (features) and `backlog inf
 | OPD front desk: web upload | FastAPI `POST /api/jobs` | **Active** |
 | OPD front desk: WhatsApp upload | WhatsApp Business API | Planned (E15-S1) |
 | Canonical intake API: validate, persist, enqueue, ACK | FastAPI + MinIO + Postgres | **Active** for the web upload (E10-S9): files staged in MinIO and the job in `web_job` before the 202, then queued; idempotency keys and dead-letter queues are E9-S3 |
-| Object storage + queue | MinIO / boto3; Celery + Redis | **Active**: web-app jobs on the Celery queue `cdi-web` (E10-S9, the core of E9-S1), plus the folder-watch path |
+| Object storage + queue | MinIO / boto3; Celery + Redis | **Active**: web-app jobs on the Celery queues `cdi-web` (Phase 1) and `cdi-gpu` (extraction, E9-S2) (E10-S9, the core of E9-S1), plus the folder-watch path on `cdi` |
 | CDI CPU workers: preprocess + OCR | PyMuPDF, OpenCV, RapidOCR, ONNX Runtime | **Active** |
 | CDI CPU workers: extract | Deterministic/template parser | Planned (E2-S9) |
 | Confidence gate 1 | Per-field OCR/extract confidence, per-class thresholds | Planned (E2-S9, thresholds E4-S3) |

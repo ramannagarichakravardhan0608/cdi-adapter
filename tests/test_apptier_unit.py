@@ -57,7 +57,8 @@ class MemStore:
                    patient_id=s["patient_id"], registry_patient=s["registry_patient"],
                    mismatch=s["mismatch"], attempts=r["attempts"])  # fmt: skip
 
-    def claim(self, job_id: str, owner: str, lease_s: float) -> Job | None:
+    def claim(self, job_id: str, owner: str, lease_s: float, *,
+              attempt: bool = True) -> Job | None:  # fmt: skip
         with self.lock:
             r = self.rows.get(job_id)
             if r is None or r["finished"]:
@@ -65,8 +66,12 @@ class MemStore:
             if r["lease_until"] is not None and r["lease_until"] >= time.monotonic():
                 return None
             r.update(owner=owner, lease_until=time.monotonic() + lease_s,
-                     attempts=r["attempts"] + 1)  # fmt: skip
+                     attempts=r["attempts"] + (1 if attempt else 0))  # fmt: skip
             return self.job(job_id)
+
+    def load(self, job_id: str) -> Job | None:
+        """As stored, claiming nothing (E9-S2: what work is left)."""
+        return self.job(job_id) if job_id in self.rows else None
 
     def save(self, job: Job, owner: str) -> bool:
         with self.lock:
@@ -525,7 +530,10 @@ def test_the_balancer_checks_readiness_by_content_and_drops_a_dead_instance_fast
 def test_instances_bind_loopback_and_only_the_balancer_holds_the_public_port() -> None:
     assert "CDI_WEBAPP_HOST=127.0.0.1" in APPTIER
     assert "bind {$CDI_LB_BIND}" in LB and "reverse_proxy {$CDI_WEBAPP_UPSTREAMS}" in LB
-    assert re.search(r"-Q cdi-web --pool threads", APPTIER)  # one runner, shared GPU slots
+    assert re.search(r'-Q "\$q" --pool threads', APPTIER)  # one runner, shared GPU slots
+    # E9-S2: a pool per side of the pipeline, its queues and size read from cdi_adapter.worker
+    assert "pool cpu " in APPTIER and "pool gpu " in APPTIER
+    assert "queues_for_role" in APPTIER and "concurrency_for_role" in APPTIER
     assert "sha512sum -c" in APPTIER  # the pinned Caddy, checksum-verified
 
 

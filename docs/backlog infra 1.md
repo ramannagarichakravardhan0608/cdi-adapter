@@ -607,19 +607,20 @@ RunPod is the pilot. Production needs a host whose region is documented as India
 ### Phase 4
 
 #### Block E9-S1 — Move web-app ingestion onto the durable queue ⬜
-**Status:** In Progress (2026-09-25). The first two items were built and verified as part of E10-S9, which needed them. Open: the migrate-under-load item, and the E1-S7 load test as the kill test (E1-S7 is Blocked on the pod).
+**Status:** In Progress (2026-10-03). Every acceptance item is built; the kill test is the only thing left and it needs the pod (E1-S7 is Blocked there). The first two items came with E10-S9, which needed them; the migrate-under-load item was built on 2026-10-03: `cdi_adapter.migration` + migration 0021 (`schema_gate`, `migration_run`), `make migrate-live` / `migrate-rollback` / `schema-status`, documented in docs/ha.md "A schema migration with the cluster up". Verified on real PostgreSQL: `tests/test_migration_integration.py`, 8 passed.
 `Must · BLOCKER · 3 d · 5 pts · Deps: E1-S7 · Arch ✔ §13, §14 #8 · DoD-CODE`
 - [x] Route `/api/jobs` through the existing Celery/Redis chain instead of the in-process pool (`_jobs` dict in `webapp/jobs.py`). Done in E10-S9: task `cdi.web_job` on queue `cdi-web`, the job in `web_job`.
 - [x] A webapp restart mid-job loses no in-flight uploads; queued jobs resume. Done in E10-S9: uploads are durable before the 202, and a job whose runner dies is resumed (Colab drill: 0 of 12 lost).
-- [ ] ➕ A forward-incompatible Alembic migration can be applied with workers in flight, and rolled back, without corrupting or double-processing queued jobs
-- **Tests:** kill the webapp during the E1-S7 load test → zero lost documents; a migrate-under-load test
+- [x] ➕ A forward-incompatible Alembic migration can be applied with workers in flight, and rolled back, without corrupting or double-processing queued jobs. A migration goes through the **gate** (`schema_gate`): one migrator (advisory lock), no new claim while it is closed (`claim` and the orphan sweep both refuse, with `expires_at` bounding the hold), a bounded drain of everything in flight — web jobs with a live lease *and* open `pipeline_run` rows, so the folder-watch path counts too — and nothing applied if it does not drain; the gate reopens even when the migration fails. Running jobs are never interrupted. Each window is recorded in `migration_run`.
+- **Tests:** kill the webapp during the E1-S7 load test → zero lost documents (⛔ waiting on the pod: E1-S7); a migrate-under-load test ✅ `tests/test_migration_integration.py` — a real forward-incompatible revision applied and rolled back with three jobs queued and one in flight, then each queued job runs exactly once; an aborted migration changes nothing; one migrator at a time; a closed gate never takes a job from a live runner; an expired hold gates nothing
 
 #### Block E9-S2 — Separate the CPU pool (ingest/OCR/classify) from the GPU pool (extract) ⬜
-**Status:** Pending
+**Status:** In Progress (2026-10-03). The split is built; the throughput measurement is the only thing left and it needs the pod (it is E9-S6's load test, Blocked there with E1-S7). Documented in ARCHITECTURE §7.5 and docs/ha.md.
 `Must · BLOCKER · 3 d · 5 pts · Deps: E9-S1 · Arch ✔ §7.3, §7.4, §14 #8 · DoD-CODE`
-- [ ] CPU-stage and GPU-stage worker counts independently configurable and scalable
-- [ ] Scaling only the CPU pool measurably raises Phase-1 throughput without touching GPU spend
-- **Tests:** load-test comparison
+- [x] CPU-stage and GPU-stage worker counts independently configurable and scalable. Three queues: `cdi` (folder-watch CPU stages) and `cdi-web` (web-app Phase 1) are the CPU pool, `cdi-gpu` (`cdi.extract_document` and the web job's Phase 2) the GPU pool. `worker.queues_for_role` / `role_for_queues` / `concurrency_for_role` are the one source of the queue names and the auto-sizing rule; `CDI_WORKERS` × `CDI_WORKER_CPU_CONCURRENCY` and `CDI_GPU_WORKERS` × `CDI_WORKER_GPU_CONCURRENCY` size the two sides, and `start_apptier.sh` starts both pools (`make worker-cpu` / `worker-gpu`; `make worker` and compose stay one worker on all three queues).
+- [x] A web job crosses the boundary once, repeating no work: the CPU runner saves Phase 1, releases its lease and re-queues the job to `cdi-gpu` (`jobstore.dispatch_extract`); the GPU runner resumes at extraction because `jobs.phase1_done` says that work is in the database, so no staged upload is read again. The handoff claim does not spend an attempt; a lost handoff is an ordinary orphan, and a CPU-pool sweep sends a Phase-2-only job on instead of extracting it.
+- [ ] Scaling only the CPU pool measurably raises Phase-1 throughput without touching GPU spend — ⛔ waiting on the pod (the measurement is E9-S6 / E1-S7)
+- **Tests:** load-test comparison (⛔ pod) · ✅ `tests/test_pool_split_unit.py` — 12 tests: routing (only extraction on `cdi-gpu`), queue lists and roles derived from the consumed queues, each pool sized independently, the CPU pool running Phase 1 and handing over, the GPU pool resuming with no Phase-1 call and no staged read, one worker on both queues doing both phases, inprocess ignoring the role, and a lost handoff recovered by the sweep · ✅ `tests/test_apptier_integration.py` on real PostgreSQL — a phase-boundary claim is not another attempt and the lease rules are unchanged
 
 #### Block E9-S3 — Priority + dead-letter queues, idempotency keys ⬜
 **Status:** Pending

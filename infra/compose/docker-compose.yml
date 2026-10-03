@@ -63,7 +63,8 @@ services:
 
   worker:
     <<: *app
-    command: ["celery", "-A", "cdi_adapter.worker.celery_app", "worker", "-Q", "cdi", "--concurrency", "2"]
+    # both pools in one worker (E9-S2 role "all"): the compose stack is a single-box deployment
+    command: ["celery", "-A", "cdi_adapter.worker.celery_app", "worker", "-Q", "cdi,cdi-web,cdi-gpu", "--concurrency", "2"]
 
   watcher:
     <<: *app

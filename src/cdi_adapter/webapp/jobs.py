@@ -21,6 +21,16 @@ any other document runs again from its staged upload (ingest is idempotent by SH
 extraction replace their earlier output). A runner that finds its lease taken over stops at its
 next step boundary (:class:`LeaseLost`), so two runners never both finish a job. Without a
 store (unit tests) jobs live only in ``_jobs``, as before.
+
+**Separate CPU and GPU pools (backlog E9-S2).** Phase 1 is CPU work; Phase 2 holds the one
+GPU-bound stage. In queue mode they run on different Celery pools, so each is sized and paid for
+on its own: a runner whose ``role`` is ``cpu`` runs Phase 1, saves it, gives its lease up and puts
+the job on the GPU queue (``cdi-gpu``); a runner whose ``role`` is ``gpu`` claims it and continues
+at Phase 2 - nothing is ingested or OCR'd twice, because :func:`phase1_done` says that work is
+already in the database and no staged upload is needed for it. A runner whose role is ``all`` (the
+default, and every in-process runner) does both phases itself, exactly as before. The same is true
+of the folder-watch chain: ``cdi.extract_document`` is routed to ``cdi-gpu`` and its other stages
+stay on ``cdi`` (:mod:`cdi_adapter.worker`).
 """
 
 from __future__ import annotations
@@ -41,6 +51,11 @@ log = get_logger(__name__)
 
 STEPS = ("ingest", "ocr", "classify", "extract", "terminology", "validate")
 UNFINISHED = ("pending", "running")
+# E9-S2: Phase 1, the CPU stages of one document (the handwriting VLM pass is part of "classify":
+# it runs before that step is recorded). PHASE2 is the GPU stage and what follows it.
+PHASE1 = ("ingest", "ocr", "classify")
+# which side of the split a runner serves; "all" = both, as every runner did before E9-S2
+ROLES = ("all", "cpu", "gpu")
 
 
 class LeaseLost(BaseException):  # noqa: N818 - a signal, not an error
@@ -62,6 +77,14 @@ def extract_slots(settings: Settings | None = None) -> int:
     if s.extract_concurrency:
         return s.extract_concurrency
     return s.vllm_max_num_seqs if s.mlserve_backend == "vllm" else 1
+
+
+def phase1_done(d: DocState) -> bool:
+    """True when this document is through Phase 1 and that work is durable (backlog E9-S2): it
+    has been ingested, and its OCR text and classification are in the database. Extraction can
+    then run in another process - the GPU pool, or a later resume - without the staged upload.
+    """
+    return d.document_id is not None and all(step in d.steps_done for step in PHASE1)
 
 
 @dataclass
@@ -195,8 +218,15 @@ class Job:
 class JobStore(Protocol):
     """Where stored jobs live (E10-S9); ``webapp.jobstore.PgJobStore`` in production."""
 
-    def claim(self, job_id: str, owner: str, lease_s: float) -> Job | None:
-        """Take the job if it is unfinished and nobody holds a live lease; attempts + 1."""
+    def claim(self, job_id: str, owner: str, lease_s: float, *,
+              attempt: bool = True) -> Job | None:  # fmt: skip
+        """Take the job if it is unfinished and nobody holds a live lease; attempts + 1.
+
+        ``attempt=False`` (E9-S2) leaves the count alone: the GPU pool taking a job over at the
+        phase boundary is the one run continuing, not a retry of a run that failed."""
+
+    def load(self, job_id: str) -> Job | None:
+        """The job as stored, claiming nothing (E9-S2 uses it to see what work is left)."""
 
     def save(self, job: Job, owner: str) -> bool:
         """Write the job; False when ``owner`` no longer holds its lease."""
@@ -221,11 +251,17 @@ class JobRunner:
     def __init__(self, stages: Stages | None = None, max_workers: int | None = None,
                  extract_concurrency: int | None = None, batch_max: int | None = None,
                  batch_max_blocks: int | None = None, *, store: JobStore | None = None,
-                 owner: str | None = None) -> None:  # fmt: skip
+                 owner: str | None = None, role: str | None = None,
+                 dispatch_extract: Callable[[str], None] | None = None) -> None:  # fmt: skip
         self.stages = stages or Stages.real()
         # E10-S9: stored jobs, claimed under this owner's lease
         self.store = store
         self.owner = owner or f"runner-{uuid.uuid4().hex[:12]}"
+        # E9-S2: which side of the pool split this runner serves. "cpu" stops at the phase
+        # boundary and puts the job on the GPU queue; "gpu" and "all" run Phase 2 themselves.
+        self.role = role or get_settings().worker_role or "all"
+        assert self.role in ROLES, f"unknown runner role {self.role!r}"
+        self._dispatch_extract = dispatch_extract
         self._starting: set[str] = set()  # stored jobs handed to the pool, not claimed yet
         self._bg: threading.Thread | None = None
         self._stop = threading.Event()
@@ -260,13 +296,20 @@ class JobRunner:
 
     # ---------------------------------------------------------------- stored jobs (E10-S9)
 
-    def run_stored(self, job_id: str) -> str:
+    def run_stored(self, job_id: str, *, handoff: bool = False) -> str:
         """Claim the stored job and run (or resume) it to its end, in this thread. Returns the
-        final state, or ``not_claimed`` when it is finished or another runner holds it."""
+        final state, or ``not_claimed`` when it is finished or another runner holds it.
+
+        ``handoff=True`` says this job arrived at the phase boundary from the CPU pool (E9-S2),
+        so the claim is the same run continuing and does not count as another attempt. A runner
+        whose role is ``cpu`` returns ``running``: Phase 1 is saved and the job is on the GPU
+        queue, and the runner that claims it there finishes it."""
         assert self.store is not None, "run_stored needs a JobStore"
         s = get_settings()
         try:
-            job = self.store.claim(job_id, self.owner, s.job_lease_s)
+            # E9-S2: a GPU-pool runner picking the job up at the phase boundary continues the run
+            # it was handed; only a run that has to start over again is a new attempt
+            job = self.store.claim(job_id, self.owner, s.job_lease_s, attempt=not handoff)
         finally:
             self._starting.discard(job_id)
         if job is None:
@@ -285,8 +328,10 @@ class JobRunner:
             self._finish(job)
             job.finished.set()
             return job.state
+        # the staged uploads this run needs: only documents that must go through Phase 1 again.
+        # One already past it (E9-S2, or a resume) is continued from the database instead.
         todo = [i for i, d in enumerate(job.docs)
-                if d.status in UNFINISHED and "extract" not in d.steps_done]  # fmt: skip
+                if d.status in UNFINISHED and not phase1_done(d)]  # fmt: skip
         try:
             staged = self.store.files(job, todo)
         except Exception:  # the object store is down: let a later sweep retry the job
@@ -304,8 +349,60 @@ class JobRunner:
         """Run the stored job on this runner's pool (in-process execution; the sweep)."""
         if job_id in self._starting:
             return
+        # E9-S2: a job the sweep found with nothing but extraction left belongs to the GPU pool,
+        # not to this CPU-pool worker; send it there instead of running it here.
+        if self._hands_off() and self._phase2_only(job_id):
+            try:
+                self._dispatch(job_id)
+            except Exception as exc:  # noqa: BLE001 - it stays an orphan; a later sweep retries
+                log.error("job_handoff_failed", job=job_id, error=f"{type(exc).__name__}: {exc}")
+            return
         self._starting.add(job_id)
         self._job_pool.submit(self._run_stored_logged, job_id)
+
+    # ---------------------------------------------------------------- the pool split (E9-S2)
+
+    def _hands_off(self) -> bool:
+        """True when this runner serves the CPU pool only, so Phase 2 goes on the GPU queue.
+        Stored jobs in queue mode alone: with no queue (inprocess, unit tests) there is nobody to
+        hand a job to, so the runner does both phases itself however its role is set."""
+        return (self.role == "cpu" and self.store is not None
+                and get_settings().job_execution == "queue")  # fmt: skip
+
+    def _phase2_only(self, job_id: str) -> bool:
+        """True when every unfinished document of the stored job is through Phase 1, so all that
+        is left of it is extraction and the steps after it."""
+        try:
+            job = self.store.load(job_id) if self.store is not None else None
+        except Exception as exc:  # noqa: BLE001 - unsure: let this runner take the job
+            log.warning("job_phase_check_failed", job=job_id, error=str(exc))
+            return False
+        if job is None:
+            return False
+        left = [d for d in job.docs if d.status in UNFINISHED]
+        return bool(left) and all(phase1_done(d) for d in left)
+
+    def _hand_over(self, job: Job) -> None:
+        """Give the lease up and put the job on the GPU queue. The lease goes first, so whichever
+        runner takes the message can claim it at once. A dispatch that is lost leaves an orphan
+        whose Phase 1 is saved, and the next sweep sends it on (:meth:`submit_stored`)."""
+        assert self.store is not None
+        try:
+            self.store.release(job.id, self.owner)
+            self._dispatch(job.id)
+            log.info("job_handed_to_gpu_pool", job=job.id, runner=self.owner,
+                     documents=sum(1 for d in job.docs if d.status == "running"))  # fmt: skip
+        except Exception as exc:  # noqa: BLE001 - the sweep picks the job up either way
+            log.error("job_handoff_failed", job=job.id, error=f"{type(exc).__name__}: {exc}")
+
+    def _dispatch(self, job_id: str) -> None:
+        """Put the job on the GPU queue (``cdi-gpu``); injected in tests."""
+        if self._dispatch_extract is not None:
+            self._dispatch_extract(job_id)
+            return
+        from cdi_adapter.webapp.jobstore import dispatch_extract
+
+        dispatch_extract(job_id)
 
     def _run_stored_logged(self, job_id: str) -> None:
         try:
@@ -561,7 +658,9 @@ class JobRunner:
     def _resume(self, job: Job) -> list[int]:
         """The documents to run from the start: all of them for a new job. A resumed stored job
         (E10-S9) keeps its finished documents, takes a document past extraction on from there,
-        and starts every other unfinished document again from its staged upload."""
+        takes one through Phase 1 but not extraction (a GPU-pool handoff, E9-S2, or a runner that
+        died between the phases) on at extraction, and starts every other unfinished document
+        again from its staged upload."""
         redo = []
         for i, d in enumerate(job.docs):
             if d.status not in UNFINISHED:
@@ -569,6 +668,8 @@ class JobRunner:
             if "extract" in d.steps_done:
                 d.status = "running"
                 self._post_extract(job, d)
+            elif phase1_done(d):  # its ingest, OCR and classification are in the database
+                d.status, d.step = "running", None
             else:
                 job.docs[i] = DocState(filename=d.filename)
                 redo.append(i)
@@ -588,7 +689,7 @@ class JobRunner:
         self._phase1(job, i, raw, name, mime)
 
     def _run_traced(self, job: Job, files: list[tuple[str, bytes, str | None] | None]) -> None:
-        lost = False
+        lost = handed = False
         try:
             redo = self._resume(job)
             futures = [self._pool.submit(self._in_job, job, self._phase1_file, job, i, files[i])
@@ -597,6 +698,12 @@ class JobRunner:
                 f.result()
             ready = [d for d in job.docs if d.status == "running"]
             self._queue(job, len(ready))  # E10-S1 queue depth: waiting for extraction
+            if ready and self._hands_off():  # E9-S2: Phase 2 is the GPU pool's half of the job
+                for d in ready:  # no stage of theirs is running: they wait for the GPU pool
+                    d.step = None
+                self._save(job)  # Phase 1 is durable before the lease goes
+                handed = True
+                return
             # no patient yet: documents go one by one until one of them fixes it, so every
             # document of the job lands on the same patient (§7.2)
             while ready and job.patient_id is None and job.state != "mismatch":
@@ -622,11 +729,16 @@ class JobRunner:
             if job.span is not None:
                 job.span.set_attribute("cdi.job_state", job.state)
                 job.span.end()
-            if not lost:
+            if handed:  # E9-S2: the GPU pool has the rest of the job, and times the whole of it
+                self._hand_over(job)
+                self._jobs.pop(job.id, None)
+            elif not lost:
                 metrics.JOB_SECONDS.observe(time.time() - job.started_at)
                 self._finish(job)
-            job.finished.set()
-        log.info("job_finished", job=job.id, state=job.state, lease_lost=lost)
+            if not handed:  # a handed-over job is not finished: another pool finishes it
+                job.finished.set()
+        if not handed:
+            log.info("job_finished", job=job.id, state=job.state, lease_lost=lost)
 
     def _finish(self, job: Job) -> None:
         if self.store is None:
@@ -654,13 +766,15 @@ class JobRunner:
 _runner: JobRunner | None = None
 
 
-def get_runner() -> JobRunner:
+def get_runner(role: str | None = None) -> JobRunner:
     """This process's runner of stored jobs (E10-S9): the ``web_job`` table + staged uploads,
-    with its lease heartbeat and orphan sweep running."""
+    with its lease heartbeat and orphan sweep running. ``role`` (E9-S2) is the side of the pool
+    split it serves - a Celery worker passes the role its own queues imply - and it only applies
+    to the runner this call builds."""
     global _runner
     if _runner is None:
         from cdi_adapter.webapp.jobstore import OWNER, PgJobStore
 
-        _runner = JobRunner(store=PgJobStore(), owner=OWNER)
+        _runner = JobRunner(store=PgJobStore(), owner=OWNER, role=role)
         _runner.start_background()
     return _runner

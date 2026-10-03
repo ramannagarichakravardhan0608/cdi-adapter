@@ -3,7 +3,10 @@
 #
 #   Caddy balancer on :$CDI_WEBAPP_PORT (the one public port, as the single web app had)
 #     -> $CDI_WEBAPP_INSTANCES web app instances on 127.0.0.1:$CDI_WEBAPP_BASE_PORT, +1, ...
-#   $CDI_WORKERS Celery workers on queue cdi-web (CDI_JOB_EXECUTION=queue) run the jobs
+#   $CDI_WORKERS Celery workers on queues cdi,cdi-web (CDI_JOB_EXECUTION=queue) run the jobs:
+#     the CPU pool, Phase 1 of every document (backlog E9-S2)
+#   $CDI_GPU_WORKERS Celery workers on queue cdi-gpu: the GPU pool, extraction and what follows
+#     it. Scale the two independently - more CPU workers buy Phase-1 throughput and cost no GPU.
 #
 # Native processes, no Docker; Caddy is the pinned release (versions.env), checksum-verified.
 # Idempotent: starts what is down, leaves what is up, reloads the balancer's config. Called by
@@ -29,6 +32,7 @@ BASE=${CDI_WEBAPP_BASE_PORT:-8881}
 MBASE=${CDI_METRICS_PORT:-9464}
 EXEC=${CDI_JOB_EXECUTION:-inprocess}
 W=${CDI_WORKERS:-2}
+G=${CDI_GPU_WORKERS:-1}  # E9-S2: the GPU pool, sized on its own
 WMBASE=${CDI_WORKER_METRICS_PORT:-9470}
 ADMIN=${CDI_LB_ADMIN_PORT:-2020}
 BIND=${CDI_LB_BIND:-0.0.0.0}
@@ -51,6 +55,9 @@ if [ "${1:-}" = status ]; then
   if [ "$EXEC" = queue ]; then
     for i in $(seq "$W"); do
       if alive "$RUN/worker-$i.pid"; then echo "worker$i  pid $(cat "$RUN/worker-$i.pid")  up"; else echo "worker$i  DOWN"; fi
+    done
+    for i in $(seq "$G"); do  # E9-S2: the GPU pool
+      if alive "$RUN/gpu-$i.pid"; then echo "gpu$i  pid $(cat "$RUN/gpu-$i.pid")  up"; else echo "gpu$i  DOWN"; fi
     done
   fi
   if curl -fsS -m 3 "http://127.0.0.1:$ADMIN/reverse_proxy/upstreams" 2>/dev/null; then echo; else echo "balancer DOWN"; fi
@@ -93,24 +100,35 @@ done
 targets "$WS/monitoring/targets/cdi-webapp.json" "${mports[@]}"
 
 # ---------------------------------------------------------------- job workers (queue mode)
-if [ "$EXEC" = queue ]; then
-  C=${CDI_WORKER_CONCURRENCY:-0}
-  if [ "$C" = 0 ]; then  # as many jobs at once as there are GPU extraction slots (E2-S2)
-    C=$("$PY" -c "from cdi_adapter.webapp.jobs import extract_slots; print(extract_slots())")
+# E9-S2: one pool per side of the pipeline. The queue list and the concurrency come from
+# cdi_adapter.worker, so the queue names and the auto-sizing rule live in one place only.
+# pool <role> <count> <name> <pid/log prefix> <first metrics port>; appends to `wports`.
+pool() {
+  local role=$1 n=$2 name=$3 pre=$4 base=$5 i wp q c
+  q=$("$PY" -c "from cdi_adapter.worker import queues_for_role as f; print(f('$role'))")
+  c=0
+  [ "$role" = cpu ] && c=${CDI_WORKER_CONCURRENCY:-0}  # the knob this pool had before E9-S2
+  if [ "$c" = 0 ]; then
+    c=$("$PY" -c "from cdi_adapter.worker import concurrency_for_role as f; print(f('$role'))")
   fi
-  wports=()
-  for i in $(seq "$W"); do
-    wp=$((WMBASE + i - 1)); wports+=("$wp")
-    alive "$RUN/worker-$i.pid" && continue
+  for i in $(seq "$n"); do
+    wp=$((base + i - 1)); wports+=("$wp")
+    alive "$RUN/$pre-$i.pid" && continue
     CDI_WORKER_METRICS_PORT=$wp setsid nohup "$PY" -m celery -A cdi_adapter.worker.celery_app \
-      worker -Q cdi-web --pool threads --concurrency "$C" -n "web$i@%h" --loglevel INFO \
-      --without-gossip --without-mingle >>"$LOGS/worker-$i.log" 2>&1 </dev/null &
-    echo $! > "$RUN/worker-$i.pid"
+      worker -Q "$q" --pool threads --concurrency "$c" -n "$name$i@%h" --loglevel INFO \
+      --without-gossip --without-mingle >>"$LOGS/$pre-$i.log" 2>&1 </dev/null &
+    echo $! > "$RUN/$pre-$i.pid"
   done
-  for i in $(seq "$W"); do
-    for _ in $(seq 60); do grep -q "web_runner_started" "$LOGS/worker-$i.log" 2>/dev/null && break; sleep 1; done
-    alive "$RUN/worker-$i.pid" || { echo "worker$i did not start; see $LOGS/worker-$i.log"; exit 1; }
+  for i in $(seq "$n"); do
+    for _ in $(seq 60); do grep -q "web_runner_started" "$LOGS/$pre-$i.log" 2>/dev/null && break; sleep 1; done
+    alive "$RUN/$pre-$i.pid" || { echo "$pre$i did not start; see $LOGS/$pre-$i.log"; exit 1; }
   done
+}
+
+if [ "$EXEC" = queue ]; then
+  wports=()
+  pool cpu "$W" web worker "$WMBASE"
+  pool gpu "$G" gpu gpu "$((WMBASE + W))"
   targets "$WS/monitoring/targets/cdi-worker.json" "${wports[@]}"
 fi
 
