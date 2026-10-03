@@ -45,11 +45,15 @@ def percentile(values: Sequence[float], q: float) -> float:
 
 def histogram(values: Iterable[float], bin_s: float, sla_s: float) -> list[dict[str, Any]]:
     """Fixed-width bins from 0 to past the slowest sample (and at least to 2x the SLA)."""
+    if not math.isfinite(bin_s) or bin_s <= 0 or not math.isfinite(sla_s) or sla_s <= 0:
+        raise ValueError("bin_s and sla_s must be finite and positive")
     vals = list(values)
+    if any(not math.isfinite(v) or v < 0 for v in vals):
+        raise ValueError("latencies must be finite and nonnegative")
     top = max([2 * sla_s, *vals]) if vals else 2 * sla_s
     bins = []
     edge = 0.0
-    while edge < top:
+    while edge < top or (vals and edge == max(vals)):
         hi = edge + bin_s
         count = sum(1 for v in vals if edge <= v < hi)
         bins.append({"from_s": edge, "to_s": hi, "count": count, "within_sla": hi <= sla_s})

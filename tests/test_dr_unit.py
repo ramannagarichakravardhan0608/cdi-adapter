@@ -186,3 +186,33 @@ def test_every_command_parses():
     assert p.parse_args(["status"]).cmd == "status"
     with pytest.raises(SystemExit):
         p.parse_args(["backup", "--dump", "d", "--failed", "x", "--taken-at", "t"])
+
+
+def test_restore_subprocess_uses_disposable_store_even_with_live_store(tmp_path, monkeypatch):
+    from cdi_adapter import secretstore
+    from cdi_adapter.config import get_settings
+
+    live = tmp_path / "live"
+    secretstore.init(live)
+    before = {p.name: p.read_bytes() for p in live.iterdir()}
+    monkeypatch.setenv("CDI_SECRETS_DIR", str(live))
+    monkeypatch.setenv("CDI_DATABASE_URL", "postgresql://live.invalid/production")
+    password = secretstore.part(secretstore.read(live, "cdi_database_url"), "password")
+    target = f"postgresql+psycopg://cdi:{password}@127.0.0.1:55471/cdi"
+    s3 = {
+        "CDI_S3_ENDPOINT_URL": "http://127.0.0.1:9361",
+        "CDI_S3_ACCESS_KEY": "synthetic-dr-access",
+        "CDI_S3_SECRET_KEY": "synthetic-dr-secret",
+    }
+    env = dr._env_for(target, s3, tmp_path / "drill")
+    assert "CDI_DATABASE_URL" not in env and "CDI_S3_SECRET_KEY" not in env
+    with monkeypatch.context() as child:
+        for key, value in env.items():
+            child.setenv(key, value)
+        get_settings.cache_clear()
+        settings = get_settings()
+        assert settings.database_url == target
+        assert settings.s3_secret_key == s3["CDI_S3_SECRET_KEY"]
+        assert settings.s3_endpoint_url == s3["CDI_S3_ENDPOINT_URL"]
+    get_settings.cache_clear()
+    assert {p.name: p.read_bytes() for p in live.iterdir()} == before

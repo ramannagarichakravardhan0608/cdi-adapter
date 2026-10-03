@@ -299,6 +299,12 @@ def _medications(lines) -> list[dict[str, Any]]:
     for bid, text in lines:
         m = _MED.search(text)
         if not m:
+            # Printed OCR can join a form to a capitalized drug and its strength.
+            # Keep this normalization in the synthetic stub, retaining the source evidence.
+            spaced = re.sub(r"^(Tab|Cap|Syp|Inj)(?=[A-Z])", r"\1 ", text)
+            spaced = re.sub(r"(?<=[A-Za-z])(?=\d+(?:mg|mcg|ml|iu)\b)", " ", spaced)
+            m = _MED.search(spaced)
+        if not m:
             continue
         rest = m.group(2)
         name = re.split(_NAME_END, rest, maxsplit=1)[0]

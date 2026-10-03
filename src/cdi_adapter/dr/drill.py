@@ -95,18 +95,31 @@ def verify_scans(rows: list[tuple[str, str, str]], store: Any) -> dict[str, Any]
     }
 
 
-def _env_for(url: str, s3: dict[str, str] | None) -> dict[str, str]:
-    # environment beats .env and the secrets store (pydantic-settings), so nothing here can reach
-    # the live database or store
+def _env_for(url: str, s3: dict[str, str] | None, store: Path) -> dict[str, str]:
+    # The application store is authoritative. Give subprocesses a private disposable store
+    # so migrations and golden runs cannot inherit the live database or S3 credentials.
+    from cdi_adapter import secretstore
+
+    secretstore.init(store)
+    secretstore.write(store, "cdi_database_url", url)
     env = {
-        **os.environ,
-        "CDI_DATABASE_URL": url,
-        "CDI_DATABASE_HOSTS": "",
-        "CDI_MLSERVE_BACKEND": "stub",
-        "PYTHONPATH": str(ROOT / "src"),
+        k: v
+        for k, v in os.environ.items()
+        if k not in {f"CDI_{field.upper()}" for field in secretstore.FIELDS}
     }
+    env.update(
+        {
+            "CDI_SECRETS_DIR": str(store),
+            "CDI_DATABASE_HOSTS": "",
+            "CDI_MLSERVE_BACKEND": "stub",
+            "PYTHONPATH": str(ROOT / "src"),
+        }
+    )
     for k, v in (s3 or {}).items():
-        env[k] = v
+        if k in {"CDI_S3_ACCESS_KEY", "CDI_S3_SECRET_KEY"}:
+            secretstore.write(store, k.lower(), v)
+        else:
+            env[k] = v
     return env
 
 
@@ -187,7 +200,10 @@ def run_drill(
         report["pg_restore_ok"] = r.returncode == 0
         if r.returncode != 0:
             report["pg_restore_error"] = (r.stderr or "")[-600:]
-        ok, out = _run([sys.executable, "-m", "alembic", "upgrade", "head"], _env_for(url, None))
+        ok, out = _run(
+            [sys.executable, "-m", "alembic", "upgrade", "head"],
+            _env_for(url, None, work / "secrets"),
+        )
         report["schema_at_head"] = ok
         if not ok:
             report["alembic_error"] = out[-600:]
@@ -253,7 +269,7 @@ def run_drill(
                     "--fresh-db",
                     "cdi_golden",
                 ],
-                _env_for(url, s3env),
+                _env_for(url, s3env, work / "secrets"),
             )
             report["golden_path_ok"] = ok
             report["golden_path_tail"] = out[-500:]

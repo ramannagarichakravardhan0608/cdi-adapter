@@ -83,7 +83,11 @@ def _finish(environment: Any) -> None:
     if not complete:
         print(f"cdi-load: only {len(samples)}/{o.num_users} patients finished (run-time limit?)")
     environment.process_exit_code = 0
-    if not complete or (o.cdi_enforce_sla and not report["sla_met"]):
+    if (
+        not complete
+        or any(not s.ok for s in samples)
+        or (o.cdi_enforce_sla and not report["sla_met"])
+    ):
         environment.process_exit_code = 1
 
 
@@ -107,7 +111,7 @@ class CounterPatient(HttpUser):
         with self.client.post("/login", name="POST /login", allow_redirects=False,
                               data={"username": user,
                                     "password": os.environ.get("CDI_LOAD_PASSWORD", "")},
-                              catch_response=True) as resp:  # fmt: skip
+                              timeout=POLL_TIMEOUT_S, catch_response=True) as resp:  # fmt: skip
             if resp.status_code != 303 or "cdi_session" not in self.client.cookies:
                 self.sign_in_error = f"sign-in as {user!r} failed (HTTP {resp.status_code})"
                 resp.failure(self.sign_in_error)
@@ -198,8 +202,23 @@ class CounterPatient(HttpUser):
                 timeout=FHIR_TIMEOUT_S,
                 catch_response=True,
             ) as resp:
-                if resp.status_code != 200:
-                    resp.failure(f"HTTP {resp.status_code}")
+                try:
+                    bundles = resp.json().get("bundles") if resp.status_code == 200 else None
+                    valid = (
+                        isinstance(bundles, list)
+                        and bool(bundles)
+                        and all(
+                            isinstance(item, dict)
+                            and isinstance(item.get("bundle"), dict)
+                            and item["bundle"].get("resourceType") == "Bundle"
+                            and item["bundle"].get("type") == "document"
+                            for item in bundles
+                        )
+                    )
+                except (ValueError, AttributeError):
+                    valid = False
+                if not valid:
+                    resp.failure(f"missing/invalid document bundles (HTTP {resp.status_code})")
                     self._record(
                         Sample(
                             index,

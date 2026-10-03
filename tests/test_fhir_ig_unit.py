@@ -362,3 +362,17 @@ def test_staging_never_targets_the_production_cache(monkeypatch: pytest.MonkeyPa
                     reason="set CDI_TEST_FHIR_VALIDATOR=1 with the E6-S1 stack (JVM start-up: minutes)")  # fmt: skip  # noqa: E501
 def test_goldens_gain_no_error_under_the_real_validator() -> None:
     assert fg.main(["--validate"]) == 0
+
+
+def test_digest_order_is_identical_on_windows_and_linux(tmp_path):
+    import hashlib
+
+    root = tmp_path / "package"
+    root.mkdir()
+    for name in ("a.json", "B.json", "C.json"):
+        (root / name).write_bytes(name.encode())
+    expected = hashlib.sha256()
+    for name in ("a.json", "B.json", "C.json"):
+        expected.update(name.encode() + b"\0")
+        expected.update(hashlib.sha256(name.encode()).digest())
+    assert pc.digest_package(tmp_path) == expected.hexdigest()

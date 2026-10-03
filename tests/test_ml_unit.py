@@ -407,7 +407,20 @@ def test_hf_fallback_loads_only_after_the_failed_primary_is_released():
     assert be.loaded and be.model == "Qwen/Qwen2.5-VL-3B-Instruct"
 
 
-def test_hf_loads_bf16_by_default_and_int8_only_when_asked():
+def test_hf_loads_bf16_by_default_and_int8_only_when_asked(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    # This unit checks the loader contract; GPU libraries belong to the serving environment.
+    class QuantConfig:
+        def __init__(self, *, load_in_8bit):
+            self.load_in_8bit = load_in_8bit
+            self.load_in_4bit = False
+
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(bfloat16="torch.bfloat16"))
+    monkeypatch.setitem(
+        sys.modules, "transformers", SimpleNamespace(BitsAndBytesConfig=QuantConfig)
+    )
     from cdi_adapter.mlserve.backends import _load_kwargs
 
     plain = _load_kwargs("Qwen/Qwen2.5-VL-7B-Instruct", _settings())
@@ -444,3 +457,14 @@ def test_hf_non_oom_load_error_is_raised():
 def test_make_backend_follows_settings():
     assert isinstance(make_backend(Settings(_env_file=None, mlserve_backend="stub")), StubBackend)
     assert isinstance(make_backend(_settings()), HFBackend)
+
+
+def test_stub_keeps_a_medication_when_ocr_joins_form_name_and_strength():
+    from cdi_adapter.mlserve.backends import _medications
+
+    meds = _medications([("b7", "TabAmlodipine5mg ODx30days")])
+    assert len(meds) == 1
+    assert meds[0]["drug_name"] == "Tab Amlodipine"
+    assert meds[0]["strength"] == {"value": 5.0, "unit": "mg"}
+    assert meds[0]["evidence"] == ["b7"]
+    assert _medications([("b1", "Table of results")]) == []

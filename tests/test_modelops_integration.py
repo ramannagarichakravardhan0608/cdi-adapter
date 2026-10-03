@@ -93,6 +93,14 @@ def rollout(db_env, monkeypatch):
             c.execute(text("DELETE FROM model_rollout"))
             c.execute(text("ALTER TABLE model_rollout ENABLE TRIGGER model_rollout_no_rewrite"))
 
+    # Exercise both routes on every run; random UUIDs can all hash to the primary.
+    # Keep each document's assignment stable through retries and batch extraction.
+    assignments: dict[str, int] = {}
+
+    def balanced_bucket(document_id: str) -> int:
+        return assignments.setdefault(str(document_id), (len(assignments) % 2) * 99)
+
+    monkeypatch.setattr(router, "bucket", balanced_bucket)
     wipe()
     router.reset()
     yield

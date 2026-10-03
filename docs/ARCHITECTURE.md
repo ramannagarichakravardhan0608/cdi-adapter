@@ -1824,3 +1824,19 @@ three → **the gate held every fact**: `auto_accepted = 0`, `in_review = 15`
 `fact_detail` returned the page-image URL, the `bbox_union`
 `[426,1041,2488,1107]`, the OCR blocks (`"HbAlc" 0.937`, `"4.0-5.6" 0.995`) and
 the rule findings — everything the review UI overlays on the scan.
+
+
+## Epic 1 readiness audit (2026-10-03)
+
+The current release assessment is [epic-1-readiness.md](epic-1-readiness.md). The non-RunPod
+Compose path now includes webapp, queue worker, stub model gateway, Postgres, MinIO and Redis,
+with migrations/bucket initialization gating startup (see [compose.md](compose.md)). Native
+RunPod lifecycle scripts remain separate. Bootstrap requires a private `SECRETS_SRC`; a
+world-readable MooseFS directory is rejected. Configured stores are authoritative and must
+contain all four application credentials. Restore errors stop bootstrap.
+
+Golden full runs process exactly the three PDFs in §8.2 order. The general stub still emits
+21 facts while §8.2 records 15 from the real model: this difference is an unresolved acceptance
+requirement, not permission to claim E1-S6 complete. Nightly infrastructure/backend errors write
+an alert as well as exiting nonzero; successful scheduling/delivery needs deployment evidence.
+Load reports count only nonempty document-bundle responses as ready and fail on functional errors.

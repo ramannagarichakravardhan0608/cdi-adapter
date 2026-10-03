@@ -67,7 +67,7 @@ def _image(b64: str | None) -> bytes | None:
 
 
 def create_app(backend: Backend | None = None, *, version: str | None = None) -> FastAPI:
-    app = FastAPI(title="cdi-adapter model gateway")
+    app = FastAPI(telemetry={"tracing": False}, title="cdi-adapter model gateway")
     app.state.backend = backend or make_backend()
     app.state.version = version or get_settings().model_version or None
     metrics.register_once("gpu", metrics.GpuCollector())

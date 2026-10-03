@@ -48,13 +48,23 @@ def test_fully_governed_prescription_is_ready_to_share(url_scans):
     types = _types(b)
     assert types[0] == "Composition" and types.count("MedicationRequest") == 3
     assert types.count("Condition") == 2 and types.count("Observation") == 2  # BP + weight
-    bp = next(e["resource"] for e in b["entry"] if e["resource"].get("valueString") == "138/86")
+    bp = next(
+        e["resource"]
+        for e in b["entry"]
+        if e["resource"].get("resourceType") == "Observation"
+        and e["resource"].get("code", {}).get("coding", [{}])[0].get("code") == "85354-9"
+    )
+    assert {
+        c["code"]["coding"][0]["code"]: c["valueQuantity"]["value"] for c in bp["component"]
+    } == {"8480-6": 138, "8462-4": 86}
     assert {c["code"]["coding"][0]["code"] for c in bp["component"]} == {"8480-6", "8462-4"}
-    assert {"Patient", "Organization", "Practitioner", "Encounter", "DocumentReference",
+    assert {"Patient", "Organization", "Practitioner", "Encounter", "Binary",
             "Provenance"} <= set(types)  # fmt: skip
-    docref = next(e["resource"] for e in b["entry"]
-                  if e["resource"]["resourceType"] == "DocumentReference")  # fmt: skip
-    assert docref["content"][0]["attachment"]["url"] == "s3://cdi-documents/unused"
+    scan = next(e["resource"] for e in b["entry"] if e["resource"]["resourceType"] == "Binary")
+    import base64
+
+    assert base64.b64decode(scan["data"]).startswith(b"%PDF")
+    assert scan["contentType"] == "application/pdf"
     assert validate(b, "PrescriptionRecord") == {"engine": "python", "valid": True, "issues": []}
     with session_scope() as c:
         row = c.execute(text("SELECT * FROM fhir_bundle WHERE source_document_id = :d"),

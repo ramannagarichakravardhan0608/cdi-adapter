@@ -15,6 +15,7 @@ signs in as ``--user`` (an intake account, E11-S1) with the password in ``CDI_LO
 from __future__ import annotations
 
 import argparse
+import math
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -59,6 +60,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     args, extra = ap.parse_known_args(argv)
     if args.patients < 1:
         ap.error("--patients must be at least 1")
+    if not 1 <= args.docs_min <= args.docs_max <= 10:
+        ap.error("document counts must satisfy 1 <= docs-min <= docs-max <= 10")
+    for field in ("sla_s", "poll_s", "job_timeout_s"):
+        value = getattr(args, field)
+        if not math.isfinite(value) or value <= 0:
+            ap.error(f"--{field.replace('_', '-')} must be finite and positive")
     return subprocess.run(command(args, extra), check=False).returncode
 
 

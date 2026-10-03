@@ -54,8 +54,15 @@ MAX_FILES = 10
 
 # every route passes auth.authorize first: sign-in + role, per auth.POLICY (backlog E11-S1)
 # (FastAPI's /docs, /redoc and /openapi.json would bypass it, so they are switched off)
-app = FastAPI(title="CareFlow CDI-Adapter", dependencies=[Depends(auth.authorize)],
-              docs_url=None, redoc_url=None, openapi_url=None)  # fmt: skip
+# Only the explicit CDI spans are exported; implicit HTTP tracing can capture request data.
+app = FastAPI(
+    telemetry={"tracing": False},
+    title="CareFlow CDI-Adapter",
+    dependencies=[Depends(auth.authorize)],
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
 app.include_router(auth.router)
 app.include_router(review.router)
 app.include_router(review_page.router)

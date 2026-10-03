@@ -31,7 +31,7 @@ def _arch_section_4_1_tables() -> set[str]:
     names: set[str] = set()
     for row in sec.splitlines():
         cells = row.split("|")
-        if len(cells) > 3 and not cells[1].strip().startswith("Read model"):
+        if len(cells) > 3 and not cells[1].strip().startswith(("Read model", "S7 continuity")):
             names.update(re.findall(r"`([a-z_]+)`", cells[2]))
     return names
 

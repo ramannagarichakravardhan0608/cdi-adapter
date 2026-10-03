@@ -57,8 +57,9 @@ documents, so two runs are comparable.
 Locust's own summary table is printed as well (`E2E upload -> bundle-ready` row); its percentiles
 are rounded, so the report's figures are the ones of record.
 
-Exit code 0 means the run completed. It is 1 if some patient didn't finish, or, with
-`--enforce-sla`, if the SLA was missed.
+Exit code 0 means every patient reached a ready state with document bundles. Any functional
+failure (including timeout, login failure, mismatch, failed documents, or empty bundles) exits 1.
+With `--enforce-sla`, a latency threshold miss also exits 1.
 
 ## Expected result today
 

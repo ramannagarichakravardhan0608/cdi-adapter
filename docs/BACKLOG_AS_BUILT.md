@@ -146,7 +146,7 @@
 | No Customer-360 view | E7-S8 |
 | vLLM backend not built; `hf` only (`mlserve/backends.py`) | E2-S1…S3 |
 | `cn_*` / `ops_*` / `fin_*` columns are a minimal reconstruction (ARCHITECTURE §4.5 gives none) | E1-S8 |
-| Compose file has no webapp / mlserve service | E1-S3 |
+| Compose now has webapp / mlserve and startup health gates; real-model fallback evidence remains pending | E1-S3 |
 | A 4-digit blood-pressure misread is not captured (it is dropped, never guessed) | — noted, no change planned |
 
 ## 4. Decisions made while building

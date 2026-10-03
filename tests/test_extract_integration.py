@@ -209,4 +209,7 @@ def test_full_extract_document_chain(app_env):
     ocr_document(res.document_id, force_engine="rapidocr")
     classify_document(res.document_id)
     out = extract_document(res.document_id)
-    assert out["facts"] >= 8
+    # Two conditions, three medicines and two vitals; BP is one fact with two components.
+    assert out["facts"] == 7
+    facts = repo_facts(res.document_id)
+    assert sum(f["fact_type"] == "medication" for f in facts) == 3

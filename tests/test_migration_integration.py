@@ -77,7 +77,21 @@ def _no_background_runner():
 @pytest.fixture(autouse=True)
 def _tidy(db_env):
     """Whatever a test does, the next one starts with an open gate, no jobs of ours and the
-    schema at the repository's head."""
+    schema at the repository's head. Other modules intentionally leave unfinished runs;
+    finish those test fixtures before asserting global in-flight/queue counts."""
+    with session_scope() as c:
+        c.execute(
+            text(
+                "UPDATE pipeline_run SET status = 'failed', finished_at = now() "
+                "WHERE status = 'running'"
+            )
+        )
+        c.execute(
+            text(
+                "UPDATE web_job SET state = 'error', finished_at = now(), lease_until = NULL "
+                "WHERE finished_at IS NULL"
+            )
+        )
     yield
     with session_scope() as c:
         c.execute(text("UPDATE schema_gate SET closed = false, expires_at = NULL WHERE id = 1"))

@@ -30,13 +30,16 @@ set -a; [ -f "$REPO/.env" ] && . "$REPO/.env"; set +a
 MINIO_BIN=$WS/tools/minio-$MINIO_TAG
 
 # ---------------------------------------------------------------- 0. secrets store (backlog E1-S5)
-# The persistent copy lives on /workspace, whose MooseFS forces 0777 (docs/secrets.md); every
-# service reads the 0700/0600 copy on the overlay. secretstore.py is stdlib-only (no venv needed).
+# The source must enforce private permissions; every service reads a private overlay copy.
+# secretstore.py is stdlib-only (no venv needed).
 SECRETS_PY="$REPO/src/cdi_adapter/secretstore.py"
-SECRETS_SRC=${SECRETS_SRC:-$WS/secrets}
+# Must be a private persistent mount or a vault-agent provisioned directory. Never generate
+# credentials on MooseFS: its forced 0777 permissions expose them before copying to /run.
+SECRETS_SRC=${SECRETS_SRC:?Set SECRETS_SRC to a private persistent or vault-provisioned directory}
 export CDI_SECRETS_DIR=${CDI_SECRETS_DIR:-/run/cdi-secrets}
 secret() { python3 "$SECRETS_PY" --dir "$CDI_SECRETS_DIR" "$@"; }
-python3 "$SECRETS_PY" --dir "$SECRETS_SRC" init          # first boot only; never overwrites
+python3 "$SECRETS_PY" --dir "$SECRETS_SRC" init          # first boot only; fails on unsafe modes
+python3 "$SECRETS_PY" --dir "$SECRETS_SRC" check
 install -d -m 700 "$CDI_SECRETS_DIR"
 for f in "$SECRETS_SRC"/cdi_*; do install -m 600 "$f" "$CDI_SECRETS_DIR/"; done
 secret check                                             # refuses dev defaults and open modes
@@ -74,7 +77,7 @@ fi
 # ---------------------------------------------------------------- 2. Postgres on the overlay
 if [ ! -f "$PGDATA/PG_VERSION" ]; then
   install -d -o postgres -g postgres -m 700 "$PGDATA"
-  su postgres -c "$PGBIN/initdb -D $PGDATA -E UTF8 --locale=C.UTF-8"
+  su postgres -c "$PGBIN/initdb -D $PGDATA -E UTF8 --locale=C.UTF-8 --auth-local=peer --auth-host=scram-sha-256"
 fi
 # E10-S6: a data folder fenced by a failover is never started as a primary again (two writable
 # primaries = split brain). It comes back only as a standby: python -m cdi_adapter.ha pg rejoin
@@ -93,20 +96,29 @@ if ! su postgres -c "$PGBIN/pg_ctl -D $PGDATA status" >/dev/null 2>&1; then
 fi
 # the role password is the store's, re-applied every boot, passed on stdin (never argv)
 DB_PW=$(secret get cdi_database_url --part password)
+# Quote vault-supplied apostrophes without exposing the password in process arguments.
+DB_PW=${DB_PW//\'/\'\'}
 su postgres -c "psql -h /tmp -v ON_ERROR_STOP=1 -q" <<SQL
+SET standard_conforming_strings = on;
 DO \$\$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'cdi') THEN CREATE ROLE cdi LOGIN; END IF;
 END \$\$;
 ALTER ROLE cdi PASSWORD '$DB_PW';
 SQL
 unset DB_PW
+RESTORE_MARKER=$PGDATA/cdi.restore-required
 su postgres -c "psql -h /tmp -tAc \"SELECT 1 FROM pg_database WHERE datname='cdi'\"" | grep -q 1 || {
+  # Record intent before CREATE: a failed or interrupted restore must be retried next boot.
+  if [ -s "$DUMP" ]; then touch "$RESTORE_MARKER"; fi
   su postgres -c "psql -h /tmp -c 'CREATE DATABASE cdi OWNER cdi'"
-  if [ -s "$DUMP" ]; then
-    echo "restoring $DUMP"
-    pg_restore --no-owner --role=cdi -d "$PSQL_URL" "$DUMP" || echo "WARN: pg_restore reported errors"
-  fi
 }
+if [ -f "$RESTORE_MARKER" ]; then
+  [ -s "$DUMP" ] || { echo "restore required but backup is missing"; exit 1; }
+  echo "restoring $DUMP"
+  pg_restore --exit-on-error --single-transaction --clean --if-exists --no-owner \
+    --role=cdi -d "$PSQL_URL" "$DUMP"
+  rm "$RESTORE_MARKER"
+fi
 
 # ---------------------------------------------------------------- 3. venv (torch inherited)
 if [ ! -x "$REPO/.venv/bin/python" ]; then

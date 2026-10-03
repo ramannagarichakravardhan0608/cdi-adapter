@@ -236,4 +236,9 @@ def get_settings() -> Settings:
     if not store.is_dir():
         raise FileNotFoundError(f"{secretstore.ENV_VAR}={store} does not exist")
     secretstore.assert_safe(store)
-    return Settings(_secrets_dir=store)  # type: ignore[call-arg]  # pydantic-settings init kwarg
+    problems = secretstore.check(store, names=tuple(f"cdi_{f}" for f in secretstore.FIELDS))
+    if problems:
+        raise ValueError("invalid secrets store: " + "; ".join(problems))
+    credentials = {field: secretstore.read(store, f"cdi_{field}") for field in secretstore.FIELDS}
+    # A configured vault/store is authoritative for credentials; env still configures other fields.
+    return Settings(**credentials, _secrets_dir=store)  # type: ignore[arg-type,call-arg]

@@ -166,6 +166,7 @@ class _Contract(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
+    empty_bundles = False
     login_password: str | None = None  # set: /api/* requires the session cookie (E11-S1)
 
     def do_POST(self) -> None:  # noqa: N802
@@ -196,7 +197,15 @@ class _Contract(BaseHTTPRequestHandler):
             return self._send(404, {"detail": "job not found"})
         done = time.monotonic() >= job["t"]
         if len(parts) == 4 and parts[3] == "fhir":
-            return self._send(200, {"bundles": []}) if done else self._send(409, {})
+            bundles = (
+                []
+                if self.empty_bundles
+                else [
+                    {"bundle": {"resourceType": "Bundle", "type": "document"}}
+                    for _ in range(job["n"])
+                ]
+            )
+            return self._send(200, {"bundles": bundles}) if done else self._send(409, {})
         docs = [{"filename": f"d{i}", "status": "error" if i < job["failed"] and done else "done",
                  "error": "boom" if i < job["failed"] and done else None}
                 for i in range(job["n"])]  # fmt: skip
@@ -224,7 +233,7 @@ def test_the_harness_measures_a_concurrent_burst_end_to_end(contract: str, tmp_p
     wall = time.monotonic() - t0
     r = json.loads(out.with_suffix(".json").read_text(encoding="utf-8"))
 
-    assert rc == 0 and r["patients"] == 6  # every patient finished; SLA not enforced
+    assert rc == 1 and r["patients"] == 6  # functional failures always fail
     assert wall < 25  # concurrent, and it quits on its own when the last job is done
     assert r["states"] == {"review": 4, "mismatch": 1, "error": 1}
     assert r["ready"] == 3  # the review job with 2 failed documents is not ready
@@ -247,7 +256,7 @@ def test_a_job_that_never_finishes_times_out(contract: str, tmp_path: Path) -> N
     rc = load_test.main(["--host", contract, "--patients", "1", "--docs-max", "5", "--poll-s",
                          "0.2", "--job-timeout-s", "1", "--report", str(out)])  # fmt: skip
     r = json.loads(out.with_suffix(".json").read_text(encoding="utf-8"))
-    assert rc == 0 and r["states"] == {"timeout": 1} and r["ready"] == 0
+    assert rc == 1 and r["states"] == {"timeout": 1} and r["ready"] == 0
 
 
 def test_a_rejected_upload_is_a_failure_not_a_hang(tmp_path: Path) -> None:
@@ -257,7 +266,7 @@ def test_a_rejected_upload_is_a_failure_not_a_hang(tmp_path: Path) -> None:
          "--patients", "2", "--docs-max", "5", "--report", str(out)],
         capture_output=True, text=True, timeout=120).returncode  # fmt: skip
     r = json.loads(out.with_suffix(".json").read_text(encoding="utf-8"))
-    assert rc == 0 and r["states"] == {"request_failed": 2}
+    assert rc == 1 and r["states"] == {"request_failed": 2}
 
 
 def test_the_harness_signs_in_as_a_counter_user(
@@ -275,9 +284,60 @@ def test_the_harness_signs_in_as_a_counter_user(
         assert r["states"] == {"review": 2}  # signed in: uploads accepted
 
         monkeypatch.setenv("CDI_LOAD_PASSWORD", "wrong")
-        assert load_test.main(args) == 0
+        assert load_test.main(args) == 1
         r = json.loads(out.with_suffix(".json").read_text(encoding="utf-8"))
         assert r["states"] == {"request_failed": 2}
         assert all("sign-in as 'counter1' failed" in s["detail"] for s in r["samples"])
     finally:
         _Contract.login_password = None
+
+
+@pytest.mark.parametrize(
+    "flag,value",
+    [
+        ("--poll-s", "0"),
+        ("--sla-s", "nan"),
+        ("--job-timeout-s", "inf"),
+        ("--docs-min", "0"),
+        ("--docs-max", "11"),
+    ],
+)
+def test_runner_rejects_invalid_bounds_before_spawning(flag, value, monkeypatch):
+    monkeypatch.setattr(load_test.subprocess, "run", lambda *a, **k: pytest.fail("must not run"))
+    with pytest.raises(SystemExit):
+        load_test.main(["--host", "http://localhost", flag, value])
+
+
+def test_histogram_includes_sample_at_last_bin_boundary():
+    bins = rep.histogram([600.0], bin_s=30, sla_s=300)
+    assert sum(b["count"] for b in bins) == 1
+    assert bins[-1]["from_s"] == 600
+
+
+@pytest.mark.parametrize("width", [0, -1, float("nan"), float("inf")])
+def test_histogram_rejects_invalid_width_without_looping(width):
+    with pytest.raises(ValueError):
+        rep.histogram([1.0], bin_s=width, sla_s=300)
+
+
+def test_empty_bundle_response_cannot_be_counted_as_ready(contract, tmp_path, monkeypatch):
+    _Contract.plan = [(0.1, "review", 0)]
+    monkeypatch.setattr(_Contract, "empty_bundles", True)
+    out = tmp_path / "empty"
+    rc = load_test.main(
+        [
+            "--host",
+            contract,
+            "--patients",
+            "1",
+            "--docs-max",
+            "5",
+            "--poll-s",
+            "0.1",
+            "--report",
+            str(out),
+        ]
+    )
+    report = json.loads(out.with_suffix(".json").read_text())
+    assert rc == 1 and report["ready"] == 0
+    assert report["states"] == {"request_failed": 1}

@@ -33,6 +33,7 @@ import datetime as dt
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -66,6 +67,8 @@ def prepare_fresh_db(name: str) -> str:
     live = make_url(get_settings().database_url)
     if name == live.database:
         raise SystemExit(f"--fresh-db {name!r} is the configured database; refusing to reset it")
+    if not re.fullmatch(r"cdi_golden(?:_[a-z0-9_]+)?", name):
+        raise SystemExit("--fresh-db must be cdi_golden or cdi_golden_<test suffix>")
     target = live.set(database=name).render_as_string(hide_password=False)
     admin = create_engine(live.set(database="postgres"), isolation_level="AUTOCOMMIT")
     with admin.connect() as c:
@@ -84,6 +87,8 @@ def prepare_fresh_db(name: str) -> str:
     command.upgrade(cfg, "head")
     os.environ["CDI_DATABASE_URL"] = target
     get_settings.cache_clear()
+    # Explicit process-local test target also works with an authoritative vault/store.
+    get_settings().database_url = target
     db.reset_engine()
     return target
 
@@ -130,7 +135,10 @@ def measure(conn: Connection, docs: Mapping[str, str]) -> dict[str, Any]:
 
 def compare(measured: Mapping[str, Any], expected: Mapping[str, Any]) -> list[str]:
     """Drift lines: every expected key whose measured value differs (extra keys are ignored)."""
-    drift: list[str] = []
+    drift: list[str] = [
+        f"{name}: unexpected document in the run"
+        for name in sorted(set(measured["documents"]) - set(expected["documents"]))
+    ]
     for name, exp in expected["documents"].items():
         got = measured["documents"].get(name)
         if got is None:
@@ -153,8 +161,13 @@ def run_full(folder: Path) -> dict[str, str]:
         check=True,
     )
     import pipeline_smoke
+    from make_sample_docs import DOCS
 
-    return {Path(r["file"]).stem: r["document_id"] for r in pipeline_smoke.run(folder, True)}
+    files = [folder / f"{name}.pdf" for name in DOCS]
+    return {
+        Path(row["file"]).stem: row["document_id"]
+        for row in pipeline_smoke.run(folder, True, files=files)
+    }
 
 
 def run_seeded() -> dict[str, str]:

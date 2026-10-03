@@ -21,7 +21,21 @@ from cdi_adapter.dslm import bench, corpus, quantize
 from cdi_adapter.mlserve.backends import VLLMBackend
 
 ROOT = Path(__file__).resolve().parents[1]
-SAMPLES = ROOT / "data" / "samples"
+SAMPLES: Path
+
+
+@pytest.fixture(scope="module", autouse=True)
+def generated_samples(tmp_path_factory):
+    import sys
+
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from make_sample_docs import generate
+
+    global SAMPLES
+    SAMPLES = tmp_path_factory.mktemp("dslm-samples")
+    generate(SAMPLES)
+
+
 RUNPOD = ROOT / "infra" / "runpod"
 
 
