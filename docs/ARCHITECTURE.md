@@ -942,6 +942,60 @@ across queues, and so across pools, each started and sized on its own
   still runs from the CPU pool: it is advisory and outside the job's critical path,
   so it holds no extraction slot.
 
+### 7.6 Broker durability: Redis or RabbitMQ (backlog E9-S8) — **decision open**
+
+§13 / §14 #8 chose **Celery with a Redis broker** and named Celery/RabbitMQ as the
+hardened option, which leaves Redis's behaviour under a real crash an open question
+rather than a settled one. This section records how that question is answered and
+where the answer will be written; it is **not yet answered** — the measurement needs
+the pod (see below).
+
+**What makes this a configuration question, not a rewrite.** The broker is one
+setting, `CDI_BROKER_URL` (empty = `CDI_REDIS_URL`, which is what every deployment
+runs today). `cdi_adapter.worker.broker_conf()` is the only thing that differs
+between the two:
+
+| | Redis | RabbitMQ (`amqp://…`) |
+|---|---|---|
+| Priority lanes (E9-S3) | emulated: one list per step (`cdi-web`, `cdi-web:1`, …), so `priority_steps`/`sep`/`queue_order_strategy` must match on every sender and worker | real priority queues: `x-max-priority` declared on the queue (`task_queue_max_priority`) |
+| Publishing | fire-and-forget | `confirm_publish`: a publish returns once the broker has the message |
+| Queues, routing, lanes, task code | identical | identical |
+| Result backend | Redis | Redis (an AMQP result backend is deprecated in Celery) |
+
+So a swap is `CDI_BROKER_URL=amqp://…` plus starting RabbitMQ — the queues
+(`cdi`, `cdi-web`, `cdi-gpu`), the routing, the lanes and every task stay as they are.
+
+**How it is measured.** `scripts/broker_crash_drill.py`, under the E9-S6 load shape
+(30 patients × 5–10 documents): it records the broker's own persistence settings (for
+Redis the live `CONFIG GET`), uploads the burst, **SIGKILLs the broker at randomised
+points strictly inside the burst** (seeded, so a run that found a loss can be replayed)
+and restarts it, optionally kills a job worker too, waits for every acknowledged job
+to end, then counts from PostgreSQL (`cdi_adapter.durability`):
+
+- **lost** — an acknowledged document that never reached a terminal state. A document
+  that was *redelivered and ran again* is not lost; that is the queue working, and it
+  is reported separately as `resumed`.
+- **duplicated** — a document that reached the results twice (a second `extraction`
+  row or a second open review item). This is the figure that matters *after* E9-S3,
+  whose idempotency keys already stop a retried upload becoming a second job — and the
+  drill proves that separately (`jobs_sharing_a_key`), so a duplicate here is the
+  broker's, not the client's.
+- **given_up** — a job dead-lettered after `CDI_JOB_MAX_ATTEMPTS`: it ended, but
+  without a result, so it is never counted as a success.
+
+**Tolerance, agreed in E9-S8:** **0 lost, 0 duplicated, 0 given up**, over at least
+three kills across repeated runs. A Redis run that misses it is the trigger to set
+`CDI_BROKER_URL` to RabbitMQ and run the same drill again.
+
+**Status.** The swap mechanism, the drill and the measurement are built and
+unit/integration-tested (`tests/test_broker_unit.py`,
+`tests/test_durability_integration.py`). The drill itself needs a live broker, the app
+tier and the E9-S6 load, so **the numbers and therefore the go/no-go are pending the
+pod run**; they belong in this section, with the measured loss/duplication figures,
+and nothing here should be read as a decision until they are. **Kafka is out of scope
+by design decision** (disproportionate to tens-to-low-hundreds of documents per batch
+window and a one-engineer operating constraint), not by oversight.
+
 ---
 
 ## 8. End-to-end flow
@@ -1002,6 +1056,7 @@ Postgres.
 | `CDI_FAST_CLASSIFY` | `true` | S2 scored heuristic first; VLM only on ambiguous/handwritten |
 | `CDI_EXTRACT_RETRIES` | `1` | S4 VLM re-tries on schema failure (schemas relaxed → rare) |
 | `CDI_JOB_MAX_WORKERS` | 6 | Phase-1 documents in flight concurrently |
+| `CDI_BROKER_URL` | *(empty)* | Celery broker; empty = `CDI_REDIS_URL`, `amqp://…` = RabbitMQ (§7.6) |
 | `CDI_OCR_ENGINE` / `CDI_HANDWRITTEN_USES_VLM` | `rapidocr` / `true` | S3 routing |
 | `CDI_IG_PACKAGE` | `ndhm.in#6.5.0` | Profile/IG package |
 | `CDI_TERMINOLOGY_PACKAGE` | `in-snomed-loinc-icd10` | Terminology package |

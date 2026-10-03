@@ -278,3 +278,49 @@ def test_ingest_again_renders_the_pages_an_interrupted_ingest_never_stored(app_e
     assert pages == 1 and status == "pages_rendered"
     third = ingest_bytes(pdf, "rx.pdf", "application/pdf")  # complete now: plain dedupe
     assert third.deduplicated and third.document_id == first.document_id
+
+
+def test_the_same_upload_posted_twice_is_one_job(app_env, monkeypatch) -> None:
+    """E9-S3 acceptance through the real route, on real PostgreSQL + real MinIO: a counter whose
+    POST timed out sends the identical multipart request again. It gets the first job's id back,
+    no second job is created or dispatched, and the retry stages nothing new."""
+    from cdi_adapter.storage import get_store
+    from cdi_adapter.webapp import jobstore
+    from cdi_adapter.webapp.app import app
+    from tests.helpers import make_pdf, signed_in
+
+    sent: list[str] = []
+    monkeypatch.setattr(jobstore, "dispatch", lambda job_id, priority=None: sent.append(job_id))
+    tag = uuid.uuid4().hex[:6]
+    pdf = make_pdf([[f"Amoxicillin 500mg {tag}"]])
+    client = signed_in(app, "admin")
+    files = [("files", (f"rx-{tag}.pdf", pdf, "application/pdf"))]
+
+    first = client.post("/api/jobs", files=files)
+    retry = client.post("/api/jobs", files=files)
+    assert first.status_code == 202 and retry.status_code == 202, retry.text
+    job_id = first.json()["job_id"]
+    assert retry.json()["job_id"] == job_id  # exactly one job outcome, not two
+    assert sent == [job_id]  # and one message on the queue
+
+    with session_scope() as c:
+        assert c.execute(text("SELECT count(*) FROM web_job WHERE id = :i"),
+                         {"i": job_id}).scalar_one() == 1  # fmt: skip
+        key = c.execute(text("SELECT idempotency_key FROM web_job WHERE id = :i"),
+                        {"i": job_id}).scalar_one()  # fmt: skip
+        assert key and c.execute(text("SELECT count(*) FROM web_job WHERE idempotency_key = :k"),
+                                 {"k": key}).scalar_one() == 1  # fmt: skip
+    store = get_store()
+    assert store.exists(f"uploads/{job_id}/00")
+    assert not store.exists(f"uploads/{job_id}/01")  # the retry staged nothing of its own
+
+    # a client that names its retry gets the same answer, even for a different scan
+    named = {"Idempotency-Key": f"counter-{tag}"}
+    a = client.post("/api/jobs", files=files, headers=named)
+    b = client.post("/api/jobs", files=[("files", (f"other-{tag}.pdf",
+                                                   make_pdf([["Another scan"]]),
+                                                   "application/pdf"))], headers=named)  # fmt: skip
+    assert a.status_code == 202 and b.status_code == 202
+    assert b.json()["job_id"] == a.json()["job_id"] != job_id
+    _drop(job_id)
+    _drop(a.json()["job_id"])

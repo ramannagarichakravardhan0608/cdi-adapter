@@ -474,3 +474,65 @@ def set_document_status(
         ),
         {"id": document_id, "status": status, "error": json.dumps(error) if error else None},
     )
+
+
+# ------------------------------------------------------------------ dead letters (E9-S3)
+
+DEAD_LETTER_KINDS = ("web_job", "document", "task")
+
+
+def write_dead_letter(
+    conn: Connection,
+    *,
+    kind: str,
+    ref: str,
+    attempts: int,
+    error: str | None = None,
+    queue: str | None = None,
+    task: str | None = None,
+    detail: dict[str, Any] | None = None,
+) -> int:
+    """Record work that stopped being retried (migration 0022), so it leaves the queue instead of
+    blocking it. One row per ``(kind, ref)``: a later failure of the same job or document updates
+    that row - its ``first_at`` keeps saying when the trouble started - and clears any earlier
+    replay. Returns the row id."""
+    if kind not in DEAD_LETTER_KINDS:
+        raise ValueError(f"dead-letter kind must be one of {DEAD_LETTER_KINDS}, got {kind!r}")
+    params = {"k": kind, "r": str(ref), "q": queue, "t": task, "n": attempts, "e": error,
+              "d": _json(detail)}  # fmt: skip
+    return conn.execute(
+        text(
+            "INSERT INTO dead_letter (kind, ref, queue, task, attempts, error, detail) "
+            "VALUES (:k, :r, :q, :t, :n, :e, CAST(:d AS jsonb)) "
+            "ON CONFLICT (kind, ref) DO UPDATE SET attempts = EXCLUDED.attempts, "
+            "error = EXCLUDED.error, queue = EXCLUDED.queue, task = EXCLUDED.task, "
+            "detail = EXCLUDED.detail, at = now(), replayed_at = NULL, replayed_by = NULL "
+            "RETURNING id"
+        ),
+        params,
+    ).scalar_one()
+
+
+def dead_letters(conn: Connection, *, kind: str | None = None, open_only: bool = True,
+                 limit: int = 100) -> list[dict[str, Any]]:  # fmt: skip
+    """What is in the dead-letter queue, newest first; ``open_only`` leaves out the replayed."""
+    rows = conn.execute(
+        text(
+            "SELECT * FROM dead_letter WHERE (CAST(:k AS text) IS NULL OR kind = :k) "
+            "AND (NOT :o OR replayed_at IS NULL) ORDER BY at DESC LIMIT :n"
+        ),
+        {"k": kind, "o": open_only, "n": limit},
+    ).mappings()
+    return [dict(r) for r in rows]
+
+
+def mark_replayed(conn: Connection, *, kind: str, ref: str, actor: str) -> bool:
+    """Say a dead letter has been sent back through (the operator decided to try it again)."""
+    n = conn.execute(
+        text(
+            "UPDATE dead_letter SET replayed_at = now(), replayed_by = :a "
+            "WHERE kind = :k AND ref = :r AND replayed_at IS NULL"
+        ),
+        {"k": kind, "r": str(ref), "a": actor},
+    ).rowcount
+    return n == 1

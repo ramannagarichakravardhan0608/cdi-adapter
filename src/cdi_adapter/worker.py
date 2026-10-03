@@ -54,9 +54,52 @@ QUEUES_BY_ROLE = {
     "gpu": (GPU_QUEUE,),
     "all": (CPU_QUEUE, WEB_QUEUE, GPU_QUEUE),
 }
+# E9-S3: the priority lanes every sender and every worker must agree on (0 lowest … 9 highest)
+PRIORITY_STEPS = 10
+NORMAL_PRIORITY = 5
+
+
+def broker_url(settings: Settings | None = None) -> str:
+    """The broker this process talks to (E9-S8): ``CDI_BROKER_URL`` when it is set, else the
+    Redis URL - so every deployment that says nothing keeps the broker it has."""
+    s = settings or get_settings()
+    return s.broker_url or s.redis_url
+
+
+def broker_kind(url: str) -> str:
+    """``redis`` or ``amqp`` (RabbitMQ). The two differ only in how priority and publishing are
+    configured; the queues, routing, lanes and task code are the same."""
+    scheme = url.split("://", 1)[0].lower()
+    if scheme in ("amqp", "amqps", "pyamqp"):
+        return "amqp"
+    if scheme in ("redis", "rediss", "redis+socket", "socket"):
+        return "redis"
+    raise ValueError(f"unsupported broker {scheme!r}: this project runs on Redis or RabbitMQ")
+
+
+def broker_conf(url: str) -> dict[str, Any]:
+    """The Celery settings that depend on which broker is in use (E9-S8).
+
+    * **Redis** has no priority of its own, so Celery emulates it with one list per step
+      (``cdi-web``, ``cdi-web:1`` …) and a worker drains the higher list first - which is why the
+      steps and the separator have to be identical on every sender and worker.
+    * **RabbitMQ** has real priority queues (``x-max-priority``) and publisher confirms, so the
+      lanes are declared on the queue and a publish is only reported as sent once the broker has
+      taken it. That is exactly the durability difference the kill-test measures.
+    """
+    if broker_kind(url) == "amqp":
+        return {"task_queue_max_priority": PRIORITY_STEPS - 1,
+                "broker_transport_options": {"confirm_publish": True}}  # fmt: skip
+    return {"broker_transport_options": {"priority_steps": list(range(PRIORITY_STEPS)),
+                                         "sep": ":",
+                                         "queue_order_strategy": "priority"}}  # fmt: skip
+
 
 _s = get_settings()
-celery_app = Celery("cdi", broker=_s.redis_url, backend=_s.redis_url)
+_broker = broker_url(_s)
+# the result backend stays on Redis whichever broker is used: the comparison in E9-S8 is about the
+# broker, and an AMQP result backend is deprecated in Celery anyway
+celery_app = Celery("cdi", broker=_broker, backend=_s.redis_url)
 celery_app.conf.update(
     task_default_queue=CPU_QUEUE,
     task_acks_late=True,  # a crashed worker's task is redelivered, not lost
@@ -72,6 +115,10 @@ celery_app.conf.update(
         # advisory, outside the job's critical path, so it is not worth a GPU-pool slot of its own
         "cdi.medication_agent": {"queue": WEB_QUEUE},
     },
+    # E9-S3 priority lanes; lane 5 is normal, so with nothing set the behaviour is what it was
+    task_default_priority=NORMAL_PRIORITY,
+    task_inherit_parent_priority=True,  # a chained stage keeps its document's lane
+    **broker_conf(_broker),
 )
 
 
@@ -109,7 +156,43 @@ MAX_RETRIES = 3
 RETRY_BACKOFF = 10  # seconds, doubled per attempt
 
 
-def _retry(task, exc: Exception) -> Any:
+def dead_letter(kind: str, ref: str, *, task: str, attempts: int, error: str,
+                queue: str | None = None,
+                detail: dict[str, Any] | None = None) -> None:  # fmt: skip
+    """Put work that has failed every attempt in the dead-letter queue (backlog E9-S3,
+    migration 0022). Recording it must never be what fails: a poison document has to leave the
+    queue either way, and the log carries it if the write cannot."""
+    from cdi_adapter import metrics, repo
+    from cdi_adapter.db import session_scope
+
+    try:
+        with session_scope() as c:
+            repo.write_dead_letter(c, kind=kind, ref=str(ref), attempts=attempts, error=error,
+                                   queue=queue, task=task, detail=detail)  # fmt: skip
+        metrics.DEAD_LETTERS.labels(kind).inc()
+        log.error("dead_lettered", kind=kind, ref=str(ref), task=task, attempts=attempts,
+                  error=error)  # fmt: skip
+    except Exception as exc:  # noqa: BLE001
+        log.error("dead_letter_failed", kind=kind, ref=str(ref), task=task,
+                  error=f"{type(exc).__name__}: {exc}")  # fmt: skip
+
+
+def _retry(task, exc: Exception, *, kind: str = "document", ref: str | None = None) -> Any:
+    """Retry with backoff; on the attempt that exhausts ``MAX_RETRIES``, dead-letter it first.
+
+    A poison document used to end its run as a bare ``MaxRetriesExceededError`` with nothing to
+    look at. Now the last attempt records a ``dead_letter`` row (E9-S3) and then raises the
+    document's own error: the task fails, so its chain stops and the queue moves on, and what was
+    given up is on a list that can be looked at and replayed. Never returns.
+    """
+    attempts = task.request.retries + 1
+    if attempts > MAX_RETRIES:
+        args = getattr(task.request, "args", None) or []
+        dead_letter(kind, str(ref if ref is not None else (args[0] if args else "unknown")),
+                    task=task.name, attempts=attempts, error=f"{type(exc).__name__}: {exc}",
+                    queue=(getattr(task.request, "delivery_info", None) or {}).get(
+                        "routing_key"))  # fmt: skip
+        raise exc
     countdown = RETRY_BACKOFF * (2**task.request.retries)
     raise task.retry(exc=exc, countdown=countdown, max_retries=MAX_RETRIES)
 
@@ -124,7 +207,7 @@ def ingest_file(self, path: str, source_channel: str = "folder") -> str:
     except FileNotFoundError:
         raise
     except Exception as exc:  # noqa: BLE001
-        _retry(self, exc)
+        _retry(self, exc, kind="task", ref=path)  # no document id yet: the file is the ref
     log.info("folder_ingested", path=path, document_id=str(res.document_id),
              deduplicated=res.deduplicated)  # fmt: skip
     return str(res.document_id)

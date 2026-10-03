@@ -105,13 +105,14 @@ def test_migration_0001_downgrade_drops_every_table():
     assert set(m.VIEWS) == set(re.findall(r"CREATE OR REPLACE VIEW (\w+)", VIEWS))
 
 
-def test_migration_chain_is_linear_0001_to_0021():
+def test_migration_chain_is_linear_0001_to_0022():
     cfg = Config(str(ROOT / "alembic.ini"))
     cfg.set_main_option("script_location", str(ROOT / "db" / "alembic"))
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_heads() == ["0021"]  # 0021: the schema gate (E9-S1)
+    assert script.get_heads() == ["0022"]  # 0022: idempotency + dead letters (E9-S3)
     chain = [r.revision for r in script.walk_revisions("base", "heads")]
     assert chain == [
+        "0022",
         "0021",
         "0020",
         "0019",

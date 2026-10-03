@@ -140,10 +140,16 @@ async def create_job(request: Request, files: list[UploadFile] = File(...),
             if reg is None:
                 raise HTTPException(404, "no registered patient matches patient_ref")
             patient_id = str(registry.ensure_identity(c, reg))
+    # E9-S3: the same upload sent twice (a counter retrying a POST that timed out) is one job.
+    # The client may name the retry with an Idempotency-Key header; without one the key is
+    # derived from the bytes, so an unchanged retry still lands on the job it already created.
+    key = jobstore.idempotency_key(payload, actor=auth.actor(request).username,
+                                   patient_id=patient_id, abha=(abha or None),
+                                   given=request.headers.get("Idempotency-Key"))  # fmt: skip
     try:  # 202 only once the files and the job are durable (E10-S9)
         job = await run_in_threadpool(jobstore.submit, payload, actor=auth.actor(request).username,
                                       registry_patient=reg, patient_id=patient_id,
-                                      abha=(abha or None))  # fmt: skip
+                                      abha=(abha or None), key=key)  # fmt: skip
     except jobstore.NotAccepted as exc:
         raise HTTPException(503, "the upload could not be stored and was NOT accepted; "
                                  "send it again") from exc  # fmt: skip

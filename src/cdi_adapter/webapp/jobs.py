@@ -246,6 +246,10 @@ class JobStore(Protocol):
     def orphans(self, unclaimed_s: float, limit: int) -> list[str]:
         """Unfinished jobs whose lease ran out, or never claimed ``unclaimed_s`` after upload."""
 
+    def dead_letter(self, job: Job, *, reason: str, actor: str = "runner") -> None:
+        """Take a job that kept failing out of the queue (E9-S3). Optional: a store without it
+        (the in-memory ones of the unit tests) simply gives the job up as before."""
+
 
 class JobRunner:
     def __init__(self, stages: Stages | None = None, max_workers: int | None = None,
@@ -319,12 +323,18 @@ class JobRunner:
             metrics.JOB_RESUMES.inc()
             log.warning("job_resumed", job=job.id, attempt=job.attempts, runner=self.owner)
         if job.attempts > s.job_max_attempts:  # it kept killing its runner: stop retrying it
+            reason = f"gave up after {s.job_max_attempts} attempts"
             for d in job.docs:
                 if d.status in UNFINISHED:
                     d.status, d.step = "error", None
-                    d.error = f"gave up after {s.job_max_attempts} attempts"
+                    d.error = reason
             job.state = "error"
             log.error("job_gave_up", job=job.id, attempts=job.attempts)
+            # E9-S3: it leaves the queue for the dead-letter table instead of being swept for
+            # ever, and stays there to be looked at and replayed.
+            dead = getattr(self.store, "dead_letter", None)
+            if dead is not None:
+                dead(job, reason=reason, actor=self.owner)
             self._finish(job)
             job.finished.set()
             return job.state

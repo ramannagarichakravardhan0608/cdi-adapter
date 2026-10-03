@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     backup_dir: str = "/workspace/backup"
     dr_report_dir: str = "/workspace/logs/dr"
     redis_url: str = Field(default="redis://127.0.0.1:6379/0", repr=False)
+    # E9-S8: the Celery broker. Empty = redis_url, which is what every deployment uses today; an
+    # amqp:// URL moves the broker to RabbitMQ with no code change (the queues, routing, lanes and
+    # tasks are the same), which is what makes the broker-durability comparison a configuration
+    # swap. The result backend stays on Redis either way, so the drill compares brokers only.
+    broker_url: str = Field(default="", repr=False)
 
     # object store (MinIO)
     s3_endpoint_url: str = "http://127.0.0.1:9000"

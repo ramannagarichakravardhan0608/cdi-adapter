@@ -315,6 +315,8 @@ def test_an_upload_is_refused_unless_files_and_row_are_both_stored(monkeypatch) 
     objs, inserted, dispatched = _Objects(fail_on=1), [], []
     monkeypatch.setattr(jobstore.PgJobStore, "objects", property(lambda self: objs))
     monkeypatch.setattr(jobstore.PgJobStore, "insert", lambda self, *a, **k: inserted.append(a))
+    # E9-S3: no job carries this upload's idempotency key yet, so it is a first submission
+    monkeypatch.setattr(jobstore.PgJobStore, "by_key", lambda self, key: None)
     monkeypatch.setattr(jobstore, "dispatch", dispatched.append)
     with pytest.raises(jobstore.NotAccepted):
         jobstore.submit(_files("a", "b"), actor="counter1")
@@ -332,15 +334,23 @@ def test_an_upload_is_staged_then_recorded_then_dispatched(monkeypatch) -> None:
     objs = _Objects()
     monkeypatch.setattr(jobstore.PgJobStore, "objects", property(lambda self: objs))
 
-    def insert(self, job, files, *, actor, accepted_by):  # noqa: ANN001, ANN202
+    def by_key(self, key):  # noqa: ANN001, ANN202 - E9-S3: looked up before anything is staged
+        order.append("lookup")
+        assert key.startswith("body:")  # derived from the upload: no client header here
+        return None
+
+    def insert(self, job, files, *, actor, accepted_by, **kw):  # noqa: ANN001, ANN202
         order.append(f"insert:{len(objs.put)} staged")
         assert [f["key"] for f in files] == objs.put and actor == "counter1"
         assert all(len(f["sha256"]) == 64 for f in files)
+        # E9-S3: the row carries the upload's idempotency key and its lane
+        assert kw["key"].startswith("body:") and kw["priority"] == jobstore.NORMAL_PRIORITY
 
+    monkeypatch.setattr(jobstore.PgJobStore, "by_key", by_key)
     monkeypatch.setattr(jobstore.PgJobStore, "insert", insert)
     monkeypatch.setattr(jobstore, "dispatch", lambda job_id: order.append("dispatch"))
     job = jobstore.submit(_files("a", "b"), actor="counter1")
-    assert order == ["insert:2 staged", "dispatch"]
+    assert order == ["lookup", "insert:2 staged", "dispatch"]
     assert objs.put == [f"uploads/{job.id}/00", f"uploads/{job.id}/01"]
     assert job.trace_id and job.span_id
 

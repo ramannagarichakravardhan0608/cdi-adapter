@@ -267,3 +267,98 @@ applied and rolled back on PostgreSQL with three jobs queued and one in flight, 
 job runs exactly once; a migration with a job in flight is aborted and changes nothing; one
 migrator at a time; a closed gate stops new claims but never takes a job from a live runner; an
 expired hold gates nothing.
+
+### One upload, one job; and what stops being retried (backlog E9-S3)
+
+Two ways work used to be able to go wrong on a busy queue, both closed by migration 0022:
+
+**A retried upload must not become a second job.** `§5 S1`'s SHA-256 ingest dedupe already shares
+the *documents* of two identical uploads, but each POST still made its own job — so a counter whose
+`POST /api/jobs` timed out and was sent again produced two jobs, two reviews and two FHIR bundles
+for one visit. Every accepted upload now carries an **idempotency key** in
+`web_job.idempotency_key`, under a unique index:
+
+- the client may name its retry with an `Idempotency-Key` header (namespaced by the account, so
+  two users cannot collide on the same string);
+- with no header the key is **derived from the upload** — every file's SHA-256 and name, in the
+  order sent, plus the actor and the patient context — so an unchanged retry lands on the job it
+  already created without the client having to do anything;
+- `jobstore.submit` looks the key up first: a hit returns the first job and stages, inserts and
+  dispatches nothing. When both copies arrive at the same moment, both stage and the unique index
+  decides — the loser drops its staged files and answers with the winner's job.
+
+The same scan sent for a different patient, or by a different user, is still its own job.
+`cdi_job_duplicate_uploads_total` counts the hits.
+
+**Work that keeps failing must leave the queue.** A poison document (page 2 is not a PDF, a scan
+the renderer cannot read) used to end as a bare `MaxRetriesExceededError` with nothing to look at,
+and a job that kept killing its runner was given up in a log line only. Both now land in
+**`dead_letter`** — one row per `(kind, ref)`, with the attempt count, the last error, the queue
+and task, and the documents' own errors:
+
+- a web job past `CDI_JOB_MAX_ATTEMPTS` is dead-lettered and finished, so no sweep picks it up
+  again (`jobstore.PgJobStore.dead_letter`, `web_job.dead_lettered_at`);
+- a pipeline stage that exhausts `MAX_RETRIES` records the document and then raises its own
+  error, so the chain stops instead of carrying a broken document forward (`worker._retry`);
+- `repo.dead_letters()` lists what is open and `repo.mark_replayed()` records that an operator
+  sent one back through. `cdi_dead_letters_total{kind}` counts them.
+
+**Priority lanes** ride on the same messages: `web_job.priority` (0 lowest … 9 highest, 5 normal)
+is sent as the Celery message priority and is kept across the E9-S2 hand-off, so an urgent job
+stays urgent on the GPU queue. Redis has no priority of its own — Celery emulates it with one list
+per step (`cdi-web`, `cdi-web:1`, …), which is why `priority_steps`, `sep` and
+`queue_order_strategy` are set in one place (`cdi_adapter.worker`) and must match on every sender
+and worker. Nothing sets a lane other than normal yet, so the lanes change no behaviour today;
+proving that a high lane is actually drained first needs a real broker and belongs with the pod
+(E9-S6).
+
+Tests: `tests/test_queueing_unit.py` — what the key is made of (same bytes → same key; changed
+bytes, order, name, patient or user → a different one; a client key wins and cannot collide), the
+lane settings every sender and worker shares, and a poison document retried within its budget but
+dead-lettered on the attempt that exhausts it. `tests/test_queueing_integration.py` on real
+PostgreSQL — the identical upload twice is one job that stages once and dispatches once, two
+copies at once are still one job, a job past its attempts is dead-lettered and no longer swept,
+a repeat failure updates its row instead of piling up, and the list/replay round trip.
+`tests/test_apptier_integration.py` — the same through the real `/api/jobs` route with real MinIO.
+
+### Drill: broker crash-durability (backlog E9-S8)
+
+`python scripts/broker_crash_drill.py` (on the pod / fallback host, app tier up) answers the one
+question E9-S1 left open: killed mid-batch, does the **Redis broker** lose a document or run one
+twice? It runs the E9-S6 load shape (30 patients × 5–10 documents), SIGKILLs the broker at
+randomised points strictly inside the burst — seeded, so a run can be replayed exactly — restarts
+it after `--down-s`, optionally kills a job worker as well, then counts from PostgreSQL
+(`cdi_adapter.durability`): documents **lost** (never reached a terminal state), **duplicated**
+(a second extraction row or open review item — what E9-S3's idempotency keys do *not* already
+catch), **given up** (dead-lettered), and how many jobs were **resumed**. The broker's own
+persistence settings go in the report, because that is what the numbers must be read against.
+
+```bash
+python scripts/broker_crash_drill.py --runs 3 --kills 1 \
+    --broker-restart "redis-server \$CDI_SECRETS_DIR/redis.conf --port 6379 --bind 127.0.0.1 --dir \$WS/redis --appendonly yes --daemonize yes --logfile \$WS/logs/redis.log"
+CDI_BROKER_URL=amqp://guest:guest@127.0.0.1:5672// \
+  python scripts/broker_crash_drill.py --label rabbitmq --broker-process beam.smp \
+    --broker-restart "systemctl start rabbitmq-server"         # the same drill, other broker
+```
+
+Note what the numbers are read against: `bootstrap_pod.sh` starts Redis with **`--appendonly yes`**,
+which is *not* Redis's out-of-the-box persistence. The drill records the live `CONFIG GET` in its
+report, so a run states the configuration it measured; a run meant to answer E9-S8's "default
+persistence" wording has to be done twice — as deployed (AOF on) and with AOF off — or the report
+has to say plainly which one it is. RabbitMQ is not provisioned anywhere yet (no `APT_PINS` entry,
+no compose service), so the swap is a configuration change in the code but still an install step
+on the host.
+
+Tolerance: **0 lost, 0 duplicated, 0 given up** over at least three kills; anything else exits 1
+and is the trigger to swap the broker (`CDI_BROKER_URL`) and measure again. The swap is
+configuration only — the queues, routing, lanes and task code are identical, and
+`worker.broker_conf()` is the one place the two brokers differ (ARCHITECTURE §7.6). Report:
+`$WS/logs/ha/broker-drill-<label>-<time>.json` and `last-broker-drill.json`; the verdict, with
+the measured numbers, is written into ARCHITECTURE §7.6 — which is **open until the pod run**.
+
+Tests: `tests/test_broker_unit.py` (the broker comes from the URL; Redis keeps the emulated lanes
+while RabbitMQ gets real priority queues and publisher confirms; queues, routing and lanes do not
+depend on the broker; an unsupported broker is refused; the kill schedule is random, repeatable
+and always inside the burst) and `tests/test_durability_integration.py` on real PostgreSQL (what
+counts as lost, what a redelivered document is instead, a dead letter reported on its own, a
+document extracted twice, and the verdict against the tolerance).

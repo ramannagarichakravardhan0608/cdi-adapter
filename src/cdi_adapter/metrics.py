@@ -95,6 +95,11 @@ CANARY_PERCENT = Gauge("cdi_model_canary_percent", "Share of documents routed to
 JOB_RESUMES = Counter("cdi_job_resumes_total", "Stored jobs resumed by another run")
 MLSERVE_FAILOVERS = Counter("cdi_mlserve_failovers_total",
                             "Model gateway calls moved to another replica")  # fmt: skip
+# E9-S3: an upload answered with the job it already created (an idempotency-key hit), and work
+# that stopped being retried and left the queue for the dead-letter table
+JOB_DUPLICATES = Counter("cdi_job_duplicate_uploads_total",
+                         "Uploads answered with an existing job (idempotency key)")  # fmt: skip
+DEAD_LETTERS = Counter("cdi_dead_letters_total", "Work moved to the dead-letter queue", ["kind"])
 
 # every label value is known up front, so each series exists (at 0) from the first scrape
 for _s in STAGES:
@@ -110,6 +115,8 @@ for _w in ("load", "generate", "batch"):
     VLM_OOM.labels(_w)
 for _o in ("complete", "partial"):
     EXTRACTIONS.labels(_o)
+for _k in ("web_job", "document", "task"):
+    DEAD_LETTERS.labels(_k)
 for _o in ("bound", "local_only"):
     TERMINOLOGY.labels(_o)
 for _f in (*FACT_TYPES, "other"):
