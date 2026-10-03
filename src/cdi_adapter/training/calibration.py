@@ -3,7 +3,8 @@
 S8 already captures every decision: ``review.decide`` sets ``clinician_confirmed`` or ``rejected``
 on the fact, or writes a corrected version that ``supersedes`` it, and signs a ``fact_provenance``
 row (``model_stack = {"reviewer": "human"}``, ``agent`` = the reviewer). ``export_dataset`` turns
-that into a versioned training table for the E4-S2 calibrator:
+that into a versioned training table for the E4-S2 calibrator. Migration0025 also snapshots
+each signed decision atomically with S8, retaining it when its clinical projection is purged:
 
 * one example per **adjudicated fact**: the correction chain from the machine's proposal (the fact
   that ``supersedes`` nothing) to its final version, when that version carries a human decision;
@@ -53,6 +54,8 @@ final AS (
 SELECT final.root_id, final.final_id, final.depth
 FROM final JOIN clinical_fact f ON f.id = final.final_id
 WHERE f.review_state IN ('clinician_confirmed', 'corrected', 'rejected')
+  AND EXISTS (SELECT 1 FROM fact_provenance p WHERE p.fact_id = f.id
+              AND p.model_stack ? 'reviewer' AND p.agent IS NOT NULL)
 ORDER BY final.root_id
 """
 
@@ -128,9 +131,69 @@ def _example(conn: Connection, root_id: Any, final_id: Any, depth: int) -> dict[
     }  # fmt: skip
 
 
+def record_decision(conn: Connection, final_id: Any) -> None:
+    """Capture a signed decision before its mutable clinical projection can be purged."""
+    row = conn.execute(
+        text("""
+        WITH RECURSIVE ancestry AS (
+            SELECT id, supersedes, 0 AS depth, ARRAY[id] AS visited
+            FROM clinical_fact WHERE id = :f
+            UNION ALL
+            SELECT parent.id, parent.supersedes, child.depth + 1, child.visited || parent.id
+            FROM clinical_fact parent JOIN ancestry child ON parent.id = child.supersedes
+            WHERE NOT parent.id = ANY(child.visited)
+        ) SELECT id, depth FROM ancestry WHERE supersedes IS NULL
+    """),
+        {"f": str(final_id)},
+    ).one()
+    example = _example(conn, row.id, final_id, row.depth)
+    if not example["reviewer"] or not example["decided_at"]:
+        raise ValueError("adjudication requires signed reviewer provenance")
+    conn.execute(
+        text("""
+        INSERT INTO calibration_adjudication (proposed_fact_id, final_fact_id, example)
+        VALUES (:root, :final, CAST(:example AS jsonb))
+    """),
+        {"root": str(row.id), "final": str(final_id), "example": json.dumps(example)},
+    )
+
+
+def preserve_document_decisions(conn: Connection, document_id: Any) -> None:
+    """Also retain signed decisions made before this snapshot mechanism was deployed."""
+    finals = (
+        conn.execute(
+            text("""
+        SELECT f.id FROM clinical_fact f
+        WHERE :d = ANY(f.source_doc_ids)
+          AND f.review_state IN ('clinician_confirmed', 'corrected', 'rejected')
+          AND NOT EXISTS (SELECT 1 FROM clinical_fact child WHERE child.supersedes = f.id)
+          AND EXISTS (SELECT 1 FROM fact_provenance p WHERE p.fact_id = f.id
+                      AND p.model_stack ? 'reviewer' AND p.agent IS NOT NULL)
+          AND NOT EXISTS (SELECT 1 FROM calibration_adjudication a WHERE a.final_fact_id = f.id)
+    """),
+            {"d": str(document_id)},
+        )
+        .scalars()
+        .all()
+    )
+    for fact_id in finals:
+        record_decision(conn, fact_id)
+
+
 def collect(conn: Connection) -> list[dict[str, Any]]:
-    """Every adjudicated fact as a training example, ordered by its proposal's id."""
-    return [_example(conn, r.root_id, r.final_id, r.depth) for r in conn.execute(text(_CHAINS))]
+    """Latest signed decision per proposal, including projections removed by re-extraction."""
+    rows = {
+        str(r.root_id): _example(conn, r.root_id, r.final_id, r.depth)
+        for r in conn.execute(text(_CHAINS))
+    }
+    historical = conn.execute(
+        text("""
+        SELECT DISTINCT ON (proposed_fact_id) proposed_fact_id, example
+        FROM calibration_adjudication ORDER BY proposed_fact_id, id DESC
+    """)
+    ).all()
+    rows.update({str(r.proposed_fact_id): r.example for r in historical})
+    return [rows[key] for key in sorted(rows)]
 
 
 def content_sha256(rows: list[dict[str, Any]]) -> str:
@@ -156,7 +219,8 @@ def export(conn: Connection, *, actor: str = "calibration-export",
              "  row_count, source, created_by) "
              "VALUES (:v, :s, :h, :n, CAST(:src AS jsonb), :by) RETURNING id"),
         {"v": version, "s": SCHEMA_VERSION, "h": digest, "n": len(rows),
-         "src": json.dumps({"from": "clinical_fact + fact_provenance", **by_decision}),
+         "src": json.dumps({"from": "clinical_fact + fact_provenance + calibration_adjudication",
+                            **by_decision}),
          "by": actor},
     ).scalar_one()  # fmt: skip
     if rows:

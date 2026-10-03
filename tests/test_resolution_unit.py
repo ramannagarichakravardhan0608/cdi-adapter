@@ -7,6 +7,7 @@ faked."""
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -16,10 +17,22 @@ from cdi_adapter.resolution.cascade import (
     Signal,
     load_policy,
     parse_policy,
-    resolve,
+)
+from cdi_adapter.resolution.cascade import (
+    resolve as _resolve,
 )
 
 RAW = json.loads(POLICY_FILE.read_text(encoding="utf-8"))
+
+
+def resolve(*args, **kwargs):
+    # Positive resolution cases use an explicitly synthetic validation basis.
+    p = load_policy()
+    p = replace(
+        p,
+        validated=tuple((lv, co, fld, "synthetic-unit-fixture") for lv, co, fld, _ in p.validated),
+    )
+    return _resolve(*args, **kwargs, policy=p)
 
 
 # ------------------------------------------------------------------ versioned config
@@ -97,7 +110,8 @@ def test_fixture_b_a_prior_cannot_override_the_pixels():
         Signal("prior:co-order", 3, "HbA1c", "reranks", 0.9),
     ]
     d = resolve(signals, {"L1": LevelResult("HBeAg")}, field_="lab_order", cohort="printed")
-    assert d.outcome == "accept" and d.winner == "HBeAg" and d.resolved_by_level == "L1"
+    assert d.outcome == "review" and d.winner == "HBeAg" and d.resolved_by_level == "L8"
+    # Pixel contradictions require review even when the remaining candidate is clear.
     assert "HbA1c" not in d.ranking  # vetoed by the pixels; its priors never revive it
     assert {"step": "veto", "tier": 0, "candidate": "HbA1c",
             "reason": "pixel grounding contradicts it"} in d.trace  # fmt: skip

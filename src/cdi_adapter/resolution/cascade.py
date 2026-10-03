@@ -85,7 +85,7 @@ class Policy:
     def validated_for(self, level: str, field_: str, cohort: str) -> str | None:
         """The validation basis when ``level`` may short-circuit for this field/cohort."""
         for lvl, co, fld, basis in self.validated:
-            if lvl == level and co == cohort and fld in ("*", field_):
+            if lvl == level and co == cohort and fld in ("*", field_) and basis != "assumed":
                 return basis
         return None
 
@@ -95,7 +95,12 @@ def parse_policy(raw: dict[str, Any]) -> Policy:
                          implemented_by=x.get("implemented_by"), backlog=x.get("backlog"))
                    for x in raw["levels"])  # fmt: skip
     ids = [lv.id for lv in levels]
-    if ids != sorted(ids, key=lambda i: int(i[1:])) or ids[-1] != "L8":
+    if (
+        not ids
+        or len(set(ids)) != len(ids)
+        or ids != sorted(ids, key=lambda i: int(i[1:]))
+        or ids[-1] != "L8"
+    ):
         raise ValueError("cascade levels must run in order and end with L8 (human review)")
     for lv in levels:
         if lv.built and not lv.implemented_by:
@@ -116,6 +121,8 @@ def parse_policy(raw: dict[str, Any]) -> Policy:
     rules = raw["rules"]
     if rules.get("majority_vote_sufficient") or not rules.get("priors_rerank_only"):
         raise ValueError("the precedence rules are fixed: no majority vote, priors only re-rank")
+    if set(rules["conflict_forces_review_tiers"]) != {0, 1}:
+        raise ValueError("tier 0 and tier 1 conflicts must force review")
     return Policy(version=raw["version"], levels=levels, validated=tuple(validated),
                   conflict_tiers=tuple(rules["conflict_forces_review_tiers"]))  # fmt: skip
 
@@ -183,6 +190,27 @@ def resolve(signals: list[Signal], levels: dict[str, LevelResult], *, field_: st
             srcs = ", ".join(f"{s.source}: {s.candidate!r}" for s in signals
                              if s.tier == t and s.relation == "supports")  # fmt: skip
             return review(f"tier-{t} disagreement ({srcs})")
+    cross_tier = {
+        s.candidate for s in signals if s.tier in policy.conflict_tiers and s.relation == "supports"
+    }
+    if (
+        len(cross_tier) > 1
+        and len(
+            {
+                s.tier
+                for s in signals
+                if s.relation == "supports" and s.tier in policy.conflict_tiers
+            }
+        )
+        > 1
+    ):
+        return review("tier-0/1 disagreement across evidence tiers")
+    contradictions = [
+        s for s in signals if s.tier in policy.conflict_tiers and s.relation == "contradicts"
+    ]
+    if contradictions:
+        s = contradictions[0]
+        return review(f"tier-{s.tier} contradiction ({s.source})")
     if ranking:
         against = [s for s in signals if s.tier in policy.conflict_tiers
                    and s.relation == "contradicts" and s.candidate == ranking[0]]  # fmt: skip

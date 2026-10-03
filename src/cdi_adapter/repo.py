@@ -436,6 +436,9 @@ def purge_document_facts(conn: Connection, document_id: UUID | str) -> int:
     """Re-extraction supersedes: clear the document's facts / extraction / encounter / aliases
     (+ its review tasks and projections, which were derived from those facts)."""
     d = {"d": str(document_id)}
+    from cdi_adapter.training.calibration import preserve_document_decisions
+
+    preserve_document_decisions(conn, document_id)
     n = conn.execute(text("DELETE FROM clinical_fact WHERE :d = ANY(source_doc_ids)"), d).rowcount
     for sql in (
         "DELETE FROM review_task WHERE document_id = :d",

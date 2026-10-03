@@ -37,12 +37,13 @@ from cdi_adapter import repo
 from cdi_adapter.training import calibration, calibrator
 
 CONFIG_SCHEMA = "gate_thresholds.v1"
+VALIDATION_METHOD = "held_out_wilson_v2"
 DEFAULT_TARGET = 0.02
 DEFAULT_TARGET_NUMERIC = 0.005
 TARGET_BASIS = "placeholder: the clinical safety owner approves the false-auto-accept NFR (E4-S3)"
 DEFAULT_MIN_ACCEPTED = 20
 Z = 1.645  # one-sided 95%
-BOUND = f"wilson-upper(z={Z})"
+BOUND = f"wilson-upper(z={Z});held-out-v2"
 MIN_HELD_OUT_FOR_VERDICT = 10
 NUMERIC_FIELDS = ("strength", "dose", "duration")
 DERIVED_STATE = "single_engine"
@@ -68,6 +69,10 @@ def wilson_upper(errors: int, n: int, z: float = Z) -> float:
 def derive_cutoff(points: list[tuple[float, int]], target: float, min_accepted: int,
                   z: float = Z) -> tuple[float | None, dict[str, Any]]:  # fmt: skip
     """The lowest calibrated score whose accepted set (score >= it) meets the target."""
+    if not math.isfinite(target) or not 0 < target < 1 or min_accepted < 1:
+        raise ValueError("target must be in (0,1) and min_accepted positive")
+    if any(not math.isfinite(x) or not 0 <= x <= 1 or y not in (0, 1) for x, y in points):
+        raise ValueError("threshold examples require finite scores and binary outcomes")
     pts = sorted(points)
     n = len(pts)
     suffix_err = [0] * (n + 1)
@@ -91,10 +96,14 @@ def derive_thresholds(conn: Connection, calibrator_version: int, *,
                       target_numeric: float = DEFAULT_TARGET_NUMERIC,
                       min_accepted: int = DEFAULT_MIN_ACCEPTED,
                       actor: str = "threshold-derive") -> dict[str, Any]:  # fmt: skip
-    model = conn.execute(text("SELECT dataset_version FROM calibration_model WHERE version = :v"),
+    conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('threshold_derive'))"))
+    model = conn.execute(text("SELECT dataset_version, method FROM calibration_model "
+                              "WHERE version = :v"),
                          {"v": calibrator_version}).first()  # fmt: skip
     if model is None:
         raise LookupError(f"no fitted calibrator v{calibrator_version} (E4-S2 fit first)")
+    if model.method != calibrator.METHOD:
+        raise ValueError("legacy calibrator must be refitted before deriving thresholds")
     if not 0 < target_numeric <= target < 1:
         raise ValueError("targets must satisfy 0 < numeric target <= default target < 1")
     curves = calibrator.curves_for(conn, calibrator_version)
@@ -123,10 +132,11 @@ def derive_thresholds(conn: Connection, calibrator_version: int, *,
                 else:
                     acc = [y for p, y in held_out if p >= t]
                     fa = round(1 - sum(acc) / len(acc), 5) if acc else None
-                    r |= {"threshold": round(t, 6), "n_accepted_derive": got["n_accepted"],
+                    r |= {"threshold": t, "n_accepted_derive": got["n_accepted"],
                           "false_accept_derive": got["false_accept"],
                           "n_accepted_held_out": len(acc), "false_accept_held_out": fa,
-                          "meets_target": (fa <= goal if fa is not None
+                          "meets_target": (wilson_upper(len(acc) - sum(acc), len(acc)) <= goal
+                                           if fa is not None
                                            and len(acc) >= MIN_HELD_OUT_FOR_VERDICT else None),
                           "basis": f"derived on calibrator v{calibrator_version} data"}  # fmt: skip
             rows.append(r)
@@ -167,12 +177,14 @@ def config_for(conn: Connection, version: int) -> dict[str, Any]:
     """The checked-in form of a derived set: what the gate needs, nothing else."""
     s = conn.execute(text("SELECT * FROM gate_threshold_set WHERE version = :v"),
                      {"v": version}).mappings().one()  # fmt: skip
+    if s["bound"] != BOUND:
+        raise ValueError("legacy threshold set must be rederived with held-out Wilson validation")
     rows = conn.execute(
         text("SELECT doc_type, fact_type, field, evidence_state, status, threshold, target, "
              "  false_accept_held_out, meets_target FROM gate_threshold WHERE set_id = :s "
              "ORDER BY doc_type, fact_type, field, evidence_state"), {"s": str(s["id"])},
     ).mappings().all()  # fmt: skip
-    return {"schema": CONFIG_SCHEMA, "version": version,
+    return {"schema": CONFIG_SCHEMA, "validation_method": VALIDATION_METHOD, "version": version,
             "calibrator_version": s["calibrator_version"],
             "targets": {"default": s["target_default"], "numeric": s["target_numeric"]},
             "target_basis": s["target_basis"], "bound": s["bound"],
@@ -200,14 +212,31 @@ def load_config(path: str) -> Thresholds:
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
     if raw.get("schema") != CONFIG_SCHEMA:
         raise ValueError(f"{path}: not a {CONFIG_SCHEMA} file")
+    if raw.get("validation_method") != VALIDATION_METHOD:
+        raise ValueError(
+            "threshold configuration must be regenerated with held-out Wilson validation"
+        )
     classes = {}
     for t in raw["thresholds"]:
         if t["status"] == "derived" and t["threshold"] is None:
             raise ValueError(f"{path}: a derived class without a threshold")
-        classes[(t["doc_type"], t["fact_type"], t["field"], t["evidence_state"])] = (
-            t["status"],
-            t["threshold"],
-        )
+        key = (t["doc_type"], t["fact_type"], t["field"], t["evidence_state"])
+        if key in classes:
+            raise ValueError(f"{path}: duplicate threshold class")
+        cutoff = t["threshold"]
+        if cutoff is not None and (
+            isinstance(cutoff, bool)
+            or not isinstance(cutoff, int | float)
+            or not math.isfinite(cutoff)
+            or not 0 <= cutoff <= 1
+        ):
+            raise ValueError(f"{path}: threshold must be a finite probability")
+        status = t["status"]
+        if status == "derived" and t.get("meets_target") is not True:
+            status = "unvalidated"
+        if t["evidence_state"] == "engines_disagree":
+            status = "always_review"
+        classes[key] = (status, cutoff)
     return Thresholds(int(raw["version"]), int(raw["calibrator_version"]), classes)
 
 
@@ -242,13 +271,11 @@ def gate_decision(cfg: Thresholds, doc_type: str | None, fact_type: str,
                   field_scores: dict[str, float], state: str, held_by_rules: bool
                   ) -> tuple[str | None, dict[str, Any] | None]:  # fmt: skip
     """``auto_accepted`` only when every field clears its class's threshold; ``in_review``
-    otherwise; ``None`` when this doc_type x fact_type has no derived classes (the global
-    constants still apply there)."""
+    otherwise. A configured policy never falls back to global constants for a missing class."""
     doc = doc_type or "unknown"
-    if not any(k[0] == doc and k[1] == fact_type for k in cfg.classes):
-        return None, None
     fields: dict[str, Any] = {}
-    ok = not held_by_rules
+    expected = {k[2] for k in cfg.classes if k[0] == doc and k[1] == fact_type}
+    ok = not held_by_rules and state != "engines_disagree" and expected <= field_scores.keys()
     for fld, score in sorted(field_scores.items()):
         status, t = cfg.classes.get((doc, fact_type, fld, state), ("no_class", None))
         passed = status == "derived" and t is not None and score >= t

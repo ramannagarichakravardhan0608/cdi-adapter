@@ -105,13 +105,15 @@ def test_migration_0001_downgrade_drops_every_table():
     assert set(m.VIEWS) == set(re.findall(r"CREATE OR REPLACE VIEW (\w+)", VIEWS))
 
 
-def test_migration_chain_is_linear_0001_to_0023():
+def test_migration_chain_is_linear_0001_to_0025():
     cfg = Config(str(ROOT / "alembic.ini"))
     cfg.set_main_option("script_location", str(ROOT / "db" / "alembic"))
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_heads() == ["0023"]  # 0023: the problem list (E5-S1)
+    assert script.get_heads() == ["0025"]  # Epic 4 evidence integrity
     chain = [r.revision for r in script.walk_revisions("base", "heads")]
     assert chain == [
+        "0025",
+        "0024",
         "0023",
         "0022",
         "0021",

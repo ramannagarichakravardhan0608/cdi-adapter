@@ -17,11 +17,13 @@ as written is a concept's display or verified alias), L2 (the same after normali
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy import Connection, text
 
+from cdi_adapter.config import get_settings
 from cdi_adapter.resolution.cascade import Decision, LevelResult, Signal, load_policy, resolve
 from cdi_adapter.terminology.service import bind_text, normalize
 
@@ -71,6 +73,18 @@ def evidence_for(conn: Connection, fact: dict[str, Any], provenance: list[dict[s
         signals.append(Signal("extraction-span", 1, cand, "supports",
                               fact.get("confidence_extract"),
                               "the extractor's quoted span (no OCR line linked)"))  # fmt: skip
+    if len({o["engine"] for o in obs}) > 1:
+        # Different engines attached to a fact do not prove that their field readings agree.
+        # E4-S11 deliberately does not join the concordance table into candidate resolution.
+        signals.append(
+            Signal(
+                "uncompared-readings",
+                1,
+                cand,
+                "contradicts",
+                reason="multiple engines require a validated field comparison",
+            )
+        )
     levels: dict[str, LevelResult] = {}
     local = str(fact.get("local_text") or "")
     b = bind_text(fact["fact_type"], local) if fact.get("code_status") == "bound" else None
@@ -95,7 +109,17 @@ def evidence_for(conn: Connection, fact: dict[str, Any], provenance: list[dict[s
 def resolve_fact(conn: Connection, fact: dict[str, Any],
                  provenance: list[dict[str, Any]]) -> Decision:  # fmt: skip
     signals, levels, cohort = evidence_for(conn, fact, provenance)
-    d = resolve(signals, levels, field_=fact["fact_type"], cohort=cohort)
+    policy = load_policy()
+    if get_settings().mlserve_backend == "stub":
+        # Explicit synthetic baseline; this exemption must never activate for a real model.
+        policy = replace(
+            policy,
+            validated=tuple(
+                (level, group, field, "synthetic-stub-fixture" if basis == "assumed" else basis)
+                for level, group, field, basis in policy.validated
+            ),
+        )
+    d = resolve(signals, levels, field_=fact["fact_type"], cohort=cohort, policy=policy)
     d.trace[:0] = [{"step": "tier_not_built", **t} for t in _NOT_BUILT_TIERS]
     d.trace.insert(0, {"step": "input", "field": fact["fact_type"], "cohort": cohort,
                        "candidate": candidate_of(fact)})  # fmt: skip

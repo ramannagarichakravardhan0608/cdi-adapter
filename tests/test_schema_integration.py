@@ -49,6 +49,7 @@ MIGRATION_TABLES = {"schema_gate", "migration_run"}
 # migration 0022 (backlog E9-S3): what stopped being retried
 QUEUE_TABLES = {"dead_letter"}
 TRAINING_TABLES = {
+    "calibration_adjudication",  # 0025: durable clinician decisions
     "calibration_dataset",
     "calibration_training_example",  # 0015 (E4-S1)
     "calibration_model",
@@ -97,7 +98,7 @@ def test_upgrade_head_creates_every_table_and_view(engine):
     assert _tables(engine) == ALL_TABLES
     assert _views(engine) == VIEWS
     with engine.connect() as c:
-        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0023"
+        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0025"
         assert c.execute(text("SELECT nextval('patient_mpi_seq')")).scalar_one() >= 1
 
 

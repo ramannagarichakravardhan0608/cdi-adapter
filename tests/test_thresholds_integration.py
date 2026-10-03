@@ -27,7 +27,7 @@ from tests.test_validate_integration import _rx
 pytestmark = pytest.mark.integration
 
 
-def _step_data(n: int = 4000) -> list[tuple]:
+def _step_data(n: int = 8000) -> list[tuple]:
     """Mock: the strength is right exactly when the score is >= 0.6; other fields always."""
     rows = []
     for i in range(n):
@@ -139,7 +139,7 @@ def test_the_derived_thresholds_replace_the_global_constants_at_the_gate(
     assert note["version"] == out["version"] and note["evidence_state"] == "single_engine"
     assert all(v["passed"] and v["status"] == "derived" for v in note["fields"].values())
     others = [f for f in facts if f["fact_type"] != "medication"]
-    assert all("thresholds" not in (f["review_note"] or {}) for f in others)  # not covered
+    assert all(f["review_state"] == "in_review" for f in others)  # no validated class
     with session_scope() as c:
         policy = c.execute(text("SELECT policy_id FROM verified_fact WHERE fact_id = :f"),
                            {"f": str(meds[0]["id"])}).scalar_one()  # fmt: skip

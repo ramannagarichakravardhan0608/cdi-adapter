@@ -7,7 +7,8 @@ scored ``x`` was actually right, and stores the curve per slice:
   medicine, strength, dose, frequency, duration; lab orders ``lab_test``; conditions
   ``diagnosis``; every other fact type is one ``value``. A field is right when the reviewer's
   final value equals the proposal (a rejection makes every proposed field wrong).
-* **held-out reliability**: 1 in 5 examples (a hash of the fact and field, so the split is stable)
+* **held-out reliability**: 1 in 5 document groups per field (a stable hash; legacy rows
+  without a document use fact id)
   is kept out of the fit; the reliability diagram (predicted vs observed correctness in 10 bins)
   and the expected calibration error before and after are measured on them.
 * a slice with fewer than ``min_examples`` training examples is ``insufficient_data``: it is never
@@ -25,6 +26,7 @@ from __future__ import annotations
 import hashlib
 import html
 import json
+import math
 from collections import defaultdict
 from collections.abc import Iterable
 from functools import lru_cache
@@ -39,7 +41,7 @@ from cdi_adapter.terminology.service import normalize
 from cdi_adapter.training import calibration
 from cdi_adapter.training.isotonic import Curve, fit
 
-METHOD = "isotonic_pav"
+METHOD = "isotonic_pav_v2"
 DEFAULT_MIN_EXAMPLES = 30
 DEFAULT_TOLERANCE = 0.05
 TOLERANCE_BASIS = "placeholder: the clinical owner agrees the band (backlog E4-S2)"
@@ -77,7 +79,8 @@ def _field(fact_type: str, field: str, v: dict[str, Any] | None) -> Any:
         n = _num(v.get("strength_num"))
         return None if n is None else (n, str(v.get("strength_unit") or "").lower())
     if field == "dose":
-        return _num(v.get("dose_num"))
+        n = _num(v.get("dose_num"))
+        return None if n is None else (n, str(v.get("dose_unit_ucum") or "").lower())
     if field == "duration":
         return _num(v.get("duration_days"))
     if field == "frequency":
@@ -143,9 +146,17 @@ def slice_examples(rows: list[dict[str, Any]]) -> dict[Key, list[tuple[float, in
     for r in rows:
         if r.get("confidence") is None:
             continue
+        if not math.isfinite(float(r["confidence"])) or not 0 <= float(r["confidence"]) <= 1:
+            raise ValueError("training confidence must be a finite probability")
         for field, ok in field_outcomes(r):
             key = (r.get("doc_type") or "unknown", r["fact_type"], field)
-            out[key].append((float(r["confidence"]), ok, held_out(r["proposed_fact_id"], field)))
+            out[key].append(
+                (
+                    float(r["confidence"]),
+                    ok,
+                    held_out(r.get("document_id") or r["proposed_fact_id"], field),
+                )
+            )
     return out
 
 
@@ -153,6 +164,9 @@ def fit_calibrator(conn: Connection, dataset_version: int | None = None, *,
                    min_examples: int = DEFAULT_MIN_EXAMPLES,
                    tolerance: float = DEFAULT_TOLERANCE,
                    actor: str = "calibrator-fit") -> dict[str, Any]:  # fmt: skip
+    if min_examples < 1 or not math.isfinite(tolerance) or not 0 <= tolerance <= 1:
+        raise ValueError("positive min_examples and a finite tolerance in [0,1] are required")
+    conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('calibrator_fit'))"))
     if dataset_version is None:
         dataset_version = conn.execute(
             text("SELECT max(version) FROM calibration_dataset")).scalar_one()  # fmt: skip
@@ -238,10 +252,12 @@ def _curves(url: str, version: int) -> dict[Key, Curve]:
                  "JOIN calibration_model m ON m.id = s.model_id "
                  "WHERE m.version = :v AND s.status = 'fitted'"), {"v": version},
         ).all()  # fmt: skip
-        known = c.execute(text("SELECT 1 FROM calibration_model WHERE version = :v"),
+        known = c.execute(text("SELECT method FROM calibration_model WHERE version = :v"),
                           {"v": version}).first()  # fmt: skip
     if known is None:
         raise LookupError(f"CDI_CALIBRATOR_VERSION={version}: no such fitted calibrator")
+    if known.method != METHOD:
+        raise ValueError("legacy calibrator must be refitted with isotonic_pav_v2")
     return {(r.doc_type, r.fact_type, r.field): Curve(tuple(r.curve["x"]), tuple(r.curve["y"]))
             for r in rows}  # fmt: skip
 
@@ -257,7 +273,7 @@ def gate_score(version: int | None, url: str, doc_type: str | None, fact_type: s
         return score, None
     curves = _curves(url, version)
     doc = doc_type or "unknown"
-    used = {k[2]: round(c.predict(score), 4) for k, c in curves.items()
+    used = {k[2]: c.predict(score) for k, c in curves.items()
             if k[0] == doc and k[1] == fact_type}  # fmt: skip
     if not used:
         return score, {"version": version, "slice": None, "reason": "no fitted slice"}

@@ -245,10 +245,22 @@ def _validate(conn: Connection, doc_id: str, s: Settings,
         state = gate(f["fact_type"], score, gate_findings, partial, s)
         decision = resolution.resolve_fact(conn, f, provenance)  # E4-S8: stricter only
         by_class = None
-        if cutoffs is not None and fitted is not None and fitted.get("fields"):
+        if cutoffs is not None:
             by_rules = partial or any(x.severity in ("blocker", "warn") for x in gate_findings)
+            present_fields = {
+                name
+                for name, _ in calibrator.field_outcomes(
+                    {
+                        "fact_type": f["fact_type"],
+                        "proposed": f,
+                        "corrected": f,
+                        "decision": "confirmed",
+                    }
+                )
+            }
+            by_rules = by_rules or not present_fields <= (fitted or {}).get("fields", {}).keys()
             t_state, by_class = thresholds.gate_decision(
-                cutoffs, doc_type, f["fact_type"], fitted["fields"],
+                cutoffs, doc_type, f["fact_type"], (fitted or {}).get("fields", {}),
                 thresholds.evidence_state(decision.matrix), by_rules)  # fmt: skip
             if t_state is not None:
                 state = t_state

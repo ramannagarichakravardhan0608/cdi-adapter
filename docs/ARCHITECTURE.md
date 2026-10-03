@@ -1869,3 +1869,29 @@ speedup, no 32 GB capacity measurement and no clinical evaluation of a fine-tune
   Benchmark comparison verifies matching input and execution conditions, rejects invalid raw
   JSON, and limits reported KV slot estimates by the engine configuration. Clinical accuracy,
   measured safe capacity, model registration and workbook changes remain separate release gates.
+
+## Epic 4 validation supplement — 2026-10-03
+
+See [the Epic 4 assessment](epic-4-readiness.md) for the supplied seven stories and release gaps.
+
+Migration 0024 extends the no-evidence invariant to provenance removal/reassignment/truncation,
+validates observation/candidate trace references, and constrains concordance records to the
+same handwritten crop with an unordered pair/version uniqueness rule. Migration 0025 adds
+immutable `calibration_adjudication` snapshots, written with S8 and preserved before legacy
+adjudicated projections are purged. Scheduled export includes that retained history.
+
+Calibration now fits correct PAV plateaus, groups the evaluation split by document within each
+field, recognizes dose-unit corrections, and retains full score precision. Newly fitted models
+use method `isotonic_pav_v2`; old models must be refitted. Derived thresholds need a successful
+held-out Wilson-bound verdict. A configured gate holds uncovered or incomplete classes instead
+of falling back to global constants. Numeric threshold storage is double precision.
+
+The cascade escalates cross-tier conflicts and every explicit tier 0/1 contradiction. Attached
+engines do not constitute measured agreement. The shipped `assumed` policy basis cannot accept
+facts with a real backend. The synthetic stub uses an explicit test-fixture basis, preserving
+its existing golden regression; that is not measured clinical validation.
+
+The original-image crop requirement remains unmet: ingest stores normalized page images and
+S3 hashes crops from those images. Extracted-text-only evidence and aggregate verified-fact
+confidence also leave the full per-field raw-pixel contract incomplete. Independent recognizer
+integration and clinical tolerance/NFR evidence remain outstanding.

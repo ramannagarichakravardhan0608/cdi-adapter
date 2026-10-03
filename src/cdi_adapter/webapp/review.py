@@ -257,6 +257,9 @@ def decide(conn: Connection, fact_id: UUID | str, d: ReviewDecision,
     _reviewer_provenance(conn, result_id, fact, reviewer)
     # backlog E4-S7: the decision as a reviewer candidate + verified_fact (append-only)
     evidence.record_reviewer_decision(conn, result_id, d.action, reviewer, fact["id"])
+    from cdi_adapter.training.calibration import record_decision
+
+    record_decision(conn, result_id)
     repo.write_audit(conn, actor=reviewer, action="update", entity="clinical_fact",
                      entity_id=fact["id"],
                      detail={"action": d.action, "result_fact": str(result_id),

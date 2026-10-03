@@ -2,19 +2,21 @@
 
 ``fit(x, y)`` returns the non-decreasing step function that best fits (least squares) the 0/1
 outcomes ``y`` against the scores ``x``; ``predict`` interpolates linearly between the fitted
-blocks' centres and clips outside them - the same model as scikit-learn's IsotonicRegression
+observed score knots and clips outside them - the same model as scikit-learn's IsotonicRegression
 with ``increasing=True, out_of_bounds="clip"``.
 """
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
+from itertools import groupby
 
 
 @dataclass(frozen=True)
 class Curve:
-    x: tuple[float, ...]  # block centres (mean score), strictly increasing
+    x: tuple[float, ...]  # observed scores, strictly increasing
     y: tuple[float, ...]  # fitted probability per block, non-decreasing
 
     def predict(self, v: float) -> float:
@@ -41,34 +43,20 @@ class Curve:
 def fit(x: Sequence[float], y: Sequence[float]) -> Curve:
     if len(x) != len(y) or not x:
         raise ValueError("x and y must be non-empty and of equal length")
-    # blocks of (sum_x, sum_y, weight) over the points sorted by score; equal scores pool first
-    pts = sorted(zip(x, y, strict=True))
-    blocks: list[list[float]] = []
-    for xi, yi in pts:
-        if blocks and blocks[-1][3] == xi:  # same score: one block from the start
-            b = blocks[-1]
-            b[0] += xi
-            b[1] += yi
-            b[2] += 1
-        else:
-            blocks.append([xi, yi, 1.0, xi])
-        # pool while the last two blocks violate the order
-        while len(blocks) > 1 and blocks[-2][1] / blocks[-2][2] > blocks[-1][1] / blocks[-1][2]:
-            b = blocks.pop()
-            a = blocks[-1]
-            a[0] += b[0]
-            a[1] += b[1]
-            a[2] += b[2]
-            a[3] = b[3]
-    cx = [round(b[0] / b[2], 6) for b in blocks]
-    cy = [round(b[1] / b[2], 6) for b in blocks]
-    # blocks whose centres coincide (possible after pooling) keep the later, higher value
+    if any(not math.isfinite(v) or not 0 <= v <= 1 for v in (*x, *y)):
+        raise ValueError("scores and outcomes must be finite probabilities")
+    # Group ties before PAV; retain every observed x so each pooled block stays flat.
     xs: list[float] = []
-    ys: list[float] = []
-    for centre, value in zip(cx, cy, strict=True):
-        if xs and centre <= xs[-1]:
-            ys[-1] = max(ys[-1], value)
-            continue
-        xs.append(centre)
-        ys.append(value)
-    return Curve(tuple(xs), tuple(ys))
+    blocks: list[tuple[int, int, float, int]] = []
+    for xi, group in groupby(sorted(zip(x, y, strict=True)), key=lambda point: point[0]):
+        ys = [yi for _, yi in group]
+        i = len(xs)
+        xs.append(xi)
+        blocks.append((i, i + 1, sum(ys), len(ys)))
+        while len(blocks) > 1 and blocks[-2][2] / blocks[-2][3] > blocks[-1][2] / blocks[-1][3]:
+            right, left = blocks.pop(), blocks.pop()
+            blocks.append((left[0], right[1], left[2] + right[2], left[3] + right[3]))
+    fitted = [0.0] * len(xs)
+    for start, end, total, weight in blocks:
+        fitted[start:end] = [total / weight] * (end - start)
+    return Curve(tuple(xs), tuple(fitted))

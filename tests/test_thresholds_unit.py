@@ -98,16 +98,21 @@ def test_a_fact_auto_accepts_only_when_every_field_clears_its_threshold():
         CFG, "prescription", "medication", {"medicine": 0.99, "dose": 0.99}, "single_engine", False
     )
     assert unknown == "in_review"  # a field with no class is never waved through
-    assert th.gate_decision(
-        CFG, "lab_report", "lab_result", {"value": 0.99}, "single_engine", False
-    ) == (None, None)  # not covered: global rule
+    assert (
+        th.gate_decision(CFG, "lab_report", "lab_result", {"value": 0.99}, "single_engine", False)[
+            0
+        ]
+        == "in_review"
+    )  # configured policy has no validated class
 
 
 def test_the_config_file_is_validated(tmp_path):
-    good = {"schema": th.CONFIG_SCHEMA, "version": 3, "calibrator_version": 2,
+    good = {"schema": th.CONFIG_SCHEMA, "validation_method": th.VALIDATION_METHOD,
+            "version": 3, "calibrator_version": 2,
             "thresholds": [{"doc_type": "prescription", "fact_type": "medication",
                             "field": "medicine", "evidence_state": "single_engine",
-                            "status": "derived", "threshold": 0.9}]}  # fmt: skip
+                            "status": "derived", "threshold": 0.9,
+                            "meets_target": True}]}  # fmt: skip
     path = tmp_path / "t.json"
     path.write_text(json.dumps(good), encoding="utf-8")
     th.clear_cache()
