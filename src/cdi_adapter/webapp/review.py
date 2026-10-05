@@ -25,7 +25,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import Connection, text
 
-from cdi_adapter import evidence, longitudinal, metrics, repo
+from cdi_adapter import evidence, longitudinal, metrics, repo, summary
 from cdi_adapter.db import session_scope
 from cdi_adapter.terminology.parse import freq_per_day, is_prn, to_ucum
 from cdi_adapter.terminology.service import bind_text
@@ -271,6 +271,8 @@ def decide(conn: Connection, fact_id: UUID | str, d: ReviewDecision,
         longitudinal.reconcile_patient_medications(conn, fact["patient_id"], actor=reviewer)
     elif fact["fact_type"] == "condition":
         longitudinal.reconcile_patient_problems(conn, fact["patient_id"], actor=reviewer)
+    # E5-S2: the decision changed a governed fact, so the summary is rebuilt with it
+    summary.refresh_patient_summary(conn, fact["patient_id"])
     metrics.REVIEW_DECISIONS.labels(d.action).inc()
     return {"fact_id": str(fact["id"]), "result_fact_id": str(result_id), "review_state": state,
             "tasks_closed": closed}  # fmt: skip

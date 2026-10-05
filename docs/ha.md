@@ -362,3 +362,106 @@ depend on the broker; an unsupported broker is refused; the kill schedule is ran
 and always inside the burst) and `tests/test_durability_integration.py` on real PostgreSQL (what
 counts as lost, what a redelivered document is instead, a dead letter reported on its own, a
 document extracted twice, and the verdict against the tolerance).
+
+### The derived patient summary (backlog E5-S2)
+
+`patient_summary` (migration 0026) holds one row per patient — the current problem list, the
+active medications and the allergies, as jsonb with their counts and the latest encounter date —
+built **from the §4.1 read-model views**, so it inherits E5-S1's continuity: the active order of
+each medicine, one line per problem.
+
+It is **not a PostgreSQL materialized view**, and that is deliberate. The story asks for a summary
+that is current "within the same job's live-reprojection window — no separate manual refresh
+step", and a matview cannot do that: `REFRESH MATERIALIZED VIEW` rebuilds *every* patient under an
+`AccessExclusiveLock` (one patient's fact landing would block every reader and every other job, at
+30 concurrent patients), and `REFRESH ... CONCURRENTLY` cannot run inside a transaction block at
+all. So the summary is a derived table refreshed **per patient, in the caller's transaction**:
+
+- the S6 gate refreshes it right after it reconciles the patient (`validate/service.py`), so by the
+  time the job projects FHIR the summary is already current;
+- each Reviewer decision does the same (`webapp/review.py`);
+- there is nothing to run by hand, and no staleness window.
+
+A trigger on `clinical_fact` sets `stale_at` whenever a **governed** fact is written, changed or
+removed, and the refresh clears it. Nothing depends on the trigger for correctness — the refresh is
+in the same transaction — but it turns "a write path forgot to refresh" from silent drift into a
+visible row:
+
+```bash
+python -m cdi_adapter.summary stale            # exits 1 and lists the patients if any drifted
+python -m cdi_adapter.summary rebuild          # backfill after the migration, or repair
+python -m cdi_adapter.summary show <patient>   # one patient's summary as the reader sees it
+```
+
+Tests: `tests/test_summary_integration.py` on real PostgreSQL — the summary is current when the
+job ends with nothing calling a refresh; a later visit moves it (the superseded order is gone, the
+problem is still one line); a Reviewer decision updates it; only governed facts reach it; a patient
+with nothing governed has an empty summary rather than a missing one; the refresh is idempotent and
+the lists are ordered so a reader diffing two summaries sees only real movement; a governed fact
+written behind its back shows as stale and the refresh clears it; `rebuild` backfills.
+
+### Settling a merge conflict (backlog E5-S3)
+
+The S8 console decides one fact at a time, which is the wrong shape when the S6 gate holds *two*
+facts over: a `value_mismatch` writes a `fact_conflict` (`CONTRADICTED`, `blocker`) and both facts
+go `in_review`. Those conflicts were written and then invisible — nothing read the table. Now:
+
+- **`GET /conflicts`** (`webapp/conflict_page.py`) — the merge console. Both facts **side by side,
+  each with its own evidence**: its page image with the bbox drawn, the OCR span behind it, the
+  value, the code, the confidence and the findings. Linked from the nav.
+- **keep A / keep B / merge.** Keep confirms one fact and rejects the other
+  (`is_current = false`, `clinical_status = 'entered-in-error'`), exactly as the S8 console would.
+  Merge applies the reviewer's values to the fact they keep, which produces a new `corrected` fact
+  that **supersedes** it (the same `apply_fact_correction` path as an S8 correction, so medication
+  detail and catalogue re-matching behave identically), and rejects the other side. `base` says
+  which fact the merge builds on. Merge without values is refused — that decision is keep A.
+- **One decision, one record** (migration 0027). The conflict row itself carries `resolution`,
+  `result_fact_id`, `resolved_by`, `resolved_at` and `note`, under a constraint that a resolved
+  conflict must say how and by whom and an open one must say neither; and exactly **one**
+  `audit_log` row is written against `fact_conflict`. Then E5-S1 reconciliation and the E5-S2
+  summary run in the same transaction, so the patient's lists and summary move with the decision.
+  `cdi_conflicts_resolved_total{resolution}` counts them.
+
+Tests: `tests/test_conflicts_integration.py` on real PostgreSQL — a real gate-written conflict is
+listed with both sides; the detail carries each side's own evidence; keep A and keep B set the two
+facts and write a single audit row; merge creates a corrected fact superseding the chosen base and
+can build on either side; merge without values is refused and writes nothing; a settled conflict
+cannot be settled twice; the queue drops it; and the summary is left current.
+
+### Clinical field grammars (backlog E15-S2)
+
+E2-S3 locks the *document* schema, so the model cannot emit invalid JSON. It says nothing about
+what goes **inside** a field: `dose: "1-7-1"` is schema-valid and clinically impossible. The four
+prescription fields whose form is closed now have their own grammar
+([`cdi_adapter/fieldgrammar.py`](../src/cdi_adapter/fieldgrammar.py)):
+
+| domain | grammar |
+|---|---|
+| `strength` | `<number><unit>`, the unit from the project's own UCUM aliases |
+| `dose` | `d-d-d`, each slot 0–4 in halves (`1-0-1`, `1-½-1`) — a **count**, which is why `1-7-1` is not in it |
+| `duration` | `x<n>d` \| `x<n> days` \| `x<n>wk` \| `x<n>/52` |
+| `frequency` | the closed set OD/BD/TDS/QID/HS/SOS/PRN, every spelling `terminology.parse` knows, **or a dose pattern** — a prescription here writes the frequency as `1-0-1`, and `freq_per_day` reads it that way |
+
+**One definition, two renderings.** Each grammar is one expression tree rendered to XGrammar EBNF
+*and* to a regex. The decoder is given the EBNF; the pipeline (which has no `xgrammar`) uses the
+regex; `tests/test_fieldgrammar_unit.py` runs the **real XGrammar 0.1.25** over the whole fixture
+corpus and asserts the two verdicts are identical, so they cannot drift apart silently.
+
+**As a validator (live).** `rules.check_field_grammars` flags a reading an unconstrained engine
+produced outside its grammar — finding `field-out-of-grammar`, blocker for the numeric fields
+(E4-S3's strict ones) and for a frequency written as a broken dose pattern, warn otherwise. It
+judges the engine's own strings (the extraction payload, and `medication_detail.frequency_code`,
+which is kept verbatim); a structured `{value, unit}` has already been parsed and is left to the
+numeric rules, and an absent field stays `check_medication`'s business.
+
+**As constrained decoding (opt-in).** Any schema property may carry `"x-cdi-field": "<domain>"`
+and `mlserve.grammar` swaps it for that field's exact rule, using the same marker mechanism E2-S3
+already uses for the 0–1 confidence. The shipped schemas are **not annotated yet, deliberately**:
+locking a free-text clinical field means the model can no longer write what is on the page when
+the page is outside the grammar, and whether that trades well belongs to the E2-S4 gold set rather
+than to an assumption. Until then a bad reading is *flagged*, not *impossible*. An unknown domain
+in a schema raises `GrammarError` in CI rather than passing unconstrained.
+
+What this found on day one: the pipeline stores dose patterns in the frequency field, which the
+first run surfaced as flagged readings on a clean prescription — the grammar was corrected to the
+pipeline's reality rather than the other way round.

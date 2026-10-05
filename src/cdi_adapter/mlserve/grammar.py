@@ -30,6 +30,21 @@ _RULE_NAME = "cdi_unit_interval"
 UNIT_INTERVAL_RULE = f'{_RULE_NAME} ::= ("0" ("." [0-9]{{1,6}})?) | ("1" ("." "0"{{1,6}})?)'
 
 _ANNOTATIONS = {"description", "title", "$id", "$schema", "$comment", "examples", "default"}
+# E15-S2: a string property may name a clinical field domain, and the grammar then locks that
+# field's own form (cdi_adapter.fieldgrammar) instead of allowing any string. The key is an
+# annotation: it tells this converter what to do and is ignored by every JSON-Schema validator.
+FIELD_KEY = "x-cdi-field"
+_ANNOTATIONS |= {FIELD_KEY}
+
+
+def _field_mark(domain: str) -> str:
+    return f"__cdi_field_{domain}__"
+
+
+def _field_rule_name(domain: str) -> str:
+    return f"cdi_field_{domain}"
+
+
 _SUPPORTED = _ANNOTATIONS | {
     "type",
     "properties",
@@ -119,11 +134,29 @@ def unsupported(schema: Any, path: str = "#") -> list[str]:
     return out
 
 
+def field_domain(node: Any) -> str | None:
+    """The clinical field domain a schema node names, if it names a known one (E15-S2)."""
+    if not isinstance(node, dict):
+        return None
+    domain = node.get(FIELD_KEY)
+    if domain is None:
+        return None
+    from cdi_adapter import fieldgrammar
+
+    if domain not in fieldgrammar.FIELDS:
+        raise GrammarError(f"unknown clinical field domain {domain!r}")
+    return str(domain)
+
+
 def with_placeholders(schema: Any) -> Any:
-    """Every 0-1 number replaced by a string constant the EBNF step can find and swap."""
+    """Every 0-1 number, and every clinical field, replaced by a string constant the EBNF step
+    can find and swap for its exact rule."""
     if isinstance(schema, dict):
         if _is_unit_interval(schema):
             return {"const": _MARK}
+        domain = field_domain(schema)
+        if domain is not None:
+            return {"const": _field_mark(domain)}
         result = {}
         for k, v in schema.items():
             if k in {"properties", "$defs"} and isinstance(v, dict):
@@ -161,5 +194,26 @@ def _ebnf(schema_json: str) -> str:
     grammar = str(xgr.Grammar.from_json_schema(with_placeholders(schema), any_whitespace=False))
     if _MARK_LITERAL in grammar:
         grammar = grammar.replace(_MARK_LITERAL, _RULE_NAME) + "\n" + UNIT_INTERVAL_RULE + "\n"
+    grammar = _with_field_rules(grammar)  # E15-S2
     xgr.Grammar.from_ebnf(grammar)  # the same parse vLLM runs before accepting the request
     return grammar
+
+
+def _with_field_rules(grammar: str) -> str:
+    """Replace each clinical field's marker string with its own rule, and append the rules
+    (E15-S2). The field's text is a JSON string, so the rule is quoted - the model may only emit
+    a reading the field grammar accepts, and nothing else."""
+    from cdi_adapter import fieldgrammar
+
+    rules = []
+    for domain in fieldgrammar.FIELDS:
+        literal = json.dumps(json.dumps(_field_mark(domain)))
+        if literal not in grammar:
+            continue
+        name = _field_rule_name(domain)
+        grammar = grammar.replace(literal, name)
+        body = fieldgrammar.ebnf(domain).split("::=", 1)[1].strip()
+        rules.append(f'{name} ::= "\\"" {body} "\\""')
+    if not rules:
+        return grammar
+    return grammar + "\n" + "\n".join(rules) + "\n"

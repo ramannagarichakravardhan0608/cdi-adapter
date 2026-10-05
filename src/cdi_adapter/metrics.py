@@ -62,6 +62,9 @@ GATE_DECISIONS = Counter("cdi_gate_decisions_total", "S6 governance gate decisio
 REVIEW_DECISIONS = Counter("cdi_review_decisions_total", "Reviewer decisions on held facts",
                            ["action"])  # fmt: skip
 REVIEW_ITEMS = Counter("cdi_review_items_total", "Reviewer actions on review items", ["action"])
+# E5-S3: how a reviewer settled a multi-fact conflict (keep_a / keep_b / merge)
+CONFLICTS_RESOLVED = Counter("cdi_conflicts_resolved_total",
+                             "Multi-fact conflicts a reviewer settled", ["resolution"])  # fmt: skip
 VLM_SECONDS = Histogram("cdi_vlm_generate_seconds", "Model gateway call time", ["kind"],
                         buckets=STAGE_BUCKETS)  # fmt: skip
 VLM_REQUESTS = Counter("cdi_vlm_requests_total", "Model gateway calls", ["kind", "outcome"])
@@ -111,6 +114,8 @@ for _a in ("accept", "correct", "reject"):
     REVIEW_DECISIONS.labels(_a)
 for _a in ("claim", "approve", "reject"):
     REVIEW_ITEMS.labels(_a)
+for _c in ("keep_a", "keep_b", "merge"):
+    CONFLICTS_RESOLVED.labels(_c)
 for _w in ("load", "generate", "batch"):
     VLM_OOM.labels(_w)
 for _o in ("complete", "partial"):

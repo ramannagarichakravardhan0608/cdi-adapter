@@ -31,7 +31,9 @@ def _arch_section_4_1_tables() -> set[str]:
     names: set[str] = set()
     for row in sec.splitlines():
         cells = row.split("|")
-        if len(cells) > 3 and not cells[1].strip().startswith(("Read model", "S7 continuity")):
+        # the derived rows (read models, S7 continuity and summary) are not §4.1 base tables
+        derived = ("Read model", "S7 continuity", "S7 summary")
+        if len(cells) > 3 and not cells[1].strip().startswith(derived):
             names.update(re.findall(r"`([a-z_]+)`", cells[2]))
     return names
 
@@ -105,13 +107,15 @@ def test_migration_0001_downgrade_drops_every_table():
     assert set(m.VIEWS) == set(re.findall(r"CREATE OR REPLACE VIEW (\w+)", VIEWS))
 
 
-def test_migration_chain_is_linear_0001_to_0025():
+def test_migration_chain_is_linear_0001_to_0027():
     cfg = Config(str(ROOT / "alembic.ini"))
     cfg.set_main_option("script_location", str(ROOT / "db" / "alembic"))
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_heads() == ["0025"]  # Epic 4 evidence integrity
+    assert script.get_heads() == ["0027"]  # 0027: conflict resolution (E5-S3)
     chain = [r.revision for r in script.walk_revisions("base", "heads")]
     assert chain == [
+        "0027",
+        "0026",
         "0025",
         "0024",
         "0023",

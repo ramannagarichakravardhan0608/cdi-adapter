@@ -50,7 +50,7 @@ from uuid import UUID
 
 from sqlalchemy import Connection, text
 
-from cdi_adapter import evidence, longitudinal, metrics, repo
+from cdi_adapter import evidence, fieldgrammar, longitudinal, metrics, repo, summary
 from cdi_adapter.config import Settings, get_settings
 from cdi_adapter.db import session_scope
 from cdi_adapter.logging import get_logger
@@ -191,6 +191,8 @@ def _validate(conn: Connection, doc_id: str, s: Settings,
     )  # fmt: skip
 
     facts = repo.get_facts_for_document(conn, doc_id)
+    # E15-S2: the engine's own per-field readings, to judge against the clinical field grammars
+    med_readings = fieldgrammar.readings_by_drug(ext)
     cutoffs = thresholds.check_config(s.gate_thresholds, s.calibrator_version)  # E4-S3
     cls = repo.get_latest_classification(conn, doc_id) if s.calibrator_version else None
     doc_type = cls["doc_type"] if cls else None
@@ -212,7 +214,9 @@ def _validate(conn: Connection, doc_id: str, s: Settings,
         findings = (range_findings + rules.check_unit_present(f) + rules.check_medication(f)
                     + rules.check_dates(f, enc_date)
                     + rules.check_evidence(provenance)
-                    + rules.check_terminology(f))  # fmt: skip
+                    + rules.check_terminology(f)
+                    + rules.check_field_grammars(f, med_readings.get(
+                        fieldgrammar.normalise(f.get("drug_text")).lower())))  # fmt: skip
 
         # cross-document duplicate / contradiction
         if f.get("code"):
@@ -295,6 +299,9 @@ def _validate(conn: Connection, doc_id: str, s: Settings,
 
     patient_id = facts[0]["patient_id"] if facts else None
     longitudinal.reconcile_patient(conn, patient_id)  # E5-S1: medications + problems
+    # E5-S2: and the derived summary, on this connection and in this transaction - so it is
+    # already current when the job projects FHIR in the same window (§8.1). No refresh step.
+    summary.refresh_patient_summary(conn, patient_id)
     if held:
         _task(conn, doc_id, patient_id, _task_kind(held), "normal", held)
     if audit:

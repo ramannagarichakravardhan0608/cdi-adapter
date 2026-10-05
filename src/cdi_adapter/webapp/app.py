@@ -46,7 +46,17 @@ from cdi_adapter.logging import configure, get_logger
 from cdi_adapter.mpi import registry
 from cdi_adapter.mpi.service import patient_summary
 from cdi_adapter.storage import get_store
-from cdi_adapter.webapp import admin, auth, jobstore, monitor, review, review_page, reviewer
+from cdi_adapter.webapp import (
+    admin,
+    auth,
+    conflict_page,
+    conflicts,
+    jobstore,
+    monitor,
+    review,
+    review_page,
+    reviewer,
+)
 from cdi_adapter.webapp.page import upload_page
 
 log = get_logger(__name__)
@@ -66,6 +76,8 @@ app = FastAPI(
 app.include_router(auth.router)
 app.include_router(review.router)
 app.include_router(review_page.router)
+app.include_router(conflicts.router)  # E5-S3
+app.include_router(conflict_page.router)  # E5-S3
 app.include_router(reviewer.router)
 app.include_router(admin.router)
 app.include_router(monitor.router)

@@ -306,6 +306,7 @@ read-model views: [`db/views.sql`](../db/views.sql); migration:
 | Audit | `audit_log` | every create/update/read with actor + detail |
 | Read model (views) | `v_problem_list`, `v_medication_list`, `v_allergy_list`, `v_results_grid`, `v_encounter_timeline` | flattened lists clinicians read |
 | S7 continuity (E5-S1) | `medication_supersession` + `v_medication_history` (0014), `problem_continuity` + `v_problem_history` (0023) | across encounters: the latest order and the latest mention of each problem are what the two lists show; every earlier row is kept, linked and audited |
+| S7 summary (E5-S2) | `patient_summary` + `v_patient_summary` (0026) | one row per patient - the current problem list, active medications and allergies, built from the read-model views above and refreshed for that one patient **in the same transaction** as the governed fact that changed it, so it is current inside the job's window (§8.1); a trigger marks `stale_at` so a write path that forgets is visible |
 
 > This table describes the **per-document** schema (S1–S9, unchanged). A second,
 > **longitudinal/review** schema (`cn_*`, `ops_*`/`fin_*`, `ai_*`, `rv_*`) was
