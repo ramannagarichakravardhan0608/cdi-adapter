@@ -46,6 +46,7 @@ dependencies = [
 
 [project.scripts]
 cdi-ingest-watch = "cdi_adapter.ingest.watcher:main"
+cdi-listener = "cdi_adapter.listener.__main__:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.4", "mypy>=1.9", "pyyaml>=6.0"]

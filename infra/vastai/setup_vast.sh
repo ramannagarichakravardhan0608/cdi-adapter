@@ -28,7 +28,10 @@ fail() { echo "SETUP FAILED: $1"; exit 1; }
 
 step "1. source"
 mkdir -p "$WS/logs"
-if [ -f "$REPO/.env" ] && [ -d "$REPO/src" ]; then
+# A tree counts as "already built" only with its venv: sync.sh updates a working install and
+# refuses one without a venv, so a half-built tree (source unpacked, bootstrap failed) has to
+# take the fresh path and be unpacked over again - that is what makes this script re-runnable.
+if [ -f "$REPO/.env" ] && [ -d "$REPO/src" ] && [ -d "$REPO/.venv" ]; then
   tar -xzf "$WS/cdi-src.tar.gz" -C /tmp infra/colab/sync.sh
   # sync.sh prints SYNCED when the tree is applied (its exit status is not a reliable signal)
   bash /tmp/infra/colab/sync.sh "$WS/cdi-src.tar.gz" 2>&1 | tee "$WS/logs/sync.log"
@@ -48,18 +51,35 @@ nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || fail "no NVIDI
 
 step "3. backup to restore"
 RESTORE=0
-if [ -f "$WS/vast-backup.tar.gz" ] && [ ! -f "$WS/backup/.restored" ]; then
+# The marker lives OUTSIDE $WS/backup on purpose. It used to sit inside it, which meant the backup
+# script tarred it up with everything else, so every snapshot taken after a restore carried a
+# ".restored" that made the NEXT host skip its own object restore - a restored database with an
+# empty object store. Any such stale marker from an older tar is cleared below.
+RESTORED_MARK=$WS/.backup-restored
+if [ -f "$WS/vast-backup.tar.gz" ] && [ ! -f "$RESTORED_MARK" ]; then
   tar -xzf "$WS/vast-backup.tar.gz" -C "$WS" && RESTORE=1 && echo "backup unpacked into $WS/backup"
+  rm -f "$WS/backup/.restored"
 else
   echo "none (or already restored)"
 fi
 
 step "4. bootstrap (Postgres, Redis, MinIO, venv, migrations)"
-if [ "$FRESH" = 1 ] || ! pg_isready -h 127.0.0.1 -q; then
+# Credentials are never in the bundle or in a snapshot, so a fresh instance has none: point the
+# bootstrap at a private directory on the instance's own disk and let secretstore.py seed it there
+# (it refuses unsafe modes, hence 0700 before it runs). /workspace here is the instance's overlay,
+# not a shared mount, so this is the "private persistent directory" the bootstrap asks for.
+export SECRETS_SRC=${SECRETS_SRC:-$WS/secrets}
+install -d -m 700 "$SECRETS_SRC"
+# pg_isready is not on PATH until the bootstrap's apt step has run, and the bootstrap itself only
+# ever calls the 16 binaries by full path; do the same so a fresh host is not reported as "down"
+# merely because the client package is not installed yet.
+PGBIN=${PGBIN:-/usr/lib/postgresql/16/bin}
+pg_up() { "$PGBIN/pg_isready" -h 127.0.0.1 -q 2>/dev/null || pg_isready -h 127.0.0.1 -q 2>/dev/null; }
+if [ "$FRESH" = 1 ] || ! pg_up; then
   bash infra/runpod/bootstrap_pod.sh >"$WS/logs/bootstrap.log" 2>&1 \
     || echo "bootstrap returned $? (FHIR drift is tolerated) - services checked below"
 fi
-pg_isready -h 127.0.0.1 -q && echo "postgres OK" || fail "postgres down (see $WS/logs/bootstrap.log)"
+pg_up && echo "postgres OK" || fail "postgres down (see $WS/logs/bootstrap.log)"
 curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null && echo "minio    OK" || fail "minio down"
 ( set -a; . ./.env; set +a; .venv/bin/python -m alembic upgrade head ) >/dev/null 2>&1 \
   && echo "schema   at head" || fail "migrations"
@@ -69,7 +89,7 @@ from pathlib import Path
 from cdi_adapter.dr.drill import restore_objects
 from cdi_adapter.storage import get_store
 print('scans restored:', restore_objects(Path('$WS/backup'), get_store()))" ) || fail "scan restore"
-  touch "$WS/backup/.restored"
+  touch "$RESTORED_MARK"
 fi
 
 step "5. model gateway + app tier"

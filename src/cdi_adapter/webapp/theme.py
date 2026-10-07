@@ -11,7 +11,35 @@ LOGO_SVG = (
     '<path d="M14 7v14M7 14h14" stroke="#fff" stroke-width="3.2" stroke-linecap="round"/></svg>'
 )
 
-CSS = """
+# One site for a desk computer, a tablet and a phone. Every page is built from this stylesheet and
+# the header below, so the rules live here once:
+#   * side-by-side panels (every ``.grid``, whatever columns it asks for inline) stack below 900px;
+#   * the header wraps, and on a phone the links become one row that scrolls sideways;
+#   * a wide table scrolls inside its card (any width) or inside itself (phone) instead of
+#     pushing the page sideways;
+#   * controls are finger-sized, and 16px text in fields stops iOS zooming in on focus;
+#   * nothing may make the page itself scroll sideways.
+RESPONSIVE = """
+html{-webkit-text-size-adjust:100%}body{overflow-wrap:break-word}
+header.top{flex-wrap:wrap}header.top nav{flex-wrap:wrap}
+.grid>*{min-width:0}.card{overflow-x:auto}
+input,select,textarea{max-width:100%}video,canvas{max-width:100%}
+@media (max-width:900px){.grid{grid-template-columns:minmax(0,1fr)!important}}
+@media (max-width:760px){
+main{padding:12px}header.top{padding:10px 12px;row-gap:6px}header.top b{font-size:16px}
+header.top form{margin-left:auto!important}
+header.top nav{order:3;flex:0 0 100%;margin-left:0;flex-wrap:nowrap;overflow-x:auto;white-space:nowrap;
+padding:4px 0;scrollbar-width:thin}header.top nav a{padding:6px 2px}
+h1{font-size:22px;line-height:1.25}h2{font-size:18px}.card{padding:12px}
+table{display:block;max-width:100%;overflow-x:auto}th{white-space:nowrap}
+button,select,input:not([type=checkbox]):not([type=radio]):not([type=file]){min-height:42px}
+input:not([type=checkbox]):not([type=radio]),select,textarea{font-size:16px}
+}
+@media (pointer:coarse){button,header.top nav a{touch-action:manipulation}}
+"""
+
+CSS = (
+    """
 :root{--bg:#ffffff;--surface:#f5f8ff;--border:#dbe4f5;--text:#0f1b33;--muted:#5b6b88;
 --brand:#1d4ed8;--brand-weak:#e8efff;--ok:#157347;--ok-weak:#e7f6ee;--warn:#9a6700;
 --warn-weak:#fff6dd;--bad:#b42318;--bad-weak:#fdecea;--radius:10px;--gap:16px;
@@ -32,6 +60,8 @@ button.bad{background:var(--bad);border-color:var(--bad);color:#fff}
 table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)}
 input,select,textarea{font:inherit;padding:6px 8px;border:1px solid var(--border);border-radius:8px}
 """
+    + RESPONSIVE
+)
 
 
 def header(active: str = "") -> str:

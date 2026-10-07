@@ -73,3 +73,44 @@ def test_every_ocr_run_appends_raw_observations(app_env):
     assert all(o["region_kind"] == "printed" and o["prompt_hash"] is None for o in old)
     assert all(o["region_kind"] == "handwritten" and len(o["prompt_hash"]) == 64 for o in new)
     assert all(len(o["crop_hash"]) == 64 and o["engine_version"] for o in obs)
+
+
+def test_the_print_pass_records_the_lines_it_found_and_changes_nothing_by_default(app_env):
+    """IM-S3 in S3: the counts are always recorded; with ``CDI_LINE_REGIONS`` off (the default)
+    every observation is still stored as the reader's kind, exactly as before."""
+    pdf = make_pdf([["LABORATORY REPORT FOR THE PATIENT", "Haemoglobin 13.5 g/dL reference",
+                     "Creatinine 1.1 mg/dL within range"]])  # fmt: skip
+    res = ingest_bytes(pdf, "lab-regions.pdf")
+    metrics = ocr_document(res.document_id, force_engine="rapidocr")
+    found = metrics["regions"]
+    assert found["enforced"] is False and found["lines"] >= 3
+    assert found["lines"] == sum(found[k] for k in ("printed", "handwritten", "mixed",
+                                                    "uncertain"))  # fmt: skip
+    assert found["handwritten"] == 0  # a rendered page is type
+    with session_scope() as c:
+        kinds = c.execute(text("SELECT DISTINCT region_kind FROM ocr_observation "
+                               "WHERE document_id = :d"),
+                          {"d": res.document_id}).scalars().all()  # fmt: skip
+        run = [r for r in repo.get_runs(c, res.document_id) if r["stage"] == "ocr"][-1]
+    assert kinds == ["printed"]
+    assert run["metrics"]["regions"] == found  # kept with the run
+
+
+def test_with_line_regions_on_each_observation_carries_its_lines_label(app_env, monkeypatch):
+    from cdi_adapter.config import get_settings
+
+    monkeypatch.setenv("CDI_LINE_REGIONS", "true")
+    get_settings.cache_clear()
+    try:
+        pdf = make_pdf([["LABORATORY REPORT FOR THE PATIENT", "Haemoglobin 13.5 g/dL reference",
+                         "Creatinine 1.1 mg/dL within range"]])  # fmt: skip
+        res = ingest_bytes(pdf, "lab-regions-on.pdf")
+        metrics = ocr_document(res.document_id, force_engine="rapidocr")
+        with session_scope() as c:
+            kinds = set(c.execute(text("SELECT region_kind FROM ocr_observation "
+                                       "WHERE document_id = :d"),
+                                  {"d": res.document_id}).scalars())  # fmt: skip
+    finally:
+        get_settings.cache_clear()
+    assert metrics["regions"]["enforced"] is True
+    assert kinds <= {"printed", "uncertain"} and "printed" in kinds  # never "handwritten" here

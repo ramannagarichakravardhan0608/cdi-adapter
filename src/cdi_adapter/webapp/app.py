@@ -38,7 +38,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
-from cdi_adapter import repo, tracing
+from cdi_adapter import repo, result, tracing
 from cdi_adapter.config import get_settings
 from cdi_adapter.db import session_scope
 from cdi_adapter.fhir.service import project_document, project_patient
@@ -53,6 +53,7 @@ from cdi_adapter.webapp import (
     conflicts,
     jobstore,
     monitor,
+    result_page,
     review,
     review_page,
     reviewer,
@@ -78,6 +79,7 @@ app.include_router(review.router)
 app.include_router(review_page.router)
 app.include_router(conflicts.router)  # E5-S3
 app.include_router(conflict_page.router)  # E5-S3
+app.include_router(result_page.router)  # UP-S3
 app.include_router(reviewer.router)
 app.include_router(admin.router)
 app.include_router(monitor.router)
@@ -180,6 +182,52 @@ def _job(job_id: str):
     if job is None:
         raise HTTPException(404, "job not found")
     return job
+
+
+@app.post("/api/jobs/{job_id}/pages/{page_no}/replace", status_code=202)
+async def replace_page(job_id: str, page_no: int, request: Request,
+                       file: UploadFile = File(...)) -> dict[str, Any]:  # fmt: skip
+    """UP-S2: a retaken page takes the place of page ``page_no`` (1-based) of this job.
+
+    Only that page is read again; every other page of the prescription keeps its work. The job
+    reopens and the runner's resume picks the replaced page up.
+    """
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(422, "empty file")
+    try:
+        job = await run_in_threadpool(
+            jobstore.replace_page, job_id, page_no - 1, file.filename or "retake",
+            raw, file.content_type, actor=auth.actor(request).username,
+        )  # fmt: skip
+    except jobstore.PageNotReplaced as exc:
+        detail = str(exc)
+        raise HTTPException(404 if detail == "job not found" else 409, detail) from exc
+    return {"job_id": job.id, "page": page_no, "state": job.state}
+
+
+@app.get("/api/documents/{document_id}/result.json")
+def document_result(document_id: UUID) -> Response:
+    """UP-S3 / OUT-S2: the prescription's result as the Output Contract document.
+
+    The same bytes the Download button saves, and the same document the result screen renders -
+    the screen is fed by this, not by the internal tables, so the two can never disagree.
+    """
+    with session_scope() as c:
+        try:
+            body = result.as_json(c, document_id)
+        except LookupError as exc:
+            raise HTTPException(404, "document not found") from exc
+    return Response(body, media_type="application/json")
+
+
+@app.get("/api/documents/{document_id}/result.json/download")
+def download_result(document_id: UUID) -> Response:
+    """The same document, as a named file for the person at the desk."""
+    out = document_result(document_id)
+    name = f"result-{document_id}.json"
+    return Response(out.body, media_type="application/json",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})  # fmt: skip
 
 
 @app.get("/api/jobs/{job_id}")

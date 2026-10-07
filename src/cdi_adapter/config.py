@@ -51,8 +51,67 @@ class Settings(BaseSettings):
     processed_dir: str = "/workspace/data/processed"
     failed_dir: str = "/workspace/data/failed"
 
+    # LS-S1: the file listener's drive, chosen here and nowhere else. "local", "onedrive",
+    # "sharepoint", "gdrive", or a class of your own as package.module:Class. One at a time.
+    # See listener/connectors.py and docs/LISTENER.md.
+    listener_connector: str = "local"
+    listener_local_root: str = "/workspace/data/listener"  # local: the folder to watch
+    listener_root: str = ""  # onedrive / sharepoint: the folder's path on the drive ("" = root)
+    # the six folders, by what they are called on the drive. An empty inbox means the root
+    # folder itself is where files are dropped.
+    listener_inbox: str = "inbox"
+    listener_processing: str = "processing"
+    listener_success: str = "success"
+    listener_error: str = "error"
+    listener_quarantine: str = "quarantine"
+    listener_log: str = "log"
+    # how long one call may wait, in all, on a drive that says "too many requests"
+    listener_max_wait_seconds: float = Field(default=300.0, ge=0)
+    # Microsoft Graph (onedrive, sharepoint). The drive is /me/drive unless one of these says
+    # otherwise: a drive id, a user (app-only sign-in), or - for sharepoint - a site id.
+    graph_base_url: str = "https://graph.microsoft.com/v1.0"
+    graph_drive_id: str = ""
+    graph_site_id: str = ""
+    graph_user: str = ""
+    # Google Drive: the id of the folder (the last part of its web address)
+    gdrive_base_url: str = "https://www.googleapis.com"
+    gdrive_folder_id: str = ""
+    # A bearer token for a test run only. Real sign-in (device code, service account, renewal)
+    # is LS-S2; these stay empty in every committed settings file.
+    graph_access_token: str = Field(default="", repr=False)
+    gdrive_access_token: str = Field(default="", repr=False)
+
     # S1 render resolution
     page_dpi: int = Field(default=200, ge=50, le=600)
+
+    # UP-S2: is the photo good enough to read? OFF by default - switching it on starts rejecting
+    # pages, and a limit set too high rejects good ones, so the numbers below are defaults to be
+    # tuned on the E2-S4 gold set (IM-S1's work). With it off the pipeline behaves as it always
+    # has: no page is ever held, and the API carries no verdict. See recognition/quality.py.
+    quality_check: bool = False
+    quality_min_side_px: int = Field(default=700, ge=100)  # the shorter side of a page
+    # variance of the Laplacian: a rendered prescription measures 73 (sparse) to 2153 (dense),
+    # the same page blurred by 9 px measures 1.6 and blank paper 0.0
+    quality_min_sharpness: float = Field(default=20.0, ge=0)
+    # share of pixels darker than mid-grey: nothing to read ~0, a page in the dark ~1
+    quality_min_ink_fraction: float = Field(default=0.0005, ge=0, le=1)
+    quality_max_ink_fraction: float = Field(default=0.90, gt=0, le=1)
+    # IM-S1 v3: the median height of the written marks. A page photographed from far away is
+    # sharp but its letters are tiny (19 px on a normal render, 4 px at a fifth of the size),
+    # which sharpness cannot see. 0 = do not judge text height
+    quality_min_text_px: float = Field(default=8.0, ge=0)
+    # share of the page burnt out to white. Judged on photographs only: where the paper tone is
+    # already at or above quality_paper_white (a render, a clean scan) there is no glare to find
+    quality_max_glare_fraction: float = Field(default=0.05, gt=0, le=1)
+    quality_paper_white: float = Field(default=250.0, ge=0, le=255)
+
+    # IM-S2: turn a sideways or upside-down page upright and flatten an angled phone photo.
+    # OFF by default - it changes the picture every later stage reads, and its limits are
+    # proven on rendered pages and simulated photographs, not yet on real ones (ENT-S3). With
+    # it off S1 does what it always did (the small-tilt deskew); the transform is recorded
+    # either way. With it on, a page that cannot be made upright is held for a retake. See
+    # recognition/geometry.py.
+    straighten: bool = False
 
     # web app (the RunPod-proxied port)
     webapp_port: int = 8888
@@ -170,6 +229,15 @@ class Settings(BaseSettings):
     ocr_engine: Literal["rapidocr", "vlm"] = "rapidocr"
     handwritten_uses_vlm: bool = True
     ocr_min_conf: float = Field(default=0.30, ge=0, le=1)  # §5 S3: RapidOCR line kept if >= this
+    # IM-S3: S3 finds the lines of every page and labels them printed / handwritten / mixed /
+    # uncertain (recognition/regions.py), and records the counts with the OCR run - always. This
+    # switch is whether the labels are *acted on*: each observation is then stored with its
+    # line's label instead of the reader's ("printed" for RapidOCR), and a page with at least
+    # line_regions_min_handwritten handwritten lines gets the handwriting pass even when the
+    # classifier called it printed. OFF by default: the labels are measured on two real pages,
+    # not on the answer-key set, and the story's own rule is that routing must prove its worth.
+    line_regions: bool = False
+    line_regions_min_handwritten: int = Field(default=3, ge=1)
 
     # S6 governance gate (§5 S6, §14 "The gate"); per-class fitted thresholds are backlog E4-S3
     gate_auto_accept_conf: float = Field(default=0.985, ge=0, le=1)

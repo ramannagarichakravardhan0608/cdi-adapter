@@ -3,7 +3,8 @@
 ``render_pages``: PyMuPDF for PDF (one PNG per page at ``CDI_PAGE_DPI``), Pillow for images,
 multi-frame TIFF supported. ``normalize_image``: grayscale -> deskew (``cv2.minAreaRect`` on
 Otsu-thresholded ink pixels; rotate only if 0.15 deg < |skew| <= 15 deg) -> fastNlMeansDenoising
--> CLAHE. The original bytes are never altered; these are derived render artifacts.
+-> CLAHE. The original bytes are never altered; these are derived render artifacts. The geometry
+itself, and the transform recorded for it, is ``recognition/geometry.py`` (IM-S2).
 """
 
 from __future__ import annotations
@@ -21,10 +22,12 @@ import numpy as np  # noqa: E402
 import pymupdf  # noqa: E402
 from PIL import Image, ImageSequence  # noqa: E402
 
+from cdi_adapter.recognition import geometry  # noqa: E402
+
 cv2.setNumThreads(_THREADS)
 
-SKEW_MIN_DEG = 0.15
-SKEW_MAX_DEG = 15.0
+SKEW_MIN_DEG = geometry.SKEW_MIN_DEG
+SKEW_MAX_DEG = geometry.SKEW_MAX_DEG
 THUMB_MAX_SIDE = 256
 
 _MAGIC = (
@@ -80,37 +83,25 @@ def render_pages(raw: bytes, mime: str, dpi: int | None = None) -> list[bytes]:
 
 def estimate_skew(gray: np.ndarray) -> float:
     """Skew of the ink in degrees (positive = content rotated counter-clockwise)."""
-    _, ink = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
-    pts = cv2.findNonZero(ink)
-    if pts is None or len(pts) < 50:
-        return 0.0
-    angle = cv2.minAreaRect(pts)[2]
-    # the reported range differs across OpenCV versions; fold any convention into (-45, 45]
-    angle = angle % 90.0
-    if angle > 45:
-        angle -= 90
-    # image y points down, so counter-clockwise content reads as a negative rect angle
-    return float(-angle)
+    return geometry.estimate_skew(gray)
 
 
-def _rotate(gray: np.ndarray, deg: float) -> np.ndarray:
-    h, w = gray.shape
-    m = cv2.getRotationMatrix2D((w / 2, h / 2), -deg, 1.0)
-    return cv2.warpAffine(
-        gray, m, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT, borderValue=255
-    )
+def normalize_image(png: bytes, *, straighten: bool | None = None) -> tuple[bytes, dict]:
+    """Return the normalized PNG and the ``preproc`` record ``{skew_deg, steps, transform}``.
 
-
-def normalize_image(png: bytes) -> tuple[bytes, dict]:
-    """Return the normalized PNG and the ``preproc`` record ``{skew_deg, steps}``."""
+    The geometry is ``recognition/geometry.py`` (IM-S2): by default the small-tilt deskew alone,
+    as before; with ``CDI_STRAIGHTEN`` (or ``straighten=True``) also the quarter turn, the half
+    turn and the perspective crop. ``transform`` holds the 3x3 matrix from the page as uploaded
+    to the page as stored, so a box found on the stored page maps back to the original pixels -
+    denoise and CLAHE move nothing, so the matrix is the whole of the geometry.
+    """
     arr = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_GRAYSCALE)
     if arr is None:
         raise UnsupportedDocument("page image could not be decoded")
-    steps = ["grayscale"]
-    skew = estimate_skew(arr)
-    if SKEW_MIN_DEG < abs(skew) <= SKEW_MAX_DEG:
-        arr = _rotate(arr, skew)
-        steps.append("deskew")
+    full = get_settings().straighten if straighten is None else straighten
+    made = geometry.straighten(arr, full=full)
+    arr = made.image
+    steps = ["grayscale", *made.steps]
     arr = cv2.fastNlMeansDenoising(arr, None, h=10, templateWindowSize=7, searchWindowSize=21)
     steps.append("denoise")
     arr = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(arr)
@@ -118,7 +109,8 @@ def normalize_image(png: bytes) -> tuple[bytes, dict]:
     ok, out = cv2.imencode(".png", arr)
     if not ok:
         raise UnsupportedDocument("page image could not be encoded")
-    return out.tobytes(), {"skew_deg": round(skew, 3), "steps": steps}
+    return out.tobytes(), {"skew_deg": round(made.skew_deg, 3), "steps": steps,
+                           "transform": made.record(enabled=full)}  # fmt: skip
 
 
 def make_thumbnail(png: bytes, max_side: int = THUMB_MAX_SIDE) -> bytes:

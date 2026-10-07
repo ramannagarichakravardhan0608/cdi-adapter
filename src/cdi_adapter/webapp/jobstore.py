@@ -433,3 +433,55 @@ def wait(job_id: str, timeout: float = 600, poll: float = 0.5) -> Job:
         if time.monotonic() > deadline:
             raise TimeoutError(job_id)
         time.sleep(poll)
+
+
+class PageNotReplaced(Exception):
+    """The page could not be replaced, and nothing about the job was changed (UP-S2)."""
+
+
+def replace_page(job_id: str, index: int, name: str, raw: bytes, mime: str | None, *,
+                 actor: str, st: PgJobStore | None = None) -> Job:  # fmt: skip
+    """Put a retaken page in place of one page of an existing job (backlog UP-S2).
+
+    The person at the desk is told a page is unreadable and retakes **that page**; the other pages
+    of the prescription keep their work. So: the new file is staged under the same key, the job's
+    file list and that one document are rewritten, the job is reopened and dispatched - and the
+    runner's resume runs Phase 1 for the replaced page only, because every other document is
+    already finished (``JobRunner._resume``).
+
+    Refused (with nothing changed) when the job or the page does not exist, or while a runner
+    still holds the job: replacing a page under a live run would race its own writes.
+    """
+    if not raw:
+        raise PageNotReplaced("the replacement page is empty")
+    st = st or store()
+    job = st.load(job_id)
+    if job is None:
+        raise PageNotReplaced("job not found")
+    if not 0 <= index < len(job.docs):
+        raise PageNotReplaced(f"this job has pages 1-{len(job.docs)}")
+    key = staging_key(job_id, index)
+    meta = {"filename": name, "mime": mime, "key": key, "bytes": len(raw),
+            "sha256": hashlib.sha256(raw).hexdigest()}  # fmt: skip
+    fresh = DocState(filename=name)
+    st.objects.put_bytes(key, raw, mime or "application/octet-stream")
+    with session_scope() as c:
+        row = c.execute(text(
+            "UPDATE web_job SET files = jsonb_set(files, :path, CAST(:meta AS jsonb)), "
+            "  docs = jsonb_set(docs, :path, CAST(:doc AS jsonb)), state = 'running', "
+            "  finished_at = NULL, lease_owner = NULL, lease_until = NULL, updated_at = now() "
+            "WHERE id = :i AND (finished_at IS NOT NULL OR lease_until IS NULL "
+            "  OR lease_until < now()) RETURNING id"),
+            {"i": job_id, "path": "{" + str(index) + "}", "meta": json.dumps(meta),
+             "doc": json.dumps(dataclasses.asdict(fresh))}).first()  # fmt: skip
+        if row is None:
+            raise PageNotReplaced("the job is still being processed; try again when it has ended")
+        repo.write_audit(c, actor=actor, action="update", entity="web_job", entity_id=job_id,
+                         detail={"replaced_page": index + 1, "filename": name,
+                                 "bytes": len(raw)})  # fmt: skip
+    log.info("job_page_replaced", job=job_id, page=index + 1, filename=name, actor=actor)
+    dispatch(job_id)
+    out = st.load(job_id)
+    if out is None:  # pragma: no cover - it was just updated
+        raise PageNotReplaced("job not found")
+    return out

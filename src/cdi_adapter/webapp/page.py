@@ -24,6 +24,8 @@ BODY = """
     <input id=camfile type=file accept="image/*" capture=environment hidden>
   </p>
   <p id=picked class=muted></p>
+  <div id=pages style="display:none;gap:10px;flex-wrap:wrap;margin:0 0 12px"></div>
+  <p id=pagehint class=muted style="display:none;margin:0 0 10px">These are the pages of <b>one</b> prescription, in this order. Remove a page, or move it, before you send them.</p>
   <button id=go class=primary disabled>Generate EMR</button>
 </section>
 <div id=campanel style="display:none;position:fixed;inset:0;background:rgba(15,27,51,.72);z-index:50;align-items:center;justify-content:center;padding:16px">
@@ -44,7 +46,8 @@ BODY = """
 <section class=card>
   <h2 style="margin-top:0">Progress</h2>
   <div id=banner></div>
-  <table id=grid><thead><tr><th>Document</th><th>Ingest</th><th>OCR</th><th>Classify</th><th>Extract</th><th>Terminology</th><th>Validate</th></tr></thead><tbody></tbody></table>
+  <table id=grid><thead><tr><th>Document</th><th>Stage</th><th>Ingest</th><th>OCR</th><th>Classify</th><th>Extract</th><th>Terminology</th><th>Validate</th></tr></thead><tbody></tbody></table>
+  <input id=retakefile type=file accept="image/*,.pdf,.png,.jpg,.jpeg,.tif,.tiff" capture=environment hidden>
   <div id=after></div>
 </section>
 </div>
@@ -59,7 +62,44 @@ $('#drop').onclick = () => $('#files').click();
 $('#drop').ondragover = e => { e.preventDefault(); };
 $('#drop').ondrop = e => { e.preventDefault(); pick([...e.dataTransfer.files]); };
 $('#files').onchange = e => pick([...e.target.files]);
-function pick(fs){ chosen = fs.slice(0, 10); $('#picked').textContent = chosen.map(f => f.name).join(', '); $('#go').disabled = !chosen.length; }
+function pick(fs){ chosen = fs.slice(0, 10); $('#picked').textContent = chosen.map(f => f.name).join(', '); $('#go').disabled = !chosen.length; renderPages(); }
+// UP-S1 (2026-10-06): the chosen pages as previews, in the order they will be sent, each one
+// removable and movable. Nothing about the upload changes: the buttons only rewrite `chosen`
+// through the same pick(), so the 10-page limit, the POST and the pipeline are untouched.
+const thumbs = [];  // object URLs, revoked on every redraw so a long session leaks nothing
+const isImage = f => (f.type || '').startsWith('image/');
+function renderPages(){
+  thumbs.splice(0).forEach(URL.revokeObjectURL);
+  const box = $('#pages'), hint = $('#pagehint');
+  box.style.display = chosen.length ? 'flex' : 'none';
+  hint.style.display = chosen.length > 1 ? 'block' : 'none';
+  box.innerHTML = chosen.map((f, i) => {
+    let art = '<div style="font-size:30px;line-height:84px">&#128196;</div>';  // PDF / TIFF
+    if (isImage(f)){
+      const url = URL.createObjectURL(f); thumbs.push(url);
+      art = `<img src="${url}" alt="Page ${i + 1}" style="width:100%;height:84px;object-fit:cover;border-radius:6px">`;
+    }
+    return `<div class=card style="margin:0;padding:8px;width:124px;text-align:center">
+      <div style="height:84px;overflow:hidden">${art}</div>
+      <div class=muted style="font-size:12px;margin:4px 0 2px"><b>Page ${i + 1}</b></div>
+      <div class=muted style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(f.name)}">${esc(f.name)}</div>
+      <div style="display:flex;gap:4px;justify-content:center;margin-top:6px">
+        <button type=button data-move="${i}" data-by="-1" title="Move earlier" aria-label="Move page ${i + 1} earlier" ${i === 0 ? 'disabled' : ''}>&#9664;</button>
+        <button type=button data-move="${i}" data-by="1" title="Move later" aria-label="Move page ${i + 1} later" ${i === chosen.length - 1 ? 'disabled' : ''}>&#9654;</button>
+        <button type=button data-drop="${i}" title="Remove this page" aria-label="Remove page ${i + 1}">&#10005;</button>
+      </div></div>`;
+  }).join('');
+  box.querySelectorAll('[data-drop]').forEach(b => b.onclick = () => dropPage(+b.dataset.drop));
+  box.querySelectorAll('[data-move]').forEach(b => b.onclick = () => movePage(+b.dataset.move, +b.dataset.by));
+}
+function dropPage(i){ pick(chosen.filter((_, n) => n !== i)); }
+function movePage(i, by){
+  const to = i + by;
+  if (to < 0 || to >= chosen.length) return;
+  const next = chosen.slice();
+  [next[i], next[to]] = [next[to], next[i]];
+  pick(next);
+}
 // Camera (2026-09-29): a photo taken here is ADDED to the chosen scans as a normal JPEG file and goes
 // through the same upload and pipeline as a chosen file; nothing about processing changes. The live
 // camera needs a secure page (https or localhost); without it the phone's own camera app is used.
@@ -109,6 +149,15 @@ $('#camretake').onclick = camReset;
 $('#camuse').onclick = () => { if (cam.blob && addPhoto(cam.blob)){ camStop(); camShow(false); } };
 $('#camclose').onclick = () => { camStop(); camShow(false); };
 $('#camfile').onchange = e => { const f = e.target.files[0]; if (f) addPhoto(f); e.target.value = ''; };
+$('#retakefile').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (!f || !jobId || !retakePage) return;
+  const fd = new FormData(); fd.append('file', f);
+  const r = await fetch(`/api/jobs/${jobId}/pages/${retakePage}/replace`, {method:'POST', body:fd});
+  if (!r.ok){ $('#after').textContent = 'Could not replace that page: ' + ((await r.json()).detail || r.status); return; }
+  $('#after').textContent = '';
+  poll(jobId);  // the job reopened: only the replaced page is read again
+};
 $('#lookup').onclick = async () => {
   const r = await fetch('/api/registry/lookup?q=' + encodeURIComponent($('#q').value));
   if (r.ok){ const p = await r.json(); patientRef = p.patient_id; $('#found').innerHTML = `Found <b>${esc(p.name)}</b> (${esc(p.patient_id)}) — documents will attach to this patient.`; }
@@ -123,10 +172,40 @@ $('#go').onclick = async () => {
   if (!r.ok){ $('#after').textContent = 'Upload failed: ' + (await r.json()).detail; $('#go').disabled = false; return; }
   poll((await r.json()).job_id);
 };
+// UP-S2 (2026-10-06): the five stages a person understands, from the steps the job reports.
+function stageOf(d){
+  if (d.status === 'quality_hold') return 'picture not good enough';
+  if (d.status === 'error') return 'stopped';
+  if (d.status === 'skipped') return 'skipped';
+  if (d.steps_done.includes('validate')) return 'done';
+  if (d.steps_done.includes('extract')) return 'saving';
+  if (d.steps_done.includes('ingest')) return 'reading';
+  if (d.step === 'quality') return 'checking the picture';
+  if (d.step === 'ingest') return 'received';
+  return d.step ? 'reading' : 'received';
+}
+let jobId = null, retakePage = null;
 async function poll(id){
+  jobId = id;
   const j = await (await fetch('/api/jobs/' + id)).json();
-  $('#grid tbody').innerHTML = j.documents.map(d => `<tr><td>${esc(d.filename)} <span class=muted>${esc(d.doc_type)}</span></td>${
-    STEPS.map(s => `<td>${d.steps_done.includes(s) ? '✔' : (d.step === s ? '…' : (d.status === 'error' ? '✖' : ''))}</td>`).join('')}</tr>`).join('');
+  $('#grid tbody').innerHTML = j.documents.map((d, i) => {
+    const held = d.status === 'quality_hold';
+    const note = held
+      ? `<div class=muted style="font-size:12px;margin-top:4px">${esc((d.quality || {}).message || d.error)}
+           <button type=button data-retake="${i}" class=primary style="margin-left:6px">Retake this page</button></div>`
+      : '';
+    const link = d.document_id && d.steps_done.includes('validate')
+      ? ` <a data-result href="/result/${d.document_id}" title="What was read on this page">see result &#8599;</a>` : '';
+    return `<tr><td>${esc(d.filename)} <span class=muted>${esc(d.doc_type)}</span>${link}${note}</td>
+      <td class=muted>${esc(stageOf(d))}</td>${
+      STEPS.map(s => `<td>${d.steps_done.includes(s) ? '✔' : (d.step === s ? '…' : ((d.status === 'error' || held) ? '✖' : ''))}</td>`).join('')}</tr>`;
+  }).join('');
+  // UP-S3: a finished page links to its read-only result (the Output Contract document)
+  $('#grid tbody').querySelectorAll('[data-result]').forEach(a => a.target = '_blank');
+  $('#grid tbody').querySelectorAll('[data-retake]').forEach(b => b.onclick = () => {
+    retakePage = +b.dataset.retake + 1;  // the API counts pages from 1
+    $('#retakefile').click();
+  });
   if (j.state === 'mismatch'){
     $('#banner').innerHTML = `<div class=card style="border-color:var(--bad);background:var(--bad-weak)"><b>Stopped: "${esc(j.mismatch.filename)}" does not belong to the selected patient.</b> No facts were kept from it.</div>`;
     return;

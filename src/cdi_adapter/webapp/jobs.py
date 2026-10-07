@@ -46,6 +46,7 @@ from typing import Any, Protocol
 from cdi_adapter import metrics, tracing
 from cdi_adapter.config import Settings, get_settings
 from cdi_adapter.logging import get_logger
+from cdi_adapter.recognition import geometry, quality
 
 log = get_logger(__name__)
 
@@ -164,10 +165,23 @@ class Stages:
                    extract_batch=extract_documents, shape=shape, agent=agent)  # fmt: skip
 
 
+def handwritten_lines(read: Any, settings: Any) -> bool:
+    """Did the line finder (IM-S3) see enough handwriting on some page to want the handwriting
+    pass? Always ``False`` while ``CDI_LINE_REGIONS`` is off, and when the OCR run recorded no
+    line counts (an older run, or the line finder failed - then the classifier alone decides)."""
+    if not settings.line_regions or not isinstance(read, dict):
+        return False
+    found = read.get("regions") or {}
+    most = found.get("max_handwritten_on_a_page", 0)
+    return bool(most >= settings.line_regions_min_handwritten)
+
+
 @dataclass
 class DocState:
     filename: str
-    status: str = "pending"  # pending | running | done | error | mismatch | skipped
+    # pending | running | done | error | mismatch | skipped | quality_hold (UP-S2: the photo is
+    # not readable and the person was asked to retake it; terminal until the page is replaced)
+    status: str = "pending"
     step: str | None = None
     steps_done: list[str] = field(default_factory=list)
     document_id: str | None = None
@@ -176,6 +190,8 @@ class DocState:
     accepted: int = 0
     in_review: int = 0
     error: str | None = None
+    # UP-S2: why this page was held, in plain words, with what was measured (None = nothing to say)
+    quality: dict[str, Any] | None = None
 
 
 @dataclass
@@ -487,6 +503,19 @@ class JobRunner:
         try:
             if raw is None:  # a stored job whose staged upload is gone
                 raise FileNotFoundError("the staged upload is missing")
+            # UP-S2: is the picture good enough to read? Off unless CDI_QUALITY_CHECK is set, so
+            # by default this is a no-op and the page goes straight on as it always did.
+            d.step = "quality"
+            held = quality.assess(raw, mime or "application/octet-stream").as_json()
+            # IM-S2: readable, but can it be made upright? Off unless CDI_STRAIGHTEN is set.
+            held = held or geometry.hold_for(raw, mime or "application/octet-stream")
+            if held is not None:
+                d.status, d.step, d.quality = "quality_hold", None, held
+                d.error = held["message"]
+                log.warning("page_quality_hold", job=job.id, filename=filename,
+                            code=held["code"], measures=held.get("measures"))  # fmt: skip
+                self._save(job)
+                return
             d.step = "ingest"
             self._save(job)
             with metrics.stage("ingest"):
@@ -496,13 +525,16 @@ class JobRunner:
             d.step = "ocr"
             self._save(job)
             with metrics.stage("ocr", d.document_id):
-                s.ocr(d.document_id, force_engine="rapidocr")
+                read = s.ocr(d.document_id, force_engine="rapidocr")
             d.steps_done.append("ocr")
             d.step = "classify"
             with metrics.stage("classify", d.document_id):
                 cls = s.classify(d.document_id)
             d.doc_type = cls.get("doc_type")
-            if cls.get("is_handwritten") and get_settings().handwritten_uses_vlm:
+            # IM-S3: with CDI_LINE_REGIONS on, handwritten lines found on a page send it to
+            # the handwriting pass even when the classifier took the page for printed
+            by_hand = cls.get("is_handwritten") or handwritten_lines(read, get_settings())
+            if by_hand and get_settings().handwritten_uses_vlm:
                 d.step = "ocr"
                 with metrics.stage("ocr", d.document_id):  # the handwriting pass on the VLM
                     s.ocr(d.document_id, force_engine="vlm")

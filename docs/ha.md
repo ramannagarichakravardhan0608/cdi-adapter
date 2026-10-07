@@ -465,3 +465,288 @@ in a schema raises `GrammarError` in CI rather than passing unconstrained.
 What this found on day one: the pipeline stores dose patterns in the frequency field, which the
 first run surfaced as flagged readings on a clean prescription — the grammar was corrected to the
 pipeline's reality rather than the other way round.
+
+### Is the picture good enough? And retaking one page (backlog UP-S2)
+
+A person at the desk photographs a prescription. If the photo is unreadable they should be told
+**at the desk, while the page is still in front of them** — not after a reviewer finds an empty
+extraction. Three parts, all new ([`recognition/quality.py`](../src/cdi_adapter/recognition/quality.py), which IM-S1 then widened - see below):
+
+**The verdict.** Three measurements on the page as uploaded: the **variance of the Laplacian**
+(sharpness), the **ink fraction** (share of pixels darker than mid-grey) and the **shorter side**
+in pixels. Measured on rendered pages: a sparse prescription scores 73, a dense one 2153, the same
+page blurred by 9 px 1.6, blank paper 0.0 — so sharpness is the signal that decides, and the
+defaults come from those numbers rather than from intuition. Mean luminance and its percentiles
+are **recorded but never judged**: a document is mostly white paper, so a real page and a
+washed-out one both measure ~255 and the 5th percentile is white on any sparse page. For the same
+reason there is no "too bright" verdict — glare that hides the writing shows up as *nothing to
+read*, which is what the person can act on. Verdicts: `unreadable`, `too_small`, `too_dark`,
+`blank`, `blurred`, each with a plain sentence and the measurements that produced it.
+
+**It is off by default.** `CDI_QUALITY_CHECK=false`, so no page is ever held and the API carries no
+verdict — the pipeline behaves exactly as it did. Switching it on starts rejecting pages, and a
+limit set too high rejects *good* ones, so the limits (`CDI_QUALITY_MIN_SHARPNESS`,
+`CDI_QUALITY_MIN_SIDE_PX`, `CDI_QUALITY_MIN_INK_FRACTION`, `CDI_QUALITY_MAX_INK_FRACTION`) are
+per-deployment and want tuning on the E2-S4 gold set first — that tuning is IM-S1's work.
+
+**Retaking one page.** A held page gets `status = quality_hold` (not in `UNFINISHED`, so no sweep
+re-runs it), its plain reason in `docs[i].quality`, and a **Retake this page** button. That posts
+to `POST /api/jobs/{job}/pages/{n}/replace`: the new file is staged under the same key, that one
+document is reset, the job reopens, and the runner's resume runs Phase 1 **for the replaced page
+only** — every other page of the prescription keeps its work. Refused, with nothing changed, while
+a runner still holds the job. The progress table also now names the stage in plain words
+(received → checking the picture → reading → saving → done).
+
+Tests: `tests/test_upload_quality_unit.py` — each fault named and told in words with no numbers in
+the message; order of judgement (a thumbnail is called small, not blurry); brightness recorded but
+never judged; a real rendered page passes the **default** limits while its blurred, darkened and
+blanked copies are each caught; the check off by default changes nothing; and the replace-page
+contract (empty file, page out of range, missing job, a held page being terminal).
+
+### The result on screen, and as a file (backlog UP-S3, the contract of OUT-S2)
+
+A person at the desk has to see what was read and be able to take it away. Both are served from
+**one document** — the Output Contract's `result.v1` — so the screen and the file can never
+disagree ([`cdi_adapter/result.py`](../src/cdi_adapter/result.py),
+[`schemas/result.v1.json`](../schemas/result.v1.json)):
+
+- **`GET /api/documents/{id}/result.json`** — the contract document: `schema_version`,
+  `document_id`, `received_at`, `source`, `page_count`, `status`, then `patient`, `doctor`,
+  `visit`, `lab_tests[]`, `diagnoses[]`, `review` and `absent`.
+- **`GET …/result.json/download`** — the same bytes as a named file.
+- **`GET /result/{document_id}`** — four read-only cards (Patient, Doctor, Lab tests, Status) with
+  a Download JSON button. No inputs: corrections stay in `/review`, and the page says so. The
+  upload screen links to it once a page has passed validate.
+
+Two contract rules enforced in code **and** in the schema, so a future builder cannot drift:
+
+1. **No value without its status.** Every clinical value is
+   `{value, status, confidence, evidence{page,bbox,observation_ids}}`; `result.value()` is the only
+   way one is constructed and the schema makes `status` required, with `accepted|needs_check` the
+   only allowed values. The screen draws every value through one helper that prints the tag with it.
+2. **`accepted` only with proof** — a governed gate state (`auto_accepted`,
+   `clinician_confirmed`, `corrected`) **and** recorded evidence. A confident value nobody can
+   point at on the page is `needs_check`, and says which of the two was missing.
+
+**What is deliberately missing.** The contract marks many fields NEW — preparation items, test
+context, `preparation_refs`, the clinic block, patient phone/address, stamp/signature, the engine
+versions. Their tables and extractors are OUT-S1/EX-S1–S5 work and do not exist, so those keys are
+**left out and listed in `absent`** rather than emitted empty: a blank must never read as "nothing
+was written on the page". The screen shows that list once, under "not extracted yet".
+
+The field names are the Output Contract's own, and that contract says they are provisional until
+OUT-S2's open question — *which system reads the JSON* — is answered. `schema_version` is what a
+consumer pins, and the bytes are sorted and stable so two builds of one document compare identical.
+
+Tests: `tests/test_result_unit.py` (the status rules, the schema refusing a bare value, the four
+cards, a read-only page, the screen reading the contract and not the tables) and
+`tests/test_result_integration.py` on real PostgreSQL (a real prescription validates against
+`result.v1.json`, every value carries a status and a reason when held, an accepted value can be
+pointed at on the page, and two builds are byte-identical).
+
+### Check every picture first (backlog IM-S1)
+
+UP-S2 needed a verdict to show; IM-S1 is that verdict done properly, in
+[`cdi_adapter/recognition/quality.py`](../src/cdi_adapter/recognition/quality.py). Each page is
+looked at before anything reads it, and **every page's measurements are recorded, pass or fail**,
+in `document_page.preproc.quality` together with the limits they were judged against - so the
+limits can later be moved on evidence. Recording is always on (well under a second a page, CPU
+only); *holding* a page is still behind `CDI_QUALITY_CHECK`, off by default.
+
+| Measurement | What it is | Verdict |
+|---|---|---|
+| `extent_px` | the shorter side of the page | `too_small` |
+| `ink_fraction` | share of pixels darker than mid-grey | `too_dark`, `blank` |
+| `soft_ink_fraction` | share more than 30 grey levels below the paper tone | tells *smeared* from *blank* |
+| `glare_fraction` | share burnt out to white - **photographs only** | `glare` |
+| `sharpness` | variance of the Laplacian | `blurred` |
+| `text_height_px` | median height of the written marks (v3) | `text_too_small` |
+| `rotated_90_suspected` | lines run down the page | **flag only** - turning it is IM-S2 |
+
+Every one of those was checked against a rendered prescription and adversarial copies of it, and
+the measuring changed the design four times:
+
+- **Sharpness cannot see tiny text.** Shrinking a page to a fifth *raises* the Laplacian variance
+  (844 to 7471) while the letters fall from 19 px to 4 px - which is why v3 asks for text height.
+- **Glare only exists on a photograph.** Paper photographs as grey (~210) and glare burns a patch
+  to 255: the burnt-out share reads 0.000 / 0.028 / 0.174 as it grows. On a render or a clean scan
+  the paper is *already* white and the same number is ~0.98, so glare is judged only when the
+  paper tone is below `CDI_QUALITY_PAPER_WHITE`.
+- **A blurred page is not a blank one.** A strong blur leaves no pixel darker than mid-grey, so by
+  ink alone it looked empty and the person was told "no writing found". Soft ink separates them:
+  3-5 % on a blurred page at every strength, 0.000 % on blank paper.
+- **Blur corrupts text height.** A soft focus erodes strokes to specks, the median mark shrinks,
+  and the person was told to move closer. So blur is judged first and text height only once the
+  page is known to be sharp.
+
+**Not covered here:** an upside-down page looks upright by the line-gap measure, and a partial
+page is a question of page edges, not picture quality - both are IM-S2's, below; and AC3 - the
+false-reject rate on the answer-key set - cannot be produced until that set exists (ENT-S3). The
+limits (`CDI_QUALITY_MIN_SHARPNESS`, `_MIN_SIDE_PX`, `_MIN_INK_FRACTION`, `_MAX_INK_FRACTION`,
+`_MIN_TEXT_PX`, `_MAX_GLARE_FRACTION`, `_PAPER_WHITE`) are starting points derived from those
+measurements, not tuned values.
+
+Tests: `tests/test_recognition_unit.py` - the v3 adversarial list (tiny text, rotated,
+over-compressed, glare, partial page), the order of judgement, and the record written for every
+page; `tests/test_recognition_integration.py` - the measurements really land in
+`document_page.preproc` on PostgreSQL.
+
+### Straighten and crop safely, original untouched (backlog IM-S2)
+
+[`cdi_adapter/recognition/geometry.py`](../src/cdi_adapter/recognition/geometry.py) makes a page
+upright when it is confident and leaves it exactly as it was when it is not. Everything it does
+is geometry, written down as one 3x3 matrix in `document_page.preproc.transform`, so a box found
+on the stored page can be carried back to the pixels of the upload (`to_original`,
+`box_to_original`). The uploaded file itself is never written to: S1 keeps it at its own key and
+stores the straightened copy beside it.
+
+| Move | When | Function |
+|---|---|---|
+| perspective crop | the table shows round the paper and its four corners can be found | `find_page_quad`, `warp_perspective` |
+| deskew | a page that fills the frame, tilted 0.15-15 degrees (S1's existing rule, moved here unchanged) | `deskew` |
+| quarter turn | the writing runs down the page | `writing_axis`, `rotate90` |
+| half turn | the page is upside down | `upside_down`, `rotate90` |
+
+**Off by default.** `CDI_STRAIGHTEN=false` leaves S1 doing what it always did - the small-tilt
+deskew alone - and only adds the recorded matrix. Switching it on enables the crop and the turns,
+and holds a page that cannot be made upright (UP-S2's retake screen shows the reason).
+
+What the measurements changed, each one now pinned by a test:
+
+- **Which way is up is read from the margin, not from the letters.** Counting ascenders against
+  descenders reads +0.59 on a typed prescription and **-0.27 on one written in capitals**, and
+  +/-0.03 on the sample scans. The left margin held on every page: line starts spread 0-20 px,
+  line ends 60-290 px, and the two swap when the page is upside down.
+- **Sideways is read from word shapes, not from IM-S1's flag.** `rotated_90_suspected` missed all
+  three sample scans turned on their side, and the half-turn check then spun one of them the wrong
+  way. Joining letters into words and counting wide against tall separated all thirty pages tried
+  (13-72 one way, 0-13 the other). The flag stays what IM-S1 made it: a record.
+- **A cropped page is not deskewed as well.** On a flattened photograph the ink-rectangle estimate
+  read a tilt of -4.8 degrees that was not there and turned level lines crooked. The paper's edges
+  set the level; the deskew runs only on a page that fills the frame.
+
+**When unsure, nothing is changed.** Two cases also ask for a retake, because the picture is known
+to be wrong and cannot be put right: `edges_not_found` (the table is visible but there are not
+four corners - a page running out of shot) and `orientation_unsure` (sideways, and no margin says
+which way). A level page that merely *might* be upside down - every line the same length, or
+centred - is left alone and not held.
+
+**Not done, and said so:**
+
+- The story's proof asks for before/after of **five real phone photographs**. There are none in
+  the repo; the photographs here are simulated (grey paper on a dark table, tilted, angled, with
+  noise) from rendered pages and the three sample scans. That is why it is off by default.
+- The margin rule assumes writing that starts at the left. A right-to-left script, a centred
+  letterhead-only page or a fully justified page gives no answer (left alone, never guessed).
+- The page must be lighter than the surface it lies on. White paper on a white table has no
+  edge to find; it is treated as a page that fills the frame.
+- `render_pages` does not apply a JPEG's EXIF orientation. With straightening on, such a photo is
+  put right from its content; with it off it is stored as the bytes say, as before.
+- Evidence boxes are not yet rewritten through the matrix anywhere: the matrix and the two
+  mapping functions exist and are proven, and the stages that draw boxes still work in
+  stored-page coordinates, as they did.
+
+Tests: `tests/test_geometry_unit.py` (95) - AC1 tilted photographs come out level, AC2/AC5 every
+quarter and half turn undone exactly on the rendered page and all three sample scans, AC3 a box
+on the straightened page lands within 6 px of the same ink after tilt + angle + turn, AC4 held
+pages come back byte-identical with the identity matrix; plus off-by-default and the S1 record.
+
+### Find text lines, label printed vs handwritten (backlog IM-S3)
+
+[`cdi_adapter/recognition/regions.py`](../src/cdi_adapter/recognition/regions.py) finds each line
+of writing on a page, labels it `printed`, `handwritten`, `mixed` or `uncertain`, and cuts it
+from the page as its own crop with a position and a fingerprint. Anything not plainly one kind is
+for **both** reader paths; nothing is dropped. The workbook lists this story as built in this
+file; it was not in the repo or on any branch, so it was built here.
+
+**In the pipeline.** On the print reader's pass, S3 (`ocr/service.py`) runs the line finder on
+every page and records what it found with the OCR run (`pipeline_run.metrics.regions`: lines,
+printed, handwritten, mixed, uncertain, and the most handwritten lines on any one page). That is
+always on and changes nothing else; if the line finder fails, OCR goes on without it.
+
+**Acting on the labels is `CDI_LINE_REGIONS`, off by default.** With it on:
+
+- each observation is stored with the label of the line it lies on (`ocr_observation.region_kind`)
+  instead of the reader's blanket "printed" - S5 (`resolution/facts.py`) already treats evidence
+  as handwritten when an observation says so, and until now only the VLM pass ever said so;
+- a page with at least `CDI_LINE_REGIONS_MIN_HANDWRITTEN` (3) handwritten lines gets the
+  handwriting pass even when the classifier took the page for printed (`webapp/jobs.py`).
+
+It is a switch because the story's own rule is that routing must first prove its worth by
+ablation, and that needs the answer-key set. Still page-level: the handwriting reader is given
+the page, not line crops - there is no line-crop reader in the tree to route single lines to.
+The Celery chain (`worker.py`: classify before OCR) does not use the line counts; the web app's
+job runner does.
+
+**The story's two cues did not work, measured on real pages:**
+
+| Cue | Printed | Handwritten |
+|---|---|---|
+| stroke-width variation (story) | 0.08 - 0.49 | 0.27 - 0.33 |
+| print reader's confidence (story) | 0.92 - 1.00 | 0.80 - 1.00 |
+| **strokes upright and level** (`axis_share`) | **0.41 - 0.61** | **0.20 - 0.38** |
+
+RapidOCR read a handwritten "150" at 1.00 and "Metformin" at 0.99: its confidence is not
+evidence of type, so it is used only to make a "printed" line *less* certain, never more. What
+separates the two is that type's strokes stand upright and lie level and a hand's slant and curve.
+
+**The two mistakes are not equal.** Handwriting sent to the print reader alone is the dangerous
+one, so `printed` is said only of a line of eight letters or more whose letters also keep fixed
+heights - a handwritten "TSH", "HS" and "1-0-1" stand as upright as type.
+
+**Measured on two real photographed prescriptions** (not an answer-key set; the pictures are on
+the developer's machine and are not in the repo):
+
+| Page | Lines found | Right | To both readers | Wrong |
+|---|---|---|---|---|
+| neat hand, printed letterhead | 52 | 34 | 18 | 0 |
+| hurried hand, shadow, Kannada letterhead | 45 | 5 | 38 | 1 (+1 form line, printed label with a written value, called handwritten) |
+| the three printed sample scans | 31 | 24 | 7 | 0 |
+
+The one wrong line is a printed Kannada address called handwritten: **print in a non-Latin
+script is not recognised as print** (a curved script has no upright strokes). On the hard page
+most lines go to both readers - safe, and no saving. 0.1-0.2 s a page on a CPU.
+
+**The crop standard** (`CropStandard`): padding of 15 % of the line height and at least 4 px so
+no stroke is cut; a crop shorter than 32 px is enlarged (cubic, at most 4x); the fingerprint is
+of the pixels as they are on the page, before enlarging, in the same form as S3's `crop_hash`;
+padding, scale and both sizes are recorded with each crop so reader errors can be sliced by size.
+
+**Not done, and said so:**
+
+- **AC3** - recall and label accuracy by document type on the answer-key set. The counter
+  (`regions.score`, `score_by_type`) and the runner are built and tested:
+  `python scripts/measure_regions.py --key answer_key.json` prints the table, and "sent to both"
+  is counted apart from "right" so caution cannot pass for accuracy. The key itself (ENT-S3) and
+  the 30-page table do not exist yet.
+- **The crop-size-against-accuracy measurement and the routing ablation** (v3): both need readers
+  run over the crops and an answer key.
+- **Line crops are not stored as their own rows.** S3's observations carry the line's label and,
+  as before, the fingerprint of the pixels they were read from; the per-line crop record
+  (`Region.record()`: padding, scale, sizes) is built but has no column to live in yet.
+- **No real handwriting is in the repo**, so the automated tests use a stand-in (printed words
+  leaned over and made uneven). They pin the rule; the real-page numbers above are what measure it.
+
+Tests: `tests/test_regions_unit.py` (55); two more in `tests/test_ocr_integration.py` prove the
+recorded counts and the stored labels on PostgreSQL + MinIO (not run on the dev box: no MinIO). The two real-page rows were judged by eye from the boxed
+copies `scripts/measure_regions.py --draw` writes, not from drawn boxes.
+
+### One site for computer, tablet and phone
+
+Every page is built from `webapp/theme.py` (one stylesheet, one header) and already declared a
+device-width viewport, but had no small-screen rules: two-column layouts stayed two columns, wide
+tables pushed the page sideways and the six header links ran off a phone. The rules now live once,
+in `theme.RESPONSIVE`, appended to the existing stylesheet (nothing a desk screen used changed):
+
+- side-by-side panels (every `.grid`, whatever columns it asks for inline) stack below 900 px;
+- the header wraps, and on a phone the links are one row that scrolls sideways under the title;
+- a wide table scrolls inside its card (any width) or inside itself (phone);
+- buttons and fields are finger-sized (42 px) and fields use 16 px text so iOS does not zoom.
+
+Checked in a browser at 320, 375, 768, 1024 and 1280 px on the upload, result, review, reviewer,
+merge-conflict, patient-360, admin, sign-in and monitor pages: none scrolls sideways, and the
+panels are one column at 320-768 and two at 1024 and up. The admin table used to overflow the
+page even on a desk screen (1348 px wide in a 1280 px window); it now scrolls inside its card.
+Checked on static renders of each page - layout only, not with live data on a real phone.
+Tests: `tests/test_responsive_unit.py`.
+

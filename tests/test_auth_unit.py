@@ -73,7 +73,9 @@ def test_no_route_works_without_a_session(method: str, path: str) -> None:  # no
     if path.startswith("/api/") or method != "GET":
         assert r.status_code == 401, (method, path, r.status_code)
     else:
-        assert r.status_code == 303 and r.headers["location"] == f"/login?next={path}"
+        # the sign-in page is told the address that was asked for (UP-S3's /result/<id> is the
+        # first page with one in its path), so it can send the person back there
+        assert r.status_code == 303 and r.headers["location"] == f"/login?next={_fill(path)}"
 
 
 def test_a_forged_session_cookie_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:

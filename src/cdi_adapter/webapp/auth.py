@@ -68,6 +68,8 @@ POLICY: dict[tuple[str, str], frozenset[str]] = {
     ("GET", "/api/patients/{patient_id}/fhir"): _ANY_STAFF,
     ("GET", "/api/registry/lookup"): _ANY_STAFF,
     ("POST", "/api/registry"): _COUNTER,
+    # UP-S2: retaking a held page is part of uploading it.
+    ("POST", "/api/jobs/{job_id}/pages/{page_no}/replace"): _COUNTER,
     # clinical content and decisions: clinicians only (keep/drop/correct is a clinical act, §7.2)
     ("GET", "/api/jobs/{job_id}/facts"): _CLINICAL,
     ("POST", "/api/jobs/{job_id}/generate"): _CLINICAL,
@@ -75,6 +77,11 @@ POLICY: dict[tuple[str, str], frozenset[str]] = {
     ("GET", "/api/documents/{document_id}/evidence"): _CLINICAL,
     ("GET", "/api/documents/{document_id}/pages/{page_no}"): _CLINICAL,
     ("GET", "/api/documents/{document_id}/original"): _CLINICAL,
+    # UP-S3: the result on screen and its JSON are a document's extracted content, so they follow
+    # the rule for everything under /api/documents: clinicians only (the counter is not shown it)
+    ("GET", "/result/{document_id}"): _CLINICAL,
+    ("GET", "/api/documents/{document_id}/result.json"): _CLINICAL,
+    ("GET", "/api/documents/{document_id}/result.json/download"): _CLINICAL,
     ("GET", "/review"): _CLINICAL,
     ("GET", "/api/review/tasks"): _CLINICAL,
     ("GET", "/api/review/facts/{fact_id}"): _CLINICAL,
@@ -94,6 +101,11 @@ POLICY: dict[tuple[str, str], frozenset[str]] = {
     ("POST", "/api/reviewer/facts/{fact_id}/replace"): _CLINICAL,
     ("GET", "/reviewer/c360"): _CLINICAL,
     ("GET", "/api/reviewer/c360/{mpi}"): _CLINICAL,
+    # E5-S3: settling a conflict between two visits is a clinical decision
+    ("GET", "/conflicts"): _CLINICAL,
+    ("GET", "/api/conflicts"): _CLINICAL,
+    ("GET", "/api/conflicts/{conflict_id}"): _CLINICAL,
+    ("POST", "/api/conflicts/{conflict_id}/resolve"): _CLINICAL,
     # the Pipeline Monitor microsite (stages, OCR lines, facts): clinical content
     ("GET", "/monitor"): _CLINICAL,
     ("GET", "/api/monitor/items"): _CLINICAL,

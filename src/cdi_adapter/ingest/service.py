@@ -37,6 +37,7 @@ from cdi_adapter.config import get_settings
 from cdi_adapter.db import session_scope
 from cdi_adapter.ingest import pages
 from cdi_adapter.logging import get_logger
+from cdi_adapter.recognition import quality
 from cdi_adapter.storage import ObjectStore, get_store, original_key, page_key, thumb_key
 
 log = get_logger(__name__)
@@ -201,6 +202,11 @@ def _render_and_store(doc_id: UUID, sha: str, raw: bytes, mime: str, store: Obje
     with session_scope() as conn:
         for n, png in enumerate(rendered, start=1):
             norm, preproc = pages.normalize_image(png)  # 6
+            # IM-S1: every page's picture measurements are recorded, pass or fail, on the page as
+            # it was uploaded (before our own straightening and denoising) - so the limits can be
+            # tuned on what people really sent. Recording never stops a page; holding one is
+            # webapp/jobs.py's decision and only when CDI_QUALITY_CHECK is on.
+            preproc = {**preproc, "quality": quality.record(png)}
             pk, tk = page_key(sha, n), thumb_key(sha, n)
             store.put_bytes(pk, norm, "image/png")  # 7
             store.put_bytes(tk, pages.make_thumbnail(norm), "image/png")

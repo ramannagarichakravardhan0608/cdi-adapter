@@ -12,6 +12,14 @@ observations are never deleted, they are pointed at the new run (``superseded_by
 Each observation records the SHA-256 of the pixels it was read from (the page image cropped at
 its bbox), the region kind, the engine version and, for the VLM, the prompt's hash. The engines
 themselves (``rapid.py``, ``vlm_ocr.py``) are unchanged: only where their output is kept changed.
+
+**Lines, printed or handwritten (backlog IM-S3).** On the print reader's pass every page is also
+looked at by ``recognition/regions.py``, which finds its lines and labels each one. What it found
+is always recorded with the run (``metrics.regions``: how many lines of each kind). Acting on it
+is ``CDI_LINE_REGIONS``, off by default: with it on, each observation is stored with the label of
+the line it lies on rather than the reader's blanket "printed" - which is what S5 reads to treat
+evidence as handwritten - and ``webapp/jobs.py`` sends a page with handwritten lines to the
+handwriting pass. Finding the lines can never fail a page: if it breaks, OCR goes on without it.
 """
 
 from __future__ import annotations
@@ -31,6 +39,7 @@ from cdi_adapter.db import session_scope
 from cdi_adapter.logging import get_logger
 from cdi_adapter.ml.client import MLClient, get_client
 from cdi_adapter.ocr import rapid, vlm_ocr
+from cdi_adapter.recognition import regions
 from cdi_adapter.storage import ObjectStore, get_store
 
 log = get_logger(__name__)
@@ -76,6 +85,47 @@ def _observation_meta(engine: str, settings: Settings) -> dict[str, Any]:
     return {"region_kind": "printed", "engine_version": _rapid_version(), "prompt_hash": None}
 
 
+def page_regions(png: bytes, lines: list[rapid.OcrLine]) -> list[regions.Region]:
+    """The lines of one page, labelled (IM-S3) - or none at all if that fails: this is a second
+    opinion on the page, and a page must never be lost for want of it."""
+    try:
+        return regions.detect_regions(png, ocr=lines, crops=False)
+    except Exception as exc:  # noqa: BLE001 - see the docstring
+        log.warning("line_regions_failed", error=f"{type(exc).__name__}: {exc}")
+        return []
+
+
+def region_kinds(lines: list[rapid.OcrLine], found: list[regions.Region]) -> list[str | None]:
+    """For each line the print reader read, the label of the line of writing it lies on: the
+    region covering most of it, if that is at least a third of it. ``None`` where no region
+    does - the reader's own kind stands."""
+    out: list[str | None] = []
+    for ln in lines:
+        x0, y0, x1, y1 = (float(v) for v in ln.bbox)
+        area = max((x1 - x0) * (y1 - y0), 1.0)
+        best, share = None, 1 / 3
+        for r in found:
+            a0, b0, a1, b1 = r.bbox
+            over = max(0.0, min(x1, a1) - max(x0, a0)) * max(0.0, min(y1, b1) - max(y0, b0))
+            if over / area >= share:
+                best, share = r.label, over / area
+        out.append(best)
+    return out
+
+
+def _region_counts(found: list[list[regions.Region]], enforced: bool) -> dict[str, Any]:
+    """What the run records: lines of each kind over the document, and the most handwritten
+    lines on any one page (what the handwriting pass is decided on)."""
+    totals = {"lines": 0, **dict.fromkeys(regions.LABELS, 0)}
+    most = 0
+    for page in found:
+        s = regions.summary(page)
+        for k in totals:
+            totals[k] += s[k]
+        most = max(most, s["handwritten"])
+    return {**totals, "max_handwritten_on_a_page": most, "enforced": enforced}
+
+
 def choose_engine(
     force_engine: str | None, classification: dict[str, Any] | None, settings: Settings
 ) -> str:
@@ -110,13 +160,19 @@ def ocr_document(
 
     try:
         per_page: list[tuple[dict[str, Any], list[rapid.OcrLine], list[str | None]]] = []
+        found: list[list[regions.Region]] = []  # IM-S3: the print pass only (see module note)
+        kinds: list[list[str | None]] = []
         vlm = (client or get_client()) if engine == "vlm" else None
         for page in pages:
             png = store.get_bytes(page["storage_key"])
             if vlm is not None:
                 lines = vlm_ocr.run_vlm_transcription(png, page["width"], page["height"], vlm)
+                kinds.append([None] * len(lines))
             else:
                 lines = rapid.run_rapidocr(png, min_conf=settings.ocr_min_conf)
+                found.append(page_regions(png, lines))
+                on = settings.line_regions
+                kinds.append(region_kinds(lines, found[-1]) if on else [None] * len(lines))
             per_page.append((page, lines, crop_hashes(png, lines)))
 
         meta = _observation_meta(engine, settings)
@@ -136,9 +192,10 @@ def ocr_document(
                     "pipeline_run_id": run_id,
                     "crop_hash": crop,
                     **meta,
+                    **({"region_kind": kind} if kind else {}),
                 }
-                for page, lines, crops in per_page
-                for ln, crop in zip(lines, crops, strict=True)
+                for (page, lines, crops), page_kinds in zip(per_page, kinds, strict=True)
+                for ln, crop, kind in zip(lines, crops, page_kinds, strict=True)
             ]
             repo.insert_ocr_blocks(conn, rows)
             confs = [r["ocr_conf"] for r in rows]
@@ -149,6 +206,8 @@ def ocr_document(
                 "superseded": superseded,
                 "mean_conf": round(sum(confs) / len(confs), 4) if confs else None,
             }
+            if engine != "vlm":
+                metrics["regions"] = _region_counts(found, settings.line_regions)
             if doc["status"] in _EARLY:
                 repo.set_document_status(conn, document_id, "ocr_done")
             repo.finish_run(conn, run_id, metrics=metrics)
