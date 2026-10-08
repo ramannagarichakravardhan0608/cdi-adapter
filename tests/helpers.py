@@ -4,19 +4,43 @@ from __future__ import annotations
 
 import io
 
-import pymupdf
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
+
+A4_POINTS = (595, 842)
 
 
-def make_pdf(lines_per_page: list[list[str]]) -> bytes:
-    doc = pymupdf.open()
+def make_pdf(lines_per_page: list[list[str]], *, dpi: int = 200) -> bytes:
+    """A PDF of A4 pages with the given lines on them, made with Pillow alone (no PDF library
+    of ours writes PDFs, and PyMuPDF is gone since LS-S4). Each page is a picture of the text,
+    as a scanner would produce - the pipeline reads a PDF as pictures either way."""
+    scale = dpi / 72.0
+    size = (round(A4_POINTS[0] * scale), round(A4_POINTS[1] * scale))
+    font = ImageFont.load_default(size=round(12 * scale))
+    pages_ = []
     for lines in lines_per_page:
-        page = doc.new_page(width=595, height=842)  # A4 points
+        im = Image.new("RGB", size, "white")
+        draw = ImageDraw.Draw(im)
         for i, line in enumerate(lines):
-            page.insert_text((60, 80 + 22 * i), line, fontsize=12)
-    out = doc.tobytes()
+            draw.text((round(60 * scale), round((68 + 22 * i) * scale)), line, fill="black",
+                      font=font)  # fmt: skip
+        pages_.append(im)
+    buf = io.BytesIO()
+    pages_[0].save(buf, format="PDF", resolution=float(dpi), save_all=True,
+                   append_images=pages_[1:])  # fmt: skip
+    return buf.getvalue()
+
+
+def blank_pdf(page_count: int, *, size: tuple[float, float] = (200, 280)) -> bytes:
+    """A PDF of empty pages of ``size`` points - quick to make, for page-count and size tests."""
+    import pypdfium2 as pdfium
+
+    doc = pdfium.PdfDocument.new()
+    for _ in range(page_count):
+        doc.new_page(*size).close()
+    buf = io.BytesIO()
+    doc.save(buf)
     doc.close()
-    return out
+    return buf.getvalue()
 
 
 def lined_page(size=(1200, 1600), n=30) -> Image.Image:

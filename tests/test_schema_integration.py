@@ -63,7 +63,7 @@ ALL_TABLES = ((PER_DOC_TABLES - {"ocr_block"}) | {"patient_registry"} | CANONICA
               | AUTH_TABLES | MODEL_TABLES | JOB_TABLES | CATALOGUE_TABLES | AGENT_TABLES
               | ORDER_TABLES | EVIDENCE_TABLES | LONGITUDINAL_TABLES
               | TRAINING_TABLES | ORCHESTRATOR_TABLES | MIGRATION_TABLES
-              | QUEUE_TABLES | SUMMARY_TABLES)  # fmt: skip
+              | QUEUE_TABLES | SUMMARY_TABLES | {"listener_file"})  # 0029 (LS-S3)  # fmt: skip
 VIEWS = {"v_problem_list", "v_medication_list", "v_allergy_list", "v_results_grid",
          "v_encounter_timeline", "ocr_block", "v_medication_history",
          "v_problem_history", "v_patient_summary"}  # fmt: skip
@@ -100,7 +100,7 @@ def test_upgrade_head_creates_every_table_and_view(engine):
     assert _tables(engine) == ALL_TABLES
     assert _views(engine) == VIEWS
     with engine.connect() as c:
-        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0027"
+        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0029"
         assert c.execute(text("SELECT nextval('patient_mpi_seq')")).scalar_one() >= 1
 
 

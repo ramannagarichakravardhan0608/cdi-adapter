@@ -1,7 +1,7 @@
 """UP-S3 / OUT-S2 on real PostgreSQL: a real prescription's result document.
 
 A document goes through the pipeline, then the contract document is built from what the database
-holds - and it has to validate against ``schemas/result.v1.json``, carry a status on every value,
+holds - and it has to validate against ``schemas/contract/result.v1.json``, carry a status on every value,
 and build byte-identically twice.
 """
 
@@ -33,7 +33,7 @@ def test_a_real_prescription_builds_a_valid_result(db_env) -> None:
     doc = _prescription()
     with session_scope() as c:
         built = result.build(c, doc)
-    result.validate(built)  # schemas/result.v1.json
+    result.validate(built)  # schemas/contract/result.v1.json
     assert built["schema_version"] == "result.v1"
     assert built["document_id"] == doc
     assert built["status"] in ("complete", "needs_check", "held_for_rescan")

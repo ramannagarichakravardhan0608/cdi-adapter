@@ -28,7 +28,10 @@ them, so a reader can tell "not extracted yet" from "not written on the page".
 
 The field names are the contract's own, and the contract says they are provisional until OUT-S2's
 open question - which system reads the JSON - is answered. ``schema_version`` is what a consumer
-pins; ``schemas/result.v1.json`` validates what we emit.
+pins; ``schemas/contract/result.v1.json`` validates what we emit. It lives apart from the
+model schemas in ``schemas/``: those are what the model is *asked to produce* and must
+grammar-lock (E2-S3); this one describes what we *hand over*, and uses JSON Schema features
+(``format``, mixed types) a decoding grammar does not need to support.
 """
 
 from __future__ import annotations
@@ -42,7 +45,7 @@ from uuid import UUID
 from sqlalchemy import Connection, text
 
 SCHEMA_VERSION = "result.v1"
-SCHEMA_PATH = Path(__file__).resolve().parents[2] / "schemas" / "result.v1.json"
+SCHEMA_PATH = Path(__file__).resolve().parents[2] / "schemas" / "contract" / "result.v1.json"
 
 # the S6 gate's governed states: only these may be "accepted" (ARCHITECTURE §5 S6)
 GOVERNED = ("auto_accepted", "clinician_confirmed", "corrected")
@@ -54,7 +57,7 @@ ABSENT: tuple[str, ...] = (
     "patient.phone", "patient.address", "patient.dob",
     "doctor.clinic", "doctor.qualification", "doctor.stamp_present", "doctor.signature_present",
     "lab_tests[].specimen", "lab_tests[].urgency", "lab_tests[].context",
-    "lab_tests[].preparation_refs", "preparation", "engines",
+    "lab_tests[].preparation_refs", "engines",
 )  # fmt: skip
 
 
@@ -129,6 +132,7 @@ def build(conn: Connection, document_id: UUID | str) -> dict[str, Any]:
         "visit": _visit(conn, facts),
         "lab_tests": _lab_tests(conn, facts),
         "diagnoses": _diagnoses(conn, facts),
+        "preparation": _preparation(conn, facts),
         "absent": list(ABSENT),
     }
     out["review"] = _review(out)
@@ -224,6 +228,44 @@ def _lab_tests(conn: Connection, facts: list[dict[str, Any]]) -> list[dict[str, 
     return out
 
 
+# UP-S3 AC1: what the patient has to do before a test. No extractor produces "preparation" as
+# its own kind of fact, so it is recognised among the advice the prescription already gives:
+# a piece of advice is a preparation instruction when it says one of these things. A short list
+# on purpose - "take after food" is how to take a medicine, not how to prepare for a test, so
+# the bare "before food" / "after food" are not here.
+PREPARATION: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("fasting", ("fasting", "fast for", "overnight fast", "hours fast", "hrs fast",
+                 "empty stomach", "nil by mouth", "nil orally", "npo")),
+    ("after_food", ("post prandial", "post-prandial", "postprandial", "pp sample",
+                    "2 hours after", "2 hrs after", "two hours after")),
+    ("timing", ("early morning", "first morning", "morning sample", "24 hour", "24-hour",
+                "24 hr")),
+    ("collection", ("midstream", "mid-stream", "mid stream", "clean catch")),
+)  # fmt: skip
+
+
+def preparation_kind(written: Any) -> str | None:
+    """Which kind of preparation instruction this text is, or ``None`` if it is not one."""
+    low = " ".join(str(written or "").lower().split())
+    for kind, phrases in PREPARATION:
+        if any(p in low for p in phrases):
+            return kind
+    return None
+
+
+def _preparation(conn: Connection, facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The preparation instructions on this prescription: each one a value object like any
+    other (status, confidence, evidence), with what kind of instruction it is. Which test an
+    instruction belongs to (``lab_tests[].preparation_refs``) is still not worked out."""
+    out = []
+    for f in _by_type(facts, "advice", "care_plan"):
+        written = _text_of(f)
+        kind = preparation_kind(written)
+        if kind:
+            out.append({**_fact_value(conn, f, written), "text": written, "instruction": kind})
+    return out
+
+
 def _diagnoses(conn: Connection, facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """What was written as a diagnosis, and our own canonical term when one was bound. The
     contract is explicit that this never depends on SNOMED or ICD: external codes are optional."""
@@ -264,6 +306,102 @@ def _status(doc: dict[str, Any], out: dict[str, Any]) -> str:
     return "complete" if out["review"]["needs_check_count"] == 0 else "needs_check"
 
 
+JOB_SCHEMA_VERSION = "result-job.v1"
+_NOT_READ = ("quality_hold", "error", "skipped", "mismatch")  # job statuses with nothing to show
+_WORST = ("complete", "needs_check", "held_for_rescan")
+
+
+def build_job(conn: Connection, job_id: str) -> dict[str, Any]:
+    """**One result for one upload** (UP-S1 AC2): every page sent together, as a single document.
+
+    An upload of several pictures is one prescription photographed page by page. The pipeline
+    reads each page as its own document, so this gathers them back: the patient, doctor and visit
+    from the first page that gives them; the lab tests and diagnoses of every page, each tagged
+    with the page it was read from; one count of what needs a person; and the worst status of
+    any page - an upload with one unreadable page is not "complete".
+
+    Nothing is re-read or re-judged here. ``documents`` holds each page's own result.v1 document
+    unchanged, and the merged sections are those same value objects, so a value can never appear
+    here with a status its own page did not give it.
+    """
+    row = conn.execute(
+        text("SELECT id, state, docs, created_at FROM web_job WHERE id = :j"), {"j": job_id}
+    ).mappings().first()  # fmt: skip
+    if row is None:
+        raise LookupError(f"no upload {job_id}")
+    pages: list[dict[str, Any]] = []
+    documents: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for n, d in enumerate(row["docs"] or [], start=1):
+        page: dict[str, Any] = {"page": n, "file_name": d.get("filename"),
+                                "document_id": d.get("document_id"), "status": None,
+                                "reason": None}  # fmt: skip
+        doc_id = d.get("document_id")
+        if d.get("status") in _NOT_READ or not doc_id:
+            page["status"] = "held_for_rescan" if d.get("status") != "skipped" else "not_processed"
+            page["reason"] = (
+                (d.get("quality") or {}).get("message")
+                or d.get("error")
+                or (
+                    "not recognised as a clinical document"
+                    if d.get("status") == "skipped"
+                    else None
+                )
+            )
+        elif doc_id in seen:  # the same picture sent twice in one upload: read once
+            page["status"] = "duplicate"
+        else:
+            seen.add(doc_id)
+            one = build(conn, doc_id)
+            page["status"] = one["status"]
+            documents.append({**one, "page": n})
+        pages.append(page)
+
+    source: dict[str, str | None] = {}  # which page's document a single section was taken from
+
+    def first(section: str) -> dict[str, Any]:
+        found = next((d for d in documents if d.get(section)), None)
+        source[section] = found["document_id"] if found else None
+        return found[section] if found else {}
+
+    def every(section: str) -> list[dict[str, Any]]:
+        # each item says which page of the upload it was read from, and which document that is
+        # (the result screen needs the document to show the picture behind a value, UP-S3 AC4)
+        return [{**item, "page": d["page"], "document_id": d["document_id"]}
+                for d in documents for item in d.get(section, [])]  # fmt: skip
+
+    patient_ids = {i["value"] for d in documents for i in d.get("patient", {}).get("ids", [])
+                   if i.get("type") == "mpi_id"}  # fmt: skip
+    out: dict[str, Any] = {
+        "schema_version": JOB_SCHEMA_VERSION,
+        "job_id": row["id"],
+        "received_at": _iso(row["created_at"]),
+        "source": "upload_screen",
+        "page_count": len(pages),
+        "pages": pages,
+        "patient": first("patient"),
+        "patients_differ": len(patient_ids) > 1,  # pages of two people sent as one upload
+        "doctor": first("doctor"),
+        "visit": first("visit"),
+        "lab_tests": every("lab_tests"),
+        "diagnoses": every("diagnoses"),
+        "preparation": every("preparation"),
+        "absent": list(ABSENT),
+    }
+    out["review"] = _review(out)
+    out["from_document"] = source
+    worst = [d["status"] for d in documents] + [p["status"] for p in pages
+                                                if p["status"] == "held_for_rescan"]  # fmt: skip
+    out["status"] = max(worst, key=_WORST.index) if worst else "held_for_rescan"
+    out["documents"] = documents  # each page's own result.v1, unchanged (added after the count)
+    return out
+
+
+def job_as_json(conn: Connection, job_id: str) -> str:
+    """The upload's one result as stable bytes (sorted keys), like :func:`as_json`."""
+    return json.dumps(build_job(conn, job_id), sort_keys=True, ensure_ascii=False, indent=2)
+
+
 def as_json(conn: Connection, document_id: UUID | str) -> str:
     """The file's bytes: sorted keys and a stable separator, so two builds of one document are
     byte-identical (OUT-S2 AC2)."""
@@ -271,7 +409,8 @@ def as_json(conn: Connection, document_id: UUID | str) -> str:
 
 
 def validate(document: dict[str, Any]) -> None:
-    """Check a built result against ``schemas/result.v1.json``. Raises ``ValidationError``."""
+    """Check a built result against ``schemas/contract/result.v1.json``. Raises
+    ``ValidationError``."""
     from jsonschema import Draft202012Validator
 
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))

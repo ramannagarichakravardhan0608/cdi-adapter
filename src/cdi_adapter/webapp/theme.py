@@ -66,7 +66,8 @@ input,select,textarea{font:inherit;padding:6px 8px;border:1px solid var(--border
 
 def header(active: str = "") -> str:
     links = [("/", "Generate EMR"), ("/review", "Review"), ("/conflicts", "Merge conflicts"),
-             ("/reviewer", "Reviewer"), ("/admin", "Admin")]  # fmt: skip
+             ("/reviewer", "Reviewer"), ("/evaluation", "Evaluation"),
+             ("/admin", "Admin")]  # fmt: skip
     nav = "".join(
         f'<a href="{h}"{" aria-current=page" if h == active else ""}>{escape(t)}</a>'
         for h, t in links

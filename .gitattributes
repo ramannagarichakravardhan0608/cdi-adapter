@@ -16,3 +16,7 @@ infra/ingress/* text eol=lf
 infra/fhir/packages.lock text eol=lf
 # E2-S1 vLLM gateway venv pin: read on the pod
 infra/runpod/requirements-vllm.lock text eol=lf
+# built and read on Linux (compose / MinIO image build): never CRLF
+.dockerignore text eol=lf
+infra/compose/Dockerfile text eol=lf
+infra/compose/Dockerfile.minio text eol=lf

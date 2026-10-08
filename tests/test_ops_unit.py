@@ -159,10 +159,13 @@ def test_sample_docs_survive_scan_noise_ocr_and_classification(tmp_path):
 
     files = msd.generate(tmp_path)
     assert len(files) == 6
-    # the noisy vitals scan OCRs its heading as "VITALSIGNSCHART" and "Sp02": the heuristic
-    # declines (score < 5) and §5 S2 hands the page to the VLM — never a guess
+    # Until LS-S4 the sample pages were drawn by PyMuPDF, and the noisy vitals scan OCRed its
+    # heading as "VITALSIGNSCHART" and "Sp02": the heuristic declined (score < 5) and §5 S2
+    # handed the page to the VLM. The pages are now drawn with Pillow (PyMuPDF is gone), the
+    # heading reads as three words, and the heuristic is sure. That a low score is declined,
+    # never guessed, is covered by the classifier's own tests.
     expected = {"prescription_00": "prescription", "lab_report_01": "lab_report",
-                "vitals_sheet_02": None}  # fmt: skip
+                "vitals_sheet_02": "vitals_sheet"}  # fmt: skip
     for name, doc_type in expected.items():
         pdf, scan = tmp_path / f"{name}.pdf", tmp_path / f"{name}.scan.png"
         assert sniff_mime(pdf.read_bytes()[:16], pdf.name) == "application/pdf"

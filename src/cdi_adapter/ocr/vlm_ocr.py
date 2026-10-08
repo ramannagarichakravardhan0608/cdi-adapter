@@ -20,6 +20,22 @@ TRANSCRIBE_PROMPT = (
 )
 
 
+# IM-S3 AC2: one line of writing, cut from the page to the crop standard. The prompt asks for
+# that line and nothing else: a model shown a sliver of a page will otherwise explain it.
+LINE_PROMPT = (
+    "This picture is one line of writing cut from a scanned clinical page. Transcribe exactly "
+    "what is written on it, on one line. Do not summarise, correct, translate or explain. If "
+    "nothing can be read, output nothing. Output plain text only."
+)
+
+
+def read_line_crop(crop_png: bytes, client: MLClient, *, max_tokens: int = 96) -> str:
+    """The handwriting reader on one line crop: the text of that line (one line, no trailing
+    space), or an empty string when the model read nothing."""
+    text = client.generate(LINE_PROMPT, crop_png, max_tokens=max_tokens)
+    return " ".join(str(text or "").split())
+
+
 def run_vlm_transcription(
     png: bytes, width: int, height: int, client: MLClient, *, max_tokens: int = 2048
 ) -> list[OcrLine]:

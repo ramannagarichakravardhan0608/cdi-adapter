@@ -85,9 +85,9 @@ def test_the_hint_says_the_pages_are_one_prescription() -> None:
 
 
 def test_the_upload_itself_is_untouched() -> None:
-    assert "$('#files').onchange = e => pick([...e.target.files]);" in SCRIPT
-    assert "$('#drop').ondrop = e => { e.preventDefault(); pick([...e.dataTransfer.files]); };" \
-        in SCRIPT  # fmt: skip
+    # 2026-10-07: the chooser and the drop zone add to the chosen pages instead of replacing
+    assert "addFiles([...e.target.files])" in SCRIPT
+    assert "addFiles([...e.dataTransfer.files])" in SCRIPT
     assert "chosen.forEach(f => fd.append('files', f));" in SCRIPT  # one POST, in this order
     assert "await fetch('/api/jobs', {method:'POST', body:fd});" in SCRIPT
     assert 'accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff"' in BODY
@@ -106,3 +106,36 @@ def test_the_file_name_is_escaped_in_the_tile() -> None:
 
 def test_the_strip_is_hidden_until_something_is_chosen() -> None:
     assert "box.style.display = chosen.length ? 'flex' : 'none';" in SCRIPT
+
+
+# ------------------------------------------------------------------ adding never removes
+
+
+def test_every_way_of_adding_a_page_adds_to_what_is_already_chosen() -> None:
+    """Owner report: pages already added were lost when more were added another way. The file
+    chooser and the drop zone used to *replace* the chosen pages; only the camera added."""
+    adder = SCRIPT[SCRIPT.index("function addFiles(fs){") : SCRIPT.index("function pick(fs){")]
+    assert "pick(chosen.concat(fresh));" in adder
+    assert "pick([...e.target.files])" not in SCRIPT  # the two replacing calls are gone
+    assert "pick([...e.dataTransfer.files])" not in SCRIPT
+    assert "pick(chosen.concat([file]));" in SCRIPT  # the camera: as it always was
+
+
+def test_the_very_same_file_chosen_twice_is_added_once() -> None:
+    assert "a.name === b.name && a.size === b.size && a.lastModified === b.lastModified" in SCRIPT
+    assert "!chosen.some(c => sameFile(c, f))" in SCRIPT
+
+
+def test_the_chooser_is_cleared_so_the_same_file_can_be_chosen_again_after_removal() -> None:
+    assert "addFiles([...e.target.files]); e.target.value = '';" in SCRIPT
+
+
+def test_sending_clears_the_chosen_pages_so_the_next_upload_starts_empty() -> None:
+    send = SCRIPT[SCRIPT.index("$('#go').onclick = async () => {") :]
+    assert send.index("fetch('/api/jobs'") < send.index("pick([]);") < send.index("poll(")
+    assert send.index("if (!r.ok)") < send.index("pick([]);")  # kept if the upload failed
+
+
+def test_the_ten_page_limit_still_holds_however_pages_are_added() -> None:
+    assert "function pick(fs){ chosen = fs.slice(0, 10);" in SCRIPT
+    assert "chosen.length + fresh.length > 10" in SCRIPT and "chosen.length >= 10" in SCRIPT

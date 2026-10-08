@@ -12,8 +12,7 @@ import io
 import random
 from pathlib import Path
 
-import pymupdf
-from PIL import Image, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 DOCS: dict[str, list[str]] = {
     "prescription_00": [
@@ -56,22 +55,37 @@ DOCS: dict[str, list[str]] = {
 }
 
 
-def text_pdf(lines: list[str]) -> bytes:
-    doc = pymupdf.open()
-    page = doc.new_page(width=595, height=842)
+def text_page(lines: list[str], dpi: int = 200) -> Image.Image:
+    """An A4 page with the lines on it, as a picture. (Drawn with Pillow: PyMuPDF, which this
+    script used to write the PDF with, was removed for its licence - LS-S4.)"""
+    scale = dpi / 72.0
+    im = Image.new("L", (round(595 * scale), round(842 * scale)), 255)
+    draw, font = ImageDraw.Draw(im), ImageFont.load_default(size=round(13 * scale))
     for i, line in enumerate(lines):
-        page.insert_text((56, 80 + 26 * i), line, fontsize=13)
-    out = doc.tobytes()
-    doc.close()
-    return out
+        # the built-in font sets words close together; a wider gap keeps them apart for OCR
+        spaced = line.replace(" ", "  ")
+        draw.text(
+            (round(56 * scale), round((67 + 26 * i) * scale)),
+            spaced,
+            fill=0,
+            font=font,
+            stroke_width=1,
+            stroke_fill=0,
+        )  # a little weight, like a printed form
+    return im
 
 
-def scanify(pdf: bytes, seed: int, dpi: int = 150) -> bytes:
-    """Rasterise, rotate slightly, add speckle + blur: a PNG that looks like a flatbed scan."""
+def text_pdf(lines: list[str], dpi: int = 200) -> bytes:
+    buf = io.BytesIO()
+    # a palette picture is stored without loss; grey or colour would be stored as a JPEG
+    text_page(lines, dpi).convert("P").save(buf, format="PDF", resolution=float(dpi))
+    return buf.getvalue()
+
+
+def scanify(lines: list[str], seed: int, dpi: int = 150) -> bytes:
+    """Rotate slightly, add speckle + blur: a PNG that looks like a flatbed scan."""
     rnd = random.Random(seed)
-    with pymupdf.open(stream=pdf, filetype="pdf") as d:
-        png = d[0].get_pixmap(dpi=dpi).tobytes("png")
-    im = Image.open(io.BytesIO(png)).convert("L")
+    im = text_page(lines, dpi).convert("L")
     im = im.rotate(rnd.uniform(-4, 4), fillcolor=255, expand=False)
     px = im.load()
     w, h = im.size
@@ -89,7 +103,7 @@ def generate(out: Path, *, seed: int = 7) -> list[Path]:
     for i, (name, lines) in enumerate(DOCS.items()):
         pdf = text_pdf(lines)
         (out / f"{name}.pdf").write_bytes(pdf)
-        (out / f"{name}.scan.png").write_bytes(scanify(pdf, seed + i))
+        (out / f"{name}.scan.png").write_bytes(scanify(lines, seed + i))
         written += [out / f"{name}.pdf", out / f"{name}.scan.png"]
     return written
 

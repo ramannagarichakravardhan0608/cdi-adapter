@@ -63,6 +63,7 @@ POLICY: dict[tuple[str, str], frozenset[str]] = {
     ("GET", "/"): _COUNTER,
     ("POST", "/api/jobs"): _COUNTER,
     ("GET", "/api/jobs/{job_id}"): _ANY_STAFF,
+    ("GET", "/api/activity"): _ANY_STAFF,  # counts of uploads being read: no content
     ("GET", "/api/jobs/{job_id}/fhir"): _ANY_STAFF,
     ("GET", "/api/jobs/{job_id}/fhir/download"): _ANY_STAFF,
     ("GET", "/api/patients/{patient_id}/fhir"): _ANY_STAFF,
@@ -82,6 +83,14 @@ POLICY: dict[tuple[str, str], frozenset[str]] = {
     ("GET", "/result/{document_id}"): _CLINICAL,
     ("GET", "/api/documents/{document_id}/result.json"): _CLINICAL,
     ("GET", "/api/documents/{document_id}/result.json/download"): _CLINICAL,
+    # UP-S3 AC5: "this result is wrong", and the backlog those reports are worked from
+    ("POST", "/api/documents/{document_id}/result/report"): _CLINICAL,
+    ("GET", "/api/evaluation/backlog"): _CLINICAL,
+    ("GET", "/evaluation"): _CLINICAL,
+    # UP-S1 AC2: the one result of a whole upload is the same content, so the same rule
+    ("GET", "/result/job/{job_id}"): _CLINICAL,
+    ("GET", "/api/jobs/{job_id}/result.json"): _CLINICAL,
+    ("GET", "/api/jobs/{job_id}/result.json/download"): _CLINICAL,
     ("GET", "/review"): _CLINICAL,
     ("GET", "/api/review/tasks"): _CLINICAL,
     ("GET", "/api/review/facts/{fact_id}"): _CLINICAL,
@@ -110,6 +119,8 @@ POLICY: dict[tuple[str, str], frozenset[str]] = {
     ("GET", "/monitor"): _CLINICAL,
     ("GET", "/api/monitor/items"): _CLINICAL,
     ("GET", "/api/monitor/documents/{document_id}"): _CLINICAL,
+    # UP-S2 AC5: the weekly picture-quality report - counts only, for whoever runs the service
+    ("GET", "/api/reports/quality"): _CLINICAL,
     # data inspector over every table: admin only
     ("GET", "/admin"): _ADMIN,
 }

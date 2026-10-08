@@ -8,7 +8,7 @@ The contract's two hard rules are what most of this file pins:
   is ``needs_check`` and says why.
 
 The rest pins the parts that are easy to get wrong later: the document validates against
-``schemas/result.v1.json``, two builds are byte-identical, and a contract field no extractor fills
+``schemas/contract/result.v1.json``, two builds are byte-identical, and a contract field no extractor fills
 yet is reported as **absent** rather than emitted as an empty value that reads like "nothing was
 written on the page".
 """
@@ -92,7 +92,8 @@ def test_a_value_object_must_have_its_status_to_validate() -> None:
 def test_the_absent_list_names_what_no_extractor_fills_yet() -> None:
     """A contract field whose table or extractor is not built (OUT-S1, EX-S1/S2/S4/S5) is listed,
     not emitted empty - so a blank is never read as "not written on the page"."""
-    assert "preparation" in result.ABSENT
+    assert "lab_tests[].preparation_refs" in result.ABSENT
+    assert "preparation" not in result.ABSENT  # UP-S3 AC1: recognised among the advice now
     assert "lab_tests[].context" in result.ABSENT
     assert "doctor.clinic" in result.ABSENT
     assert "patient.phone" in result.ABSENT
@@ -127,16 +128,19 @@ def test_the_status_follows_the_held_count() -> None:
 # ------------------------------------------------------------------ the screen
 
 
-def test_the_four_cards_are_there() -> None:
-    for title in ("Patient", "Doctor", "Lab tests", "Status"):
+def test_the_five_cards_are_there() -> None:
+    for title in ("Patient", "Doctor", "Lab tests", "Preparation", "Status"):
         assert f"card('{title}'" in SCRIPT, title
 
 
-def test_the_page_is_read_only() -> None:
-    """Corrections belong to the review console; this screen has no inputs at all."""
-    assert "<input" not in BODY.replace("<input id=dl", "")
-    assert "<textarea" not in BODY and "<select" not in BODY
+def test_no_value_on_the_page_can_be_edited() -> None:
+    """Corrections belong to the review console. The page's one text box is the note of a
+    "wrong result" report (UP-S3 AC5), which changes nothing in the result."""
+    assert "<input" not in BODY
+    assert BODY.count("<textarea") == 1 and "<textarea id=reportnote" in BODY
+    assert BODY.count("<select") == 1 and "<select id=reportdoc" in BODY
     assert "/review" in BODY  # and it says where corrections are made
+    assert "method: 'PUT'" not in SCRIPT and "method: 'PATCH'" not in SCRIPT
 
 
 def test_there_is_one_way_to_draw_a_value_and_it_always_prints_the_status() -> None:
@@ -148,11 +152,17 @@ def test_there_is_one_way_to_draw_a_value_and_it_always_prints_the_status() -> N
 
 def test_the_screen_reads_the_contract_not_the_tables() -> None:
     assert "/api/documents/${docId}/result.json" in SCRIPT
-    assert "/api/jobs/" not in SCRIPT and "/api/review/" not in SCRIPT
+    # the only things it asks the server for are the two result documents: one page's, and
+    # (UP-S1 AC2) a whole upload's. Never the job, the facts or the review tables.
+    import re
+
+    asked = set(re.findall(r"/api/[a-z]+/", SCRIPT))
+    assert asked == {"/api/documents/", "/api/jobs/"}
+    assert "/api/jobs/${docId}/result.json" in SCRIPT and "/api/review/" not in SCRIPT
 
 
 def test_the_download_saves_the_same_document() -> None:
-    assert "result.json/download" in SCRIPT and "Download JSON" in BODY
+    assert "location.href = api + '/download'" in SCRIPT and "Download JSON" in BODY
 
 
 def test_the_schema_version_is_shown() -> None:
@@ -185,3 +195,156 @@ def test_the_upload_screen_links_to_a_finished_page_only() -> None:
 
     assert "/result/${d.document_id}" in UPLOAD
     assert "d.steps_done.includes('validate')" in UPLOAD  # not while it is still being read
+
+
+# ------------------------------------------------------------------ one result for one upload
+
+
+class _Rows:
+    def __init__(self, row):
+        self._row = row
+
+    def mappings(self):
+        return self
+
+    def first(self):
+        return self._row
+
+
+class _JobConn:
+    """A connection that knows one upload."""
+
+    def __init__(self, docs):
+        self.row = {"id": "a" * 32, "state": "review", "docs": docs, "created_at": None}
+
+    def execute(self, *_a, **_k):
+        return _Rows(self.row)
+
+
+def _page_result(doc_id: str, *, status: str = "complete", held: bool = False, mpi: str = "CFP-1"):
+    v = result.value(
+        "HbA1c",
+        review_state="held" if held else "auto_accepted",
+        confidence=0.9,
+        evidence={"page": 1, "bbox": [0, 0, 1, 1], "observation_ids": ["o"]},
+    )
+    name = result.value(
+        "Ravi Kumar",
+        review_state="auto_accepted",
+        confidence=0.99,
+        evidence={"page": None, "bbox": None, "observation_ids": ["n"]},
+    )
+    return {"schema_version": "result.v1", "document_id": doc_id, "status": status,
+            "page_count": 1, "patient": {"name": name, "ids": [{"type": "mpi_id", "value": mpi}]},
+            "doctor": {"link": {"method": "unknown"}}, "visit": {},
+            "lab_tests": [{"as_written": f"test of {doc_id}", "kind": "test", "value": v}],
+            "diagnoses": [{"raw_text": f"dx of {doc_id}", "canonical_term": None, "value": v}],
+            "review": {"needs_check_count": int(held), "items": []}}  # fmt: skip
+
+
+def _job(monkeypatch, docs, results):
+    monkeypatch.setattr(result, "build", lambda conn, doc_id: results[doc_id])
+    return result.build_job(_JobConn(docs), "a" * 32)
+
+
+def test_two_pages_sent_together_give_one_result(monkeypatch) -> None:
+    """UP-S1 AC2: one job for the two pages, and the person sees one result."""
+    docs = [{"filename": "p1.jpg", "status": "done", "document_id": "d1"},
+            {"filename": "p2.jpg", "status": "done", "document_id": "d2"}]  # fmt: skip
+    out = _job(monkeypatch, docs, {"d1": _page_result("d1"), "d2": _page_result("d2")})
+    assert out["schema_version"] == "result-job.v1" and out["job_id"] == "a" * 32
+    assert out["page_count"] == 2 and out["status"] == "complete"
+    assert [(p["page"], p["file_name"], p["status"]) for p in out["pages"]] == [
+        (1, "p1.jpg", "complete"), (2, "p2.jpg", "complete")]  # fmt: skip
+    # every page's tests and diagnoses are there, each saying which page it was read from
+    assert [(t["as_written"], t["page"]) for t in out["lab_tests"]] == [
+        ("test of d1", 1), ("test of d2", 2)]  # fmt: skip
+    assert [d["page"] for d in out["diagnoses"]] == [1, 2]
+    assert out["patient"]["name"]["value"] == "Ravi Kumar" and out["patients_differ"] is False
+    assert [d["document_id"] for d in out["documents"]] == ["d1", "d2"]  # each page, unchanged
+
+
+def test_the_one_result_is_as_bad_as_its_worst_page(monkeypatch) -> None:
+    docs = [{"filename": "p1.jpg", "status": "done", "document_id": "d1"},
+            {"filename": "p2.jpg", "status": "done", "document_id": "d2"}]  # fmt: skip
+    out = _job(
+        monkeypatch,
+        docs,
+        {"d1": _page_result("d1"), "d2": _page_result("d2", status="needs_check", held=True)},
+    )
+    assert out["status"] == "needs_check"
+    assert (
+        out["review"]["needs_check_count"] == 2
+    )  # the held test and the held diagnosis, once each
+
+
+def test_a_page_that_could_not_be_read_is_named_and_holds_the_result(monkeypatch) -> None:
+    docs = [
+        {"filename": "p1.jpg", "status": "done", "document_id": "d1"},
+        {
+            "filename": "blurry.jpg",
+            "status": "quality_hold",
+            "document_id": None,
+            "quality": {"code": "blurred", "message": "This photo is too blurry to read."},
+        },
+    ]
+    out = _job(monkeypatch, docs, {"d1": _page_result("d1")})
+    assert out["status"] == "held_for_rescan" and out["page_count"] == 2
+    held = out["pages"][1]
+    assert (held["status"], held["reason"]) == ("held_for_rescan",
+                                                "This photo is too blurry to read.")  # fmt: skip
+    assert len(out["documents"]) == 1 and len(out["lab_tests"]) == 1  # the good page still shows
+
+
+def test_values_are_counted_once_not_again_from_the_pages_own_copies(monkeypatch) -> None:
+    docs = [{"filename": "p1.jpg", "status": "done", "document_id": "d1"}]
+    out = _job(monkeypatch, docs, {"d1": _page_result("d1", status="needs_check", held=True)})
+    assert out["review"]["needs_check_count"] == 2  # not 4: `documents` is added after the count
+
+
+def test_the_same_picture_sent_twice_is_read_once(monkeypatch) -> None:
+    docs = [{"filename": "p1.jpg", "status": "done", "document_id": "d1"},
+            {"filename": "p1-again.jpg", "status": "done", "document_id": "d1"}]  # fmt: skip
+    out = _job(monkeypatch, docs, {"d1": _page_result("d1")})
+    assert [p["status"] for p in out["pages"]] == ["complete", "duplicate"]
+    assert len(out["lab_tests"]) == 1
+
+
+def test_pages_of_two_patients_in_one_upload_are_flagged(monkeypatch) -> None:
+    docs = [{"filename": "a.jpg", "status": "done", "document_id": "d1"},
+            {"filename": "b.jpg", "status": "done", "document_id": "d2"}]  # fmt: skip
+    out = _job(monkeypatch, docs, {"d1": _page_result("d1"), "d2": _page_result("d2", mpi="CFP-2")})
+    assert out["patients_differ"] is True
+
+
+def test_an_upload_that_does_not_exist_is_said_so() -> None:
+    conn = _JobConn([])
+    conn.row = None
+    with pytest.raises(LookupError, match="no upload"):
+        result.build_job(conn, "b" * 32)
+
+
+def test_the_upload_has_one_result_screen_and_one_download() -> None:
+    from cdi_adapter.webapp.app import app
+
+    paths = set(app.openapi()["paths"])
+    assert {"/result/job/{job_id}", "/api/jobs/{job_id}/result.json",
+            "/api/jobs/{job_id}/result.json/download"} <= paths  # fmt: skip
+    assert "pagesCard(d)" in SCRIPT and "isJob" in SCRIPT
+
+
+def test_several_pages_get_one_link_and_a_single_page_keeps_its_own() -> None:
+    from cdi_adapter.webapp.page import SCRIPT as UPLOAD
+
+    assert "j.documents.length === 1 && d.document_id" in UPLOAD  # a row link only when alone
+    assert 'href="/result/job/${id}"' in UPLOAD and "one result" in UPLOAD
+    assert "j.documents.length > 1" in UPLOAD
+
+
+def test_the_upload_page_says_how_many_uploads_are_being_read() -> None:
+    from cdi_adapter.webapp.app import app
+    from cdi_adapter.webapp.page import SCRIPT as UPLOAD
+
+    assert "/api/activity" in UPLOAD and "Uploads being read now" in UPLOAD
+    assert "No upload is being read right now" in UPLOAD
+    assert "/api/activity" in set(app.openapi()["paths"])

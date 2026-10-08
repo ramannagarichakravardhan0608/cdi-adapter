@@ -34,10 +34,11 @@ def _m(**kw: Any) -> dict[str, float]:
 # ------------------------------------------------------------------ off unless asked for
 
 
-def test_the_check_is_off_by_default() -> None:
-    """Switching it on starts rejecting pages, and a limit set too high rejects good ones, so
-    the default must not change anyone's pipeline."""
-    assert Settings().quality_check is False
+def test_the_check_is_on_by_default() -> None:
+    """On since 2026-10-08 (IM-S1 AC2): a page that cannot be read is held at the desk instead
+    of being read wrongly. ``CDI_QUALITY_CHECK=false`` lets every page through again."""
+    assert Settings().quality_check is True
+    assert Settings(quality_check=False).quality_check is False
 
 
 def test_with_the_check_off_nothing_is_ever_held() -> None:
@@ -178,7 +179,7 @@ def test_the_held_page_is_not_shown_as_finished() -> None:
 
 
 def test_the_existing_upload_and_progress_are_unchanged() -> None:
-    assert "$('#files').onchange = e => pick([...e.target.files]);" in SCRIPT
+    assert "addFiles([...e.target.files])" in SCRIPT
     assert "chosen.forEach(f => fd.append('files', f));" in SCRIPT
     assert "await fetch('/api/jobs', {method:'POST', body:fd});" in SCRIPT
     assert "const STEPS = ['ingest','ocr','classify','extract','terminology','validate'];" in SCRIPT

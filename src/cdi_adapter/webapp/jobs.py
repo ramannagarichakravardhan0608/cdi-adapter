@@ -171,6 +171,8 @@ def handwritten_lines(read: Any, settings: Any) -> bool:
     line counts (an older run, or the line finder failed - then the classifier alone decides)."""
     if not settings.line_regions or not isinstance(read, dict):
         return False
+    if settings.line_readers and "line_reads" in read:
+        return False  # the lines were read one by one: no need to read the whole page again
     found = read.get("regions") or {}
     most = found.get("max_handwritten_on_a_page", 0)
     return bool(most >= settings.line_regions_min_handwritten)
@@ -203,6 +205,9 @@ class Job:
     registry_patient: dict[str, Any] | None = None
     abha: str | None = None
     mismatch: dict[str, Any] | None = None
+    # where the files came from: "upload" (the screen) or "listener" (the watched folder,
+    # LS-S4). Stored with the document; every step after that is the same for both.
+    channel: str = "upload"
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     # documents past Phase 1 that have not started extraction yet (cdi_extract_waiting, E10-S1)
     extract_queued: int = field(default=0, repr=False)
@@ -515,11 +520,14 @@ class JobRunner:
                 log.warning("page_quality_hold", job=job.id, filename=filename,
                             code=held["code"], measures=held.get("measures"))  # fmt: skip
                 self._save(job)
+                self._note_hold(job, i, held["code"])
                 return
             d.step = "ingest"
             self._save(job)
             with metrics.stage("ingest"):
-                res = s.ingest(raw, filename, mime, patient_id=job.patient_id)
+                # the one difference between the screen and the folder: the channel recorded
+                source = {} if job.channel == "upload" else {"source_channel": job.channel}
+                res = s.ingest(raw, filename, mime, patient_id=job.patient_id, **source)
             d.document_id = str(res.document_id)
             d.steps_done.append("ingest")
             d.step = "ocr"
@@ -736,6 +744,23 @@ class JobRunner:
     def _run(self, job: Job, files: list[tuple[str, bytes, str | None] | None]) -> None:
         with tracing.attached(job.span):
             self._run_traced(job, files)
+
+    def _note_hold(self, job: Job, i: int, code: str) -> None:
+        """UP-S2 AC5: write the hold to the audit log, for the weekly report - a held page has
+        no document, and a retake overwrites its place in the job, so nothing else remembers it.
+        Stored jobs only (a runner without a store has no database), and never at the cost of
+        the job: if the row cannot be written the page is still held and the person still told."""
+        if self.store is None:
+            return
+        try:
+            from cdi_adapter.db import session_scope
+            from cdi_adapter.webapp import quality_report
+
+            with session_scope() as c:
+                quality_report.record_hold(c, job_id=job.id, page=i + 1, code=code,
+                                           actor=self.owner)  # fmt: skip
+        except Exception as exc:  # noqa: BLE001 - see the docstring
+            log.error("quality_hold_not_recorded", job=job.id, page=i + 1, error=str(exc))
 
     def _phase1_file(self, job: Job, i: int, f: tuple[str, bytes, str | None] | None) -> None:
         name, raw, mime = f if f is not None else (job.docs[i].filename, None, None)

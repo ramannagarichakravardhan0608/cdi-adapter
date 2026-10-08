@@ -38,13 +38,14 @@ again; only when the total wait would pass ``CDI_LISTENER_MAX_WAIT_SECONDS`` doe
 file they track, which is what lets a retry agent leave another drive's rows alone after the
 setting is changed.
 
-**Signing in is LS-S2, not this story.** The two cloud connectors ask a *token source* - any
-callable returning a bearer token - for each call. Until LS-S2 builds the real sign-in, the token
-source reads ``CDI_GRAPH_ACCESS_TOKEN`` / ``CDI_GDRIVE_ACCESS_TOKEN`` (a token pasted in for a
-test run) and raises :class:`SignInRequired`, in plain words, when there is none.
+**Signing in is LS-S2** (``auth.py``). The two cloud connectors ask a *token source* - any
+callable returning a bearer token - for each call: the Microsoft sign-in (device code or app
+only), a Google service account, or - for a test run - a token pasted into
+``CDI_GRAPH_ACCESS_TOKEN`` / ``CDI_GDRIVE_ACCESS_TOKEN``. With none of them the source raises
+:class:`SignInRequired`, in plain words; with one that has run out, :class:`SignInExpired`.
 
-Both cloud connectors speak plain HTTPS through ``httpx``, which the project already depends on:
-no Microsoft or Google SDK is installed, so there is no extra to install for either.
+Both cloud connectors speak plain HTTPS to the drive through ``httpx``. Only the Microsoft
+sign-in needs a library (MSAL, the ``listener`` extra).
 """
 
 from __future__ import annotations
@@ -78,6 +79,10 @@ class ListenerError(RuntimeError):
 
 class SignInRequired(ListenerError):
     """The drive needs a sign-in that has not been done, or has expired (LS-S2)."""
+
+
+class SignInExpired(SignInRequired):
+    """There was a sign-in and it no longer works: the listener stops on this (LS-S2)."""
 
 
 class Throttled(ListenerError):
@@ -232,26 +237,31 @@ class _Http:
             self._sleep(wait)
             waited += wait
         if response.status_code == 401:
-            raise SignInRequired("the drive refused the sign-in: it is missing or has expired. "
-                                 "Sign in again (LS-S2) and re-run the check.")  # fmt: skip
+            raise SignInExpired("the drive refused the sign-in: it is missing or has expired. "
+                                "Sign in again (python -m cdi_adapter.listener login) and "
+                                "re-run the check.")  # fmt: skip
         return response
 
     def json(self, method: str, url: str, *, ok: tuple[int, ...] = (200, 201),
              **kwargs: Any) -> dict[str, Any]:  # fmt: skip
         response = self.send(method, url, **kwargs)
         if response.status_code not in ok:
-            raise ListenerError(f"{method} {response.request.url.path} answered "
-                                f"{response.status_code}: {response.text[:200]}")  # fmt: skip
+            from cdi_adapter.listener.auth import scrub
+
+            raise ListenerError(
+                f"{method} {response.request.url.path} answered "
+                f"{response.status_code}: {scrub(response.text[:200])}"
+            )
         return response.json() if response.content else {}
 
 
 def _static_token(value: str, what: str, setting: str) -> TokenSource:
-    """The stand-in token source until LS-S2: a token from settings, or a plain refusal."""
+    """A token pasted into settings for a test run, or a plain refusal."""
 
     def token() -> str:
         if not value:
-            raise SignInRequired(f"no sign-in for {what}: sign in (LS-S2), or for a test run "
-                                 f"put a bearer token in {setting}")  # fmt: skip
+            raise SignInRequired(f"no sign-in for {what}: sign in, or for a test run put a "
+                                 f"bearer token in {setting}")  # fmt: skip
         return value
 
     return token
@@ -366,8 +376,10 @@ class GraphConnector:
             drive = f"/users/{settings.graph_user}/drive"
         else:
             drive = "/me/drive"
-        token = token or _static_token(settings.graph_access_token, "Microsoft Graph",
-                                       "CDI_GRAPH_ACCESS_TOKEN")  # fmt: skip
+        if token is None:
+            from cdi_adapter.listener.auth import graph_token_source
+
+            token = graph_token_source(settings, name)
         return cls(name, drive, settings.listener_root, folder_names(settings), token,
                    base_url=settings.graph_base_url, max_wait=settings.listener_max_wait_seconds,
                    transport=transport, sleep=sleep)  # fmt: skip
@@ -525,8 +537,10 @@ class GoogleDriveConnector:
         transport: httpx.BaseTransport | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> GoogleDriveConnector:
-        token = token or _static_token(settings.gdrive_access_token, "Google Drive",
-                                       "CDI_GDRIVE_ACCESS_TOKEN")  # fmt: skip
+        if token is None:
+            from cdi_adapter.listener.auth import gdrive_token_source
+
+            token = gdrive_token_source(settings)
         return cls(settings.gdrive_folder_id, folder_names(settings), token,
                    base_url=settings.gdrive_base_url,
                    max_wait=settings.listener_max_wait_seconds, transport=transport,

@@ -96,7 +96,7 @@ def _job(row: Any) -> Job:
               patient_id=str(row["patient_id"]) if row["patient_id"] else None,
               registry_patient=row["registry_patient"], abha=row["abha"],
               mismatch=row["mismatch"], trace_id=row["trace_id"], span_id=row["span_id"],
-              attempts=row["attempts"])  # fmt: skip
+              attempts=row["attempts"], channel=channel_of(row.get("created_by")))  # fmt: skip
     job.started_at = row["created_at"].timestamp()  # the upload: the SLA window starts here
     if row["finished_at"] is not None:
         job.finished.set()
@@ -295,6 +295,15 @@ def load(job_id: str) -> Job | None:
     return store().load(job_id)
 
 
+LISTENER_ACTOR = "listener"
+
+
+def channel_of(actor: str | None) -> str:
+    """The source channel of a job, from who submitted it: the file listener's jobs are
+    recorded as ``listener``, everything else as an ``upload`` from the screen (LS-S4)."""
+    return "listener" if actor == LISTENER_ACTOR else "upload"
+
+
 def idempotency_key(files: list[tuple[str, bytes, str | None]], *, actor: str,
                     patient_id: str | None = None, abha: str | None = None,
                     given: str | None = None) -> str:  # fmt: skip
@@ -339,7 +348,8 @@ def submit(files: list[tuple[str, bytes, str | None]], *, actor: str,
         metrics.JOB_DUPLICATES.inc()
         return first
     job = Job(id=uuid.uuid4().hex, docs=[DocState(filename=f[0]) for f in files],
-              patient_id=patient_id, registry_patient=registry_patient, abha=abha)  # fmt: skip
+              patient_id=patient_id, registry_patient=registry_patient, abha=abha,
+              channel=channel_of(actor))  # fmt: skip
     staged: list[str] = []
     try:
         with tracing.span("job.accept", {"cdi.job_id": job.id,

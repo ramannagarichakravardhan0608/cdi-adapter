@@ -125,7 +125,9 @@ def _ingest(raw: bytes, filename: str, mime: str, ext: str, sha: str, store: Obj
             detail={"filename": filename, "sha256": sha, "channel": source_channel},
         )
         # 4. open the run in the same transaction as the row it belongs to
-        run_id = repo.start_run(conn, document_id=doc_id, stage="ingest", model_name="pymupdf")
+        run_id = repo.start_run(
+            conn, document_id=doc_id, stage="ingest", model_name=pages.pdf.renderer().name
+        )
 
     return _render_finish(doc_id, sha, raw, mime, store, run_id, actor, len(raw))
 
@@ -177,7 +179,9 @@ def _rerender(existing: dict, raw: bytes, mime: str, store: ObjectStore,
     with session_scope() as conn:
         conn.execute(text("DELETE FROM document_page WHERE document_id = :d"), {"d": doc_id})
         repo.set_document_status(conn, doc_id, "received")
-        run_id = repo.start_run(conn, document_id=doc_id, stage="ingest", model_name="pymupdf")
+        run_id = repo.start_run(
+            conn, document_id=doc_id, stage="ingest", model_name=pages.pdf.renderer().name
+        )
     return _render_finish(doc_id, sha, raw, mime, store, run_id, actor, len(raw), reused=True)
 
 

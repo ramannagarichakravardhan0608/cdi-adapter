@@ -42,6 +42,7 @@ from cdi_adapter import repo, result, tracing
 from cdi_adapter.config import get_settings
 from cdi_adapter.db import session_scope
 from cdi_adapter.fhir.service import project_document, project_patient
+from cdi_adapter.ingest.pages import UnsupportedDocument, sniff_mime
 from cdi_adapter.logging import configure, get_logger
 from cdi_adapter.mpi import registry
 from cdi_adapter.mpi.service import patient_summary
@@ -53,6 +54,7 @@ from cdi_adapter.webapp import (
     conflicts,
     jobstore,
     monitor,
+    quality_report,
     result_page,
     review,
     review_page,
@@ -62,6 +64,45 @@ from cdi_adapter.webapp.page import upload_page
 
 log = get_logger(__name__)
 MAX_FILES = 10
+# UP-S1 AC3: what the person at the desk is told when a file is not a picture, a PDF or a scan.
+# The same words on the screen (webapp/page.py) and from the server, which is the one that
+# cannot be got round.
+NOT_A_SCAN = "Please add a photo, PDF or scan"
+# UP-S1 AC6: an ABHA number is 14 digits, usually written 91-1234-5678-9012.
+BAD_ABHA = ("The ABHA number must be 14 digits, like 91-1234-5678-9012. "
+            "Correct it, or leave the box empty.")  # fmt: skip
+
+
+def _must_be_a_scan(name: str | None, raw: bytes) -> None:
+    """Refuse a file that is not a PDF or a supported picture (UP-S1 AC3) - before a job exists,
+    in plain words. Judged as S1 will judge it: by its first bytes, then by its extension."""
+    try:
+        mime = sniff_mime(raw, name)
+    except UnsupportedDocument as exc:
+        raise HTTPException(415, NOT_A_SCAN) from exc
+    # LS-S3: an upload is untrusted too. One with more pages than the limit, or a picture too
+    # large to open safely, is refused whole and in plain words - never read up to the limit.
+    from cdi_adapter.ingest.pages import DocumentRefused, inspect
+
+    try:
+        inspect(raw, mime)
+    except DocumentRefused as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except UnsupportedDocument:
+        pass  # cannot be opened at all: the picture check says so, in its own words
+
+
+def clean_abha(abha: str | None) -> str | None:
+    """The ABHA number as typed, or ``None`` for an empty box; anything that is not 14 digits
+    (spaces and hyphens between them allowed) is refused in plain words (UP-S1 AC6)."""
+    typed = (abha or "").strip()
+    if not typed:
+        return None
+    digits = typed.replace("-", "").replace(" ", "")
+    if not (digits.isascii() and digits.isdigit() and len(digits) == 14):
+        raise HTTPException(422, BAD_ABHA)
+    return typed
+
 
 # every route passes auth.authorize first: sign-in + role, per auth.POLICY (backlog E11-S1)
 # (FastAPI's /docs, /redoc and /openapi.json would bypass it, so they are switched off)
@@ -154,6 +195,9 @@ async def create_job(request: Request, files: list[UploadFile] = File(...),
     payload = [(f.filename or "upload", await f.read(), f.content_type) for f in files]
     if any(not raw for _, raw, _ in payload):
         raise HTTPException(422, "empty file")
+    for name, raw, _ in payload:  # AC3: one file that is not a scan refuses the whole upload
+        _must_be_a_scan(name, raw)
+    abha = clean_abha(abha)  # AC6
     reg, patient_id = None, None
     if patient_ref:
         with session_scope() as c:
@@ -195,6 +239,7 @@ async def replace_page(job_id: str, page_no: int, request: Request,
     raw = await file.read()
     if not raw:
         raise HTTPException(422, "empty file")
+    _must_be_a_scan(file.filename, raw)  # a retaken page obeys the same rule as a first one
     try:
         job = await run_in_threadpool(
             jobstore.replace_page, job_id, page_no - 1, file.filename or "retake",
@@ -228,6 +273,107 @@ def download_result(document_id: UUID) -> Response:
     name = f"result-{document_id}.json"
     return Response(out.body, media_type="application/json",
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})  # fmt: skip
+
+
+RESULT_REPORT = "result_report"  # audit_log.entity of a "this result is wrong" report
+
+
+class WrongResult(BaseModel):
+    """What the person says is wrong with a result (UP-S3 AC5)."""
+
+    note: str = Field(min_length=1, max_length=1000)
+    value: str | None = Field(default=None, max_length=200)  # the value they were looking at
+
+
+@app.post("/api/documents/{document_id}/result/report", status_code=201)
+def report_wrong_result(document_id: UUID, body: WrongResult,
+                        request: Request) -> dict[str, Any]:  # fmt: skip
+    """UP-S3 AC5: "Report a wrong result". Saved with the document id, who reported it and when,
+    in the append-only audit log - so a report can never be edited or lost - and listed in the
+    evaluation backlog. It changes nothing in the result: corrections are the review console's."""
+    note = " ".join(body.note.split())
+    if len(note) < 3:
+        raise HTTPException(422, "Say what is wrong, in a few words.")
+    with session_scope() as c:
+        _doc(c, document_id)  # 404 for a document that does not exist
+        report_id = repo.write_audit(
+            c, actor=auth.actor(request).username, action="create", entity=RESULT_REPORT,
+            entity_id=document_id,
+            detail={"note": note, "value": (body.value or "").strip() or None,
+                    "schema_version": result.SCHEMA_VERSION})  # fmt: skip
+    log.info("result_reported_wrong", document_id=str(document_id), report_id=report_id)
+    return {"report_id": report_id, "document_id": str(document_id)}
+
+
+@app.get("/api/evaluation/backlog")
+def evaluation_backlog(limit: int = 100) -> dict[str, Any]:
+    """The evaluation backlog: every result reported wrong, newest first, for whoever works
+    out why the reading went wrong."""
+    if not 1 <= limit <= 500:
+        raise HTTPException(422, "limit must be between 1 and 500")
+    with session_scope() as c:
+        total = c.execute(text("SELECT count(*) FROM audit_log WHERE entity = :e"),
+                          {"e": RESULT_REPORT}).scalar_one()  # fmt: skip
+        rows = c.execute(
+            text("SELECT a.id, a.at, a.actor, a.entity_id AS document_id, "
+                 "  a.detail ->> 'note' AS note, a.detail ->> 'value' AS value, d.filename "
+                 "FROM audit_log a LEFT JOIN source_document d ON d.id::text = a.entity_id "
+                 "WHERE a.entity = :e ORDER BY a.at DESC, a.id DESC LIMIT :n"),
+            {"e": RESULT_REPORT, "n": limit}).mappings().all()  # fmt: skip
+    reports = [{"report_id": r["id"], "reported_at": r["at"].isoformat() if r["at"] else None,
+                "reported_by": r["actor"], "document_id": r["document_id"],
+                "file_name": r["filename"], "note": r["note"], "value": r["value"]}
+               for r in rows]  # fmt: skip
+    return {"count": int(total), "reports": reports}
+
+
+@app.get("/api/jobs/{job_id}/result.json")
+def job_result(job_id: str) -> Response:
+    """UP-S1 AC2: one result for one upload - every page sent together, as a single document
+    (``result.build_job``). The screen at ``/result/job/<id>`` and the Download button are both
+    fed by this."""
+    with session_scope() as c:
+        try:
+            body = result.job_as_json(c, job_id)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+    return Response(body, media_type="application/json")
+
+
+@app.get("/api/jobs/{job_id}/result.json/download")
+def download_job_result(job_id: str) -> Response:
+    out = job_result(job_id)
+    return Response(out.body, media_type="application/json",
+                    headers={"Content-Disposition":
+                             f'attachment; filename="result-upload-{job_id}.json"'})  # fmt: skip
+
+
+@app.get("/api/reports/quality")
+def quality_report_route(days: int = 7) -> dict[str, Any]:
+    """UP-S2 AC5: the weekly picture-quality report - the retake rate and the top reasons
+    pictures were held. Counts only. ``days`` is how far back (1 to 366; a week by default)."""
+    if not 1 <= days <= 366:
+        raise HTTPException(422, "days must be between 1 and 366")
+    with session_scope() as c:
+        return quality_report.weekly(c, days=days)
+
+
+@app.get("/api/activity")
+def activity() -> dict[str, Any]:
+    """How much is going on right now: uploads ("jobs") by state, and how many of their pages
+    are still being read. An upload is one press of Generate EMR, with 1 to 10 pages; ``review``
+    means it has been read and is waiting for a reviewer. Counts only - no names, no content."""
+    with session_scope() as c:
+        rows = c.execute(text("SELECT state, count(*) FROM web_job GROUP BY state")).all()
+        pages = c.execute(
+            text(
+                "SELECT count(*) FROM web_job j, jsonb_array_elements(j.docs) d "
+                "WHERE j.state = 'running' AND d->>'status' IN ('pending', 'running')"
+            )
+        ).scalar_one()
+    states: dict[str, int] = {str(state): int(n) for state, n in rows}
+    jobs = {s: states.get(s, 0) for s in ("running", "review", "mismatch", "error")}
+    return {"jobs": jobs, "jobs_running": jobs["running"], "pages_being_read": int(pages)}
 
 
 @app.get("/api/jobs/{job_id}")

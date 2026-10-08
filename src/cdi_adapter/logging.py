@@ -18,8 +18,10 @@ from cdi_adapter import tracing
 _configured = False
 
 
-def configure(level: str = "INFO", *, json: bool = True) -> None:
-    """Configure structlog once per process. ``json=False`` gives a console renderer for dev."""
+def configure(level: str = "INFO", *, json: bool = True, extra: tuple = ()) -> None:  # type: ignore[type-arg]
+    """Configure structlog once per process. ``json=False`` gives a console renderer for dev.
+    ``extra`` are further steps run on every line before it is shipped or written (the file
+    listener uses one to take tokens and secrets out, LS-S2)."""
     global _configured
     logging.basicConfig(format="%(message)s", stream=sys.stdout, level=level.upper())
     renderer = structlog.processors.JSONRenderer() if json else structlog.dev.ConsoleRenderer()
@@ -30,6 +32,7 @@ def configure(level: str = "INFO", *, json: bool = True) -> None:
             structlog.processors.TimeStamper(fmt="iso", utc=True),
             tracing.add_trace_ids,
             structlog.processors.format_exc_info,
+            *extra,
             tracing.ship_to_otel,
             renderer,
         ],

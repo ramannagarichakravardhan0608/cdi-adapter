@@ -25,7 +25,8 @@ dependencies = [
     "celery[redis]>=5.3",
     "watchdog>=4.0",
     # document imaging
-    "pymupdf>=1.24",
+    # PDF pages as pictures: pypdfium2 (Apache-2.0), not PyMuPDF (AGPL) - decided 2026-10-04
+    "pypdfium2>=4.30",
     "opencv-python-headless>=4.9",
     "numpy>=1.26",
     "pillow>=10.2",
@@ -67,6 +68,9 @@ vllm = ["vllm==0.11.0", "fastapi>=0.110", "uvicorn>=0.29", "pydantic>=2.6",
 # 0.11.0, the exact version vLLM 0.11.0 reads, and runs on torch 2.8 (App. B); it needs
 # transformers <= 4.55.2, so it shares neither the pipeline nor the gateway venv.
 quant = ["llmcompressor==0.7.1.4", "qwen-vl-utils>=0.0.8", "pillow>=10.2"]
+# LS-S2 signing in to OneDrive / SharePoint (MSAL: device code, app only, token cache) and to
+# Google Drive with a service account (PyJWT signs the request). Not needed for a local folder.
+listener = ["msal>=1.28", "pyjwt[crypto]>=2.8"]
 # E1-S7 load-test harness: dev/test tool, run from a client machine, never on the pod
 load = ["locust>=2.40"]
 # torch (+CUDA) is preinstalled on the pod image and inherited via --system-site-packages

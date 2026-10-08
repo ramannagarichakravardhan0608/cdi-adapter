@@ -26,7 +26,7 @@ Compose deployment · **Declared only** = listed as a dependency but never impor
 | Database | PostgreSQL 16 (`jsonb`), SQLAlchemy 2 (Core), psycopg 3, Alembic |
 | Object storage | MinIO (S3-compatible), boto3 / botocore |
 | Background processing | Redis 7, Celery, watchdog, `concurrent.futures` thread pools |
-| Document imaging | PyMuPDF, OpenCV, NumPy, Pillow |
+| Document imaging | pypdfium2, OpenCV, NumPy, Pillow |
 | OCR | RapidOCR, ONNX Runtime |
 | AI / model serving | Qwen2.5-VL-7B-Instruct (+3B fallback), PyTorch + CUDA, Hugging Face transformers, accelerate, qwen-vl-utils, einops, sentencepiece, httpx; vLLM 0.11.0 + XGrammar (E2-S1: rebuilt, in the gateway's own venv; `hf` stays active) |
 | Structured-output safety | JSON Schema (`jsonschema` + `referencing`) |
@@ -212,11 +212,11 @@ Compose deployment · **Declared only** = listed as a dependency but never impor
 
 ## 6. Document imaging (S1 ingest & normalize)
 
-### PyMuPDF (`pymupdf`) — Active
-- **What:** Python bindings for MuPDF, a fast PDF/document renderer.
-- **Why:** Turns PDFs and multi-page files into page images at a fixed DPI for OCR and the VLM.
-- **Where:** `ingest/pages.py` (`import pymupdf as fitz`); `CDI_PAGE_DPI` (default 200).
-- **When:** Once per uploaded document during S1 ingest.
+### pypdfium2 (`pypdfium2`) — Active (replaced PyMuPDF, LS-S4)
+- **What:** Python bindings for PDFium, the PDF engine of Chromium. Apache-2.0 (PDFium: Apache-2.0 / BSD-3).
+- **Why:** Turns PDFs into page images at a fixed DPI for OCR and the VLM. Decided 2026-10-04: PyMuPDF's AGPL licence is a blocker for a sold product, so it was removed; there is no PyMuPDF option.
+- **Where:** `ingest/pdf.py` (the PDF renderer interface), used by `ingest/pages.py`; `CDI_PAGE_DPI` (default 200).
+- **When:** Once per uploaded or dropped document during S1 ingest.
 
 ### OpenCV (`opencv-python-headless`) — Active
 - **What:** Computer-vision / image-processing library (headless build, no GUI).
@@ -552,7 +552,7 @@ Compose deployment · **Declared only** = listed as a dependency but never impor
 |---|---|---|
 | Upload / job | web app (:8888) | FastAPI, Uvicorn, python-multipart, ThreadPoolExecutor, PostgreSQL |
 | Folder-watch intake | watcher + worker | watchdog, Celery, Redis |
-| S1 Ingest & normalize | CPU | PyMuPDF, OpenCV, NumPy, Pillow, SHA-256, MinIO/boto3, PostgreSQL |
+| S1 Ingest & normalize | CPU | pypdfium2, OpenCV, NumPy, Pillow, SHA-256, MinIO/boto3, PostgreSQL |
 | S3 OCR (runs before S2) | CPU (+GPU for handwriting) | RapidOCR, ONNX Runtime; Qwen2.5-VL via the gateway for handwriting |
 | S2 Classify | CPU heuristic (+GPU fallback) | Python keyword scoring; Qwen2.5-VL when ambiguous; JSON Schema |
 | S4 Extract | GPU | Model gateway (FastAPI) → transformers/PyTorch → Qwen2.5-VL; httpx; JSON Schema repair |
@@ -577,7 +577,7 @@ this repo today; the block IDs are in `backlog 1.md` (features) and `backlog inf
 | OPD front desk: WhatsApp upload | WhatsApp Business API | Planned (E15-S1) |
 | Canonical intake API: validate, persist, enqueue, ACK | FastAPI + MinIO + Postgres | **Active** for the web upload (E10-S9): files staged in MinIO and the job in `web_job` before the 202, then queued; idempotency keys and dead-letter queues are E9-S3 |
 | Object storage + queue | MinIO / boto3; Celery + Redis | **Active**: web-app jobs on the Celery queues `cdi-web` (Phase 1) and `cdi-gpu` (extraction, E9-S2) (E10-S9, the core of E9-S1), plus the folder-watch path on `cdi` |
-| CDI CPU workers: preprocess + OCR | PyMuPDF, OpenCV, RapidOCR, ONNX Runtime | **Active** |
+| CDI CPU workers: preprocess + OCR | pypdfium2, OpenCV, RapidOCR, ONNX Runtime | **Active** |
 | CDI CPU workers: extract | Deterministic/template parser | Planned (E2-S9) |
 | Confidence gate 1 | Per-field OCR/extract confidence, per-class thresholds | Planned (E2-S9, thresholds E4-S3) |
 | CDI escalation GPU | Qwen2.5-VL-7B (bf16) via mlserve on the **Blackwell 32 GB** | **Active** (used for every document today) |

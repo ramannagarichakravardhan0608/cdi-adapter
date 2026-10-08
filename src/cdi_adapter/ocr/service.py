@@ -20,12 +20,27 @@ is ``CDI_LINE_REGIONS``, off by default: with it on, each observation is stored 
 the line it lies on rather than the reader's blanket "printed" - which is what S5 reads to treat
 evidence as handwritten - and ``webapp/jobs.py`` sends a page with handwritten lines to the
 handwriting pass. Finding the lines can never fail a page: if it breaks, OCR goes on without it.
+
+**Line by line (IM-S3 AC2 / AC4).** With ``CDI_LINE_READERS`` on as well, each line goes to the
+reader its label names (``regions.READERS``), instead of the page going to one reader:
+
+* a **printed** line keeps the print reader's reading;
+* a **handwritten** line is cut from the page to the crop standard and read by the handwriting
+  reader, and the print reader's reading of it is left out;
+* an **uncertain** or **mixed** line is read by **both** - nothing is dropped, and S5 sees two
+  engines on it.
+
+Every crop handed to the handwriting reader meets the crop standard, and its size, padding and
+enlargement are recorded with the run (``metrics.line_crops``) so reader errors can be sliced
+by crop size. A line the handwriting reader fails on, or one past the per-page cap, keeps its
+print reading. Off by default: it is one model call per such line.
 """
 
 from __future__ import annotations
 
 import hashlib
 import io
+from dataclasses import dataclass, field
 from functools import cache
 from importlib import metadata
 from typing import Any
@@ -85,31 +100,96 @@ def _observation_meta(engine: str, settings: Settings) -> dict[str, Any]:
     return {"region_kind": "printed", "engine_version": _rapid_version(), "prompt_hash": None}
 
 
-def page_regions(png: bytes, lines: list[rapid.OcrLine]) -> list[regions.Region]:
+def page_regions(png: bytes, lines: list[rapid.OcrLine], *,
+                 crops: bool = False) -> list[regions.Region]:  # fmt: skip
     """The lines of one page, labelled (IM-S3) - or none at all if that fails: this is a second
-    opinion on the page, and a page must never be lost for want of it."""
+    opinion on the page, and a page must never be lost for want of it. ``crops`` also cuts each
+    line to the crop standard, which is only needed when lines are read one by one."""
     try:
-        return regions.detect_regions(png, ocr=lines, crops=False)
+        return regions.detect_regions(png, ocr=lines, crops=crops)
     except Exception as exc:  # noqa: BLE001 - see the docstring
         log.warning("line_regions_failed", error=f"{type(exc).__name__}: {exc}")
         return []
 
 
-def region_kinds(lines: list[rapid.OcrLine], found: list[regions.Region]) -> list[str | None]:
-    """For each line the print reader read, the label of the line of writing it lies on: the
-    region covering most of it, if that is at least a third of it. ``None`` where no region
-    does - the reader's own kind stands."""
-    out: list[str | None] = []
+def region_index(lines: list[rapid.OcrLine], found: list[regions.Region]) -> list[int | None]:
+    """For each line the print reader read, which line of writing it lies on: the region
+    covering most of it, if that is at least a third of it. ``None`` where no region does."""
+    out: list[int | None] = []
     for ln in lines:
         x0, y0, x1, y1 = (float(v) for v in ln.bbox)
         area = max((x1 - x0) * (y1 - y0), 1.0)
         best, share = None, 1 / 3
-        for r in found:
+        for i, r in enumerate(found):
             a0, b0, a1, b1 = r.bbox
             over = max(0.0, min(x1, a1) - max(x0, a0)) * max(0.0, min(y1, b1) - max(y0, b0))
             if over / area >= share:
-                best, share = r.label, over / area
+                best, share = i, over / area
         out.append(best)
+    return out
+
+
+def region_kinds(lines: list[rapid.OcrLine], found: list[regions.Region]) -> list[str | None]:
+    """For each line the print reader read, the label of the line of writing it lies on.
+    ``None`` where it lies on none - the reader's own kind stands."""
+    return [None if i is None else found[i].label for i in region_index(lines, found)]
+
+
+@dataclass
+class LineReads:
+    """What reading a page line by line produced (IM-S3 AC2 / AC4)."""
+
+    read: list[tuple[rapid.OcrLine, str, str]] = field(default_factory=list)
+    """The handwriting reader's lines: the reading, its line's label, its crop's fingerprint."""
+    replaced: set[int] = field(default_factory=set)
+    """Print-reader lines (by index) left out: they lie on a line that is plainly handwritten
+    and that the handwriting reader did read."""
+    crops: list[dict[str, Any]] = field(default_factory=list)
+    """One record per crop handed to the handwriting reader: its size, padding, enlargement."""
+    sent: int = 0
+    failed: int = 0
+    over_cap: int = 0
+
+    def counts(self) -> dict[str, int]:
+        return {"sent": self.sent, "read": len(self.read), "failed": self.failed,
+                "over_cap": self.over_cap, "print_lines_replaced": len(self.replaced)}  # fmt: skip
+
+
+def read_lines(lines: list[rapid.OcrLine], found: list[regions.Region], client: MLClient, *,
+               max_lines: int) -> LineReads:  # fmt: skip
+    """Send each line to the reader its label names. Printed lines need nothing: the print
+    reader has read the page. Every other line is handed to the handwriting reader as a crop.
+
+    Nothing is dropped. A handwritten line's print reading is left out only once the handwriting
+    reader has actually returned something for it; an uncertain or mixed line keeps both
+    readings; a line the handwriting reader fails on, returns nothing for, or that lies past
+    ``max_lines``, keeps the print reader's reading as it was."""
+    out = LineReads()
+    on_region = region_index(lines, found)
+    for i, r in enumerate(found):
+        if "handwriting" not in r.readers or r.crop is None:
+            continue
+        if out.sent >= max_lines:
+            out.over_cap += 1
+            continue
+        out.sent += 1
+        try:
+            text = vlm_ocr.read_line_crop(r.crop.png, client)
+        except Exception as exc:  # noqa: BLE001 - one line's failure must not cost the page
+            log.warning("line_read_failed", label=r.label, error=f"{type(exc).__name__}: {exc}")
+            out.failed += 1
+            text = ""
+        out.crops.append({**r.crop.record(), "label": r.label, "read": bool(text),
+                          "meets_standard": regions.meets_standard(r.crop)})  # fmt: skip
+        if not text:
+            continue
+        line = rapid.OcrLine(text=text, bbox=[int(v) for v in r.bbox], conf=vlm_ocr.VLM_OCR_CONF,
+                             block_type="line")  # fmt: skip
+        out.read.append((line, r.label, r.crop.sha256))
+        if (
+            "print" not in r.readers
+        ):  # plainly handwritten: this reading takes the print one's place
+            out.replaced |= {n for n, where in enumerate(on_region) if where == i}
     return out
 
 
@@ -163,6 +243,10 @@ def ocr_document(
         found: list[list[regions.Region]] = []  # IM-S3: the print pass only (see module note)
         kinds: list[list[str | None]] = []
         vlm = (client or get_client()) if engine == "vlm" else None
+        # IM-S3 AC2: read line by line - only on the print pass, and only with both switches on
+        by_line = engine != "vlm" and settings.line_regions and settings.line_readers
+        line_client = (client or get_client()) if by_line else None
+        line_reads: list[tuple[dict[str, Any], LineReads]] = []
         for page in pages:
             png = store.get_bytes(page["storage_key"])
             if vlm is not None:
@@ -170,9 +254,17 @@ def ocr_document(
                 kinds.append([None] * len(lines))
             else:
                 lines = rapid.run_rapidocr(png, min_conf=settings.ocr_min_conf)
-                found.append(page_regions(png, lines))
+                found.append(page_regions(png, lines, crops=by_line))
                 on = settings.line_regions
                 kinds.append(region_kinds(lines, found[-1]) if on else [None] * len(lines))
+                if line_client is not None:
+                    reads = read_lines(lines, found[-1], line_client,
+                                       max_lines=settings.line_readers_max_per_page)  # fmt: skip
+                    line_reads.append((page, reads))
+                    # the print reader's reading of a plainly handwritten line is left out
+                    keep = [n for n in range(len(lines)) if n not in reads.replaced]
+                    lines = [lines[n] for n in keep]
+                    kinds[-1] = [kinds[-1][n] for n in keep]
             per_page.append((page, lines, crop_hashes(png, lines)))
 
         meta = _observation_meta(engine, settings)
@@ -197,6 +289,18 @@ def ocr_document(
                 for (page, lines, crops), page_kinds in zip(per_page, kinds, strict=True)
                 for ln, crop, kind in zip(lines, crops, page_kinds, strict=True)
             ]
+            # IM-S3 AC2: the handwriting reader's lines, each stored as its own observation
+            # with the line's label and the fingerprint of the crop it was read from
+            line_meta = _observation_meta("vlm", settings)
+            line_meta["prompt_hash"] = hashlib.sha256(vlm_ocr.LINE_PROMPT.encode()).hexdigest()
+            for page, reads in line_reads:
+                taken = sum(1 for r in rows if r["page_id"] == page["id"])
+                rows += [{"document_id": document_id, "page_id": page["id"],
+                          "block_type": ln.block_type, "text": ln.text, "bbox": ln.bbox,
+                          "polygon": None, "ocr_conf": ln.conf, "reading_order": taken + n,
+                          "engine": "vlm", "pipeline_run_id": run_id, "crop_hash": crop_hash,
+                          **line_meta, "region_kind": label}
+                         for n, (ln, label, crop_hash) in enumerate(reads.read)]  # fmt: skip
             repo.insert_ocr_blocks(conn, rows)
             confs = [r["ocr_conf"] for r in rows]
             metrics = {
@@ -208,11 +312,24 @@ def ocr_document(
             }
             if engine != "vlm":
                 metrics["regions"] = _region_counts(found, settings.line_regions)
+            if by_line:
+                totals: dict[str, int] = {}
+                for _, reads in line_reads:
+                    for k, v in reads.counts().items():
+                        totals[k] = totals.get(k, 0) + v
+                metrics["line_reads"] = totals
+                # IM-S3 AC4: the size of every crop a reader was given, kept with the run
+                metrics["line_crops"] = [
+                    {**c, "page_no": page["page_no"]}
+                    for page, reads in line_reads
+                    for c in reads.crops
+                ]
             if doc["status"] in _EARLY:
                 repo.set_document_status(conn, document_id, "ocr_done")
             repo.finish_run(conn, run_id, metrics=metrics)
+            brief = {k: v for k, v in metrics.items() if k != "line_crops"}  # the audit row
             repo.write_audit(conn, actor=actor, action="update", entity="source_document",
-                             entity_id=document_id, detail={"stage": "ocr", **metrics})  # fmt: skip
+                             entity_id=document_id, detail={"stage": "ocr", **brief})  # fmt: skip
     except Exception as exc:
         with session_scope() as conn:
             repo.fail_run(conn, run_id, error=f"{type(exc).__name__}: {exc}")
@@ -220,5 +337,9 @@ def ocr_document(
                                      error={"stage": "ocr", "message": str(exc)})  # fmt: skip
         log.error("ocr_failed", document_id=str(document_id), error=str(exc))
         raise
-    log.info("ocr_done", document_id=str(document_id), **metrics)
+    log.info(
+        "ocr_done",
+        document_id=str(document_id),
+        **{k: v for k, v in metrics.items() if k != "line_crops"},
+    )
     return metrics

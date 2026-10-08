@@ -27,7 +27,7 @@ np = pytest.importorskip("numpy")
 
 LIMITS: dict[str, Any] = {"min_side_px": 700, "min_sharpness": 20.0, "min_ink": 0.0005,
                           "max_ink": 0.90, "min_text_px": 8.0, "max_glare": 0.05,
-                          "paper_white": 250.0}  # fmt: skip
+                          "paper_white": 250.0, "min_writing_sharpness": 500.0}  # fmt: skip
 
 
 # ------------------------------------------------------------------ the pictures
@@ -303,7 +303,9 @@ def test_a_passing_page_is_recorded_with_its_measurements_and_limits(page: Any) 
     assert rec["passed"] is True and rec["code"] is None
     assert rec["measures"]["text_height_px"] > 0
     assert rec["limits"]["min_sharpness"] == Settings().quality_min_sharpness
-    assert rec["enforced"] is False  # measured always, held only when the check is switched on
+    assert rec["enforced"] is True  # on by default since 2026-10-08
+    off = quality.record(_png(page), settings=Settings(quality_check=False))
+    assert off["enforced"] is False and off["measures"] == rec["measures"]  # measured either way
 
 
 def test_a_failing_page_is_recorded_too_even_while_nothing_is_held(page: Any) -> None:
@@ -331,14 +333,16 @@ def test_every_limit_is_a_setting() -> None:
     s = Settings()
     lim = quality.limits(s)
     assert set(lim) == {"min_side_px", "min_sharpness", "min_ink", "max_ink", "min_text_px",
-                        "max_glare", "paper_white"}  # fmt: skip
+                        "max_glare", "paper_white", "min_writing_sharpness"}  # fmt: skip
     moved = quality.limits(Settings(quality_min_text_px=14.0, quality_max_glare_fraction=0.2))
     assert (moved["min_text_px"], moved["max_glare"]) == (14.0, 0.2)
 
 
-def test_holding_is_off_by_default() -> None:
-    assert Settings().quality_check is False
-    assert quality.assess(b"not a picture", "image/png", settings=Settings()) is quality.OK
+def test_holding_is_on_by_default_and_can_be_switched_off() -> None:
+    assert Settings().quality_check is True
+    assert quality.assess(b"not a picture", "image/png", settings=Settings()).code == "unreadable"
+    off = Settings(quality_check=False)
+    assert quality.assess(b"not a picture", "image/png", settings=off) is quality.OK
 
 
 def test_measuring_one_page_is_fast(page: Any) -> None:

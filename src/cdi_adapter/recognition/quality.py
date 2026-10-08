@@ -122,8 +122,32 @@ OK = Verdict(ok=True)
 _UNREADABLE: dict[str, Any] = {
     "extent_px": 0.0, "sharpness": 0.0, "ink_fraction": 0.0, "soft_ink_fraction": 0.0,
     "glare_fraction": 0.0, "paper_tone": 0.0, "text_height_px": 0.0, "blank_rows": 0.0,
-    "blank_cols": 0.0, "rotated_90_suspected": False,
+    "blank_cols": 0.0, "rotated_90_suspected": False, "writing_sharpness": 0.0,
+    "writing_share": 0.0,
 }  # fmt: skip
+
+
+def _writing(arr: Any, paper: float) -> tuple[float, float]:
+    """How sharp the picture is **where the writing is**, and how much of the frame that is.
+
+    Sharpness and ink measured over the whole frame fall when the page is small in it: a
+    prescription photographed from far away is a few sharp marks in an ocean of paper, and by
+    the whole-frame numbers it looks blank or blurred. Measured inside the box that holds the
+    writing, the same picture is plainly sharp - 13,000 to 26,000 against 4 to 330 for a blurred
+    one - which is what tells "move closer" from "hold still". The box ignores the outermost
+    1 % of marks each side so a speck in a corner does not stretch it over the frame."""
+    import cv2
+    import numpy as np
+
+    ys, xs = np.where(arr < paper - _SOFT_INK_BELOW_PAPER)
+    if ys.size < 50:
+        return 0.0, 0.0
+    y0, y1 = (int(v) for v in np.percentile(ys, [1, 99]))
+    x0, x1 = (int(v) for v in np.percentile(xs, [1, 99]))
+    box = arr[y0 : y1 + 1, x0 : x1 + 1]
+    if box.shape[0] < 3 or box.shape[1] < 3:
+        return 0.0, 0.0
+    return float(cv2.Laplacian(box, cv2.CV_64F).var()), float(box.size / arr.size)
 
 
 def _decode(png: bytes) -> Any:
@@ -182,6 +206,7 @@ def measure(png: bytes) -> dict[str, Any]:
     ink = arr < 128
     blank_rows, blank_cols = _line_gaps(ink)
     paper = float(np.median(arr))
+    writing_sharpness, writing_share = _writing(arr, paper)
     return {
         "extent_px": float(min(arr.shape[:2])),
         "width_px": float(arr.shape[1]),
@@ -197,6 +222,9 @@ def measure(png: bytes) -> dict[str, Any]:
         "blank_rows": blank_rows,
         "blank_cols": blank_cols,
         "rotated_90_suspected": rotated_90(blank_rows, blank_cols),
+        # sharpness inside the box that holds the writing, and that box's share of the frame
+        "writing_sharpness": writing_sharpness,
+        "writing_share": writing_share,
         # recorded for the tuning, never judged: see the module docstring
         "brightness": float(arr.mean()),
     }
@@ -204,7 +232,8 @@ def measure(png: bytes) -> dict[str, Any]:
 
 def verdict(m: dict[str, Any], *, min_side_px: int, min_sharpness: float, min_ink: float,
             max_ink: float, min_text_px: float = 0.0, max_glare: float = 1.0,
-            paper_white: float = 250.0) -> Verdict:  # fmt: skip
+            paper_white: float = 250.0,
+            min_writing_sharpness: float = 500.0) -> Verdict:  # fmt: skip
     """The measurements judged against the limits. The order is deliberate: the person is told
     what to **change**, and a measurement is only used where it can be trusted. A thumbnail is
     called small and a dark page dark rather than "blurry", which they would also measure as;
@@ -216,6 +245,15 @@ def verdict(m: dict[str, Any], *, min_side_px: int, min_sharpness: float, min_in
     ink = m.get("ink_fraction", 0.0)
     if ink >= max_ink:
         return Verdict(False, "too_dark", m)
+    # A photo taken from far away (IM-S1 AC4): the writing is tiny, and it is *sharp where it
+    # is*. That has to be said here, before the two checks below - both are measured over the
+    # whole frame, where a small page has too little ink to count ("blank") and too little
+    # detail to count ("blurred"), and the person would be sent to fix the wrong thing. A page
+    # that really is blurred is not sharp where its writing is, so it does not stop here.
+    text = m.get("text_height_px", 0.0)
+    if (min_text_px and 0 < text < min_text_px
+            and m.get("writing_sharpness", 0.0) >= min_writing_sharpness):  # fmt: skip
+        return Verdict(False, "text_too_small", m)
     if ink <= min_ink:
         # nothing dark on the page. If there is still soft ink the writing is there and smeared -
         # that is a focus problem, and telling the person the page is blank would send them to
@@ -230,7 +268,6 @@ def verdict(m: dict[str, Any], *, min_side_px: int, min_sharpness: float, min_in
     # fault is focus. A far-away photo is *sharp*, so it passes this and is caught just below.
     if m["sharpness"] < min_sharpness:
         return Verdict(False, "blurred", m)
-    text = m.get("text_height_px", 0.0)
     if min_text_px and 0 < text < min_text_px:
         return Verdict(False, "text_too_small", m)
     return Verdict(True, None, m)
@@ -247,6 +284,7 @@ def limits(settings: Any) -> dict[str, Any]:
         "min_text_px": s.quality_min_text_px,
         "max_glare": s.quality_max_glare_fraction,
         "paper_white": s.quality_paper_white,
+        "min_writing_sharpness": s.quality_min_writing_sharpness,
     }
 
 

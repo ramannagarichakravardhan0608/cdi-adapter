@@ -793,7 +793,10 @@ def test_the_two_example_files_differ_only_in_the_drives_own_settings():
     assert {k for k in shared if one[k] != google[k]} == {"CDI_LISTENER_CONNECTOR"}
     only = (set(one) | set(google)) - shared
     assert only == {"CDI_LISTENER_ROOT", "CDI_GRAPH_DRIVE_ID", "CDI_GRAPH_USER",
-                    "CDI_GRAPH_SITE_ID", "CDI_GDRIVE_FOLDER_ID"}  # fmt: skip
+                    "CDI_GRAPH_SITE_ID", "CDI_GDRIVE_FOLDER_ID",
+                    # LS-S2: how each drive is signed in to - still the drive's own settings
+                    "CDI_GRAPH_AUTH", "CDI_GRAPH_CLIENT_ID", "CDI_GRAPH_TENANT_ID",
+                    "CDI_GDRIVE_SERVICE_ACCOUNT_FILE"}  # fmt: skip
 
 
 def test_the_example_files_hold_no_secret_and_only_settings_that_exist():

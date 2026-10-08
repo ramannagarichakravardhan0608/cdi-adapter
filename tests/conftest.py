@@ -8,6 +8,7 @@ reachable, integration tests are **skipped, not passed** — a block that needs 
 from __future__ import annotations
 
 import os
+import tempfile
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -35,6 +36,52 @@ def _admin_engine() -> Engine:
     return create_engine(
         ADMIN_URL, isolation_level="AUTOCOMMIT", connect_args={"connect_timeout": 3}
     )
+
+
+# The developer's own .env may point the file listener at a real folder (on the owner's PC: a
+# OneDrive folder, with the folder itself as the inbox). No test may ever read that, let alone
+# write into it: these three are set in the environment, which outranks .env, before any test
+# builds its settings. A test that wants other values passes them or sets them itself.
+os.environ["CDI_LISTENER_CONNECTOR"] = "local"
+os.environ["CDI_LISTENER_INBOX"] = "inbox"
+os.environ["CDI_LISTENER_LOCAL_ROOT"] = str(
+    Path(tempfile.gettempdir()) / "cdi-listener-tests-never-the-real-folder"
+)
+# LS-S2: the same for the listener's sign-in files - never the real token cache, never an alert
+# file under a real /workspace, never a real sign-in from the developer's .env.
+os.environ["CDI_GRAPH_TOKEN_CACHE"] = str(
+    Path(tempfile.gettempdir()) / "cdi-listener-tests-never-the-real-folder" / "token_cache.json"
+)
+os.environ["CDI_LISTENER_ALERT_FILE"] = str(
+    Path(tempfile.gettempdir()) / "cdi-listener-tests-never-the-real-folder" / "alert.json"
+)
+for _name in ("CDI_GRAPH_CLIENT_ID", "CDI_GRAPH_TENANT_ID", "CDI_GRAPH_CLIENT_SECRET",
+              "CDI_GRAPH_CLIENT_SECRET_FILE", "CDI_GRAPH_CLIENT_CERT_FILE",
+              "CDI_GDRIVE_SERVICE_ACCOUNT_FILE"):  # fmt: skip
+    os.environ[_name] = ""
+
+# Suites that drive the job runner with placeholder bytes (``b"x"``) to test *orchestration* -
+# ordering, retries, batching, tracing, leases. They are not pictures, so with the picture check
+# on (the default since 2026-10-08, IM-S1 AC2) every one of them would be held as "unreadable"
+# before the code under test ran. These suites run with the check off; what the check itself
+# does, and that it is on by default, is tested where pictures are real (test_recognition_unit,
+# test_upload_quality_unit, the *_acceptance_unit suites).
+PLACEHOLDER_UPLOADS = {"test_jobs_unit", "test_batch_unit", "test_tracing_unit",
+                       "test_epic2_unit", "test_pool_split_unit", "test_metrics_unit",
+                       "test_apptier_unit", "test_monitoring_unit"}  # fmt: skip
+
+
+@pytest.fixture(autouse=True)
+def _placeholder_uploads_skip_the_picture_check(request, monkeypatch):
+    if request.module.__name__.rsplit(".", 1)[-1] not in PLACEHOLDER_UPLOADS:
+        yield
+        return
+    from cdi_adapter.config import get_settings
+
+    monkeypatch.setenv("CDI_QUALITY_CHECK", "false")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 @pytest.fixture(scope="session")

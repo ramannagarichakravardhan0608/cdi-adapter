@@ -16,3 +16,9 @@ data/
 logs/
 # native dev/test binaries + their data dirs (local only; production runs natively on the pod)
 .tools/
+
+# LS-S2: sign-in material never goes into git
+/secrets/
+.cdi/
+*token_cache*.json
+*service_account*.json

@@ -20,7 +20,17 @@ A found line counts for a drawn one when they overlap by ``--iou`` (default 0.5)
 long it took, and with ``--draw DIR`` saves a copy with every line boxed (green printed, red
 handwritten, magenta mixed, amber uncertain) so a person can check it by eye.
 
-It reads pictures and writes only to ``--draw``; it touches no database and no stored document.
+**To start an answer key** (``--draft``) it writes one from what the module itself finds:
+
+    python scripts/measure_regions.py page1.png page2.jpg --draft answer_key.json --draw out
+
+Every line is listed with the label the module gave it. **A draft is not an answer key**: a
+person has to open the boxed copies, correct each label, redraw a wrong box and add a missed
+line, and then change ``"reviewed": false`` to ``true``. Scoring a draft against itself would
+report 100 %, so ``--key`` refuses a key in which any page is still unreviewed.
+
+It reads pictures and writes only to ``--draw`` and ``--draft``; it touches no database and no
+stored document.
 """
 
 from __future__ import annotations
@@ -66,9 +76,31 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--iou", type=float, default=0.5, help="overlap that counts as the same line")
     ap.add_argument("--draw", type=Path, help="directory for copies with the lines boxed")
     ap.add_argument("--json", action="store_true", help="print the result as JSON")
+    ap.add_argument("--draft", type=Path, help="write a draft answer key for a person to correct")
+    ap.add_argument("--doc-type", default="unknown", help="document type for a --draft's pages")
     args = ap.parse_args(argv)
     if not args.key and not args.images:
         ap.error("give page pictures, or --key")
+    if args.draft:
+        if not args.images:
+            ap.error("--draft needs page pictures")
+        pages = []
+        for path in args.images:
+            found, _ = _find(path, args.draw)
+            pages.append(
+                {
+                    "image": str(path),
+                    "doc_type": args.doc_type,
+                    "reviewed": False,
+                    "lines": [{"bbox": f["bbox"], "label": f["label"]} for f in found],
+                }
+            )
+        args.draft.write_text(json.dumps(pages, indent=2) + "\n", encoding="utf-8")
+        total = sum(len(p["lines"]) for p in pages)
+        print(f"draft answer key: {len(pages)} page(s), {total} line(s) -> {args.draft}")
+        print("NOT an answer key yet: correct every label and box, add missed lines, then set "
+              '"reviewed": true on each page.')  # fmt: skip
+        return 0
 
     if not args.key:
         for path in args.images:
@@ -78,8 +110,15 @@ def main(argv: list[str] | None = None) -> int:
                   + ", ".join(f"{n} {label}" for label, n in s.items()))  # fmt: skip
         return 0
 
+    entries = json.loads(args.key.read_text(encoding="utf-8"))
+    unreviewed = [e["image"] for e in entries if e.get("reviewed") is False]
+    if unreviewed:
+        print("this is still a draft: a person has not reviewed " + ", ".join(unreviewed)
+              + '. Correct it and set "reviewed": true - scoring a draft against the module '
+              "that wrote it proves nothing.", file=sys.stderr)  # fmt: skip
+        return 2
     pages = []
-    for entry in json.loads(args.key.read_text(encoding="utf-8")):
+    for entry in entries:
         found, _ = _find(args.key.parent / entry["image"], args.draw)
         pages.append({"doc_type": entry.get("doc_type"), "found": found, "truth": entry["lines"]})
     result = regions.score_by_type(pages, min_iou=args.iou)

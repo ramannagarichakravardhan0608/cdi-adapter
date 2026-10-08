@@ -508,7 +508,7 @@ contract (empty file, page out of range, missing job, a held page being terminal
 A person at the desk has to see what was read and be able to take it away. Both are served from
 **one document** — the Output Contract's `result.v1` — so the screen and the file can never
 disagree ([`cdi_adapter/result.py`](../src/cdi_adapter/result.py),
-[`schemas/result.v1.json`](../schemas/result.v1.json)):
+[`schemas/contract/result.v1.json`](../schemas/contract/result.v1.json)):
 
 - **`GET /api/documents/{id}/result.json`** — the contract document: `schema_version`,
   `document_id`, `received_at`, `source`, `page_count`, `status`, then `patient`, `doctor`,

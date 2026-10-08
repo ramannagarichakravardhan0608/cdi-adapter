@@ -107,13 +107,16 @@ def test_migration_0001_downgrade_drops_every_table():
     assert set(m.VIEWS) == set(re.findall(r"CREATE OR REPLACE VIEW (\w+)", VIEWS))
 
 
-def test_migration_chain_is_linear_0001_to_0027():
+def test_migration_chain_is_linear_0001_to_0029():
     cfg = Config(str(ROOT / "alembic.ini"))
     cfg.set_main_option("script_location", str(ROOT / "db" / "alembic"))
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_heads() == ["0027"]  # 0027: conflict resolution (E5-S3)
+    # 0029: the listener's file table (LS-S3). There is no 0028 on this branch: dev_main has one
+    # (continuity views), so the number is left free for when the branches are joined.
+    assert script.get_heads() == ["0029"]
     chain = [r.revision for r in script.walk_revisions("base", "heads")]
     assert chain == [
+        "0029",
         "0027",
         "0026",
         "0025",

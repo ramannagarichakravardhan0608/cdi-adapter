@@ -67,6 +67,20 @@ class Settings(BaseSettings):
     listener_log: str = "log"
     # how long one call may wait, in all, on a drive that says "too many requests"
     listener_max_wait_seconds: float = Field(default=300.0, ge=0)
+    # the listener's loop (listener/service.py): how often it looks at the folder, and how long
+    # it waits for one file to be read before filing it under error with a "timeout" note
+    listener_poll_seconds: float = Field(default=10.0, gt=0)
+    listener_job_timeout_s: float = Field(default=900.0, gt=0)
+    # LS-S3: pick up only finished, new, allowed files. A file is taken when its size and
+    # version tag have been the same for this many looks in a row; only names matching the
+    # patterns are read (anything else is listed as ignored); a file over the size limit is
+    # refused as a data error. The lease is how long one worker may hold a file before another
+    # may take it over; the worker's name defaults to this machine's.
+    listener_stable_polls: int = Field(default=2, ge=1)
+    listener_patterns: str = "*.pdf,*.png,*.jpg,*.jpeg,*.tif,*.tiff"
+    listener_max_bytes: int = Field(default=50 * 1024 * 1024, gt=0)
+    listener_lease_seconds: float = Field(default=1200.0, gt=0)
+    listener_worker: str = ""
     # Microsoft Graph (onedrive, sharepoint). The drive is /me/drive unless one of these says
     # otherwise: a drive id, a user (app-only sign-in), or - for sharepoint - a site id.
     graph_base_url: str = "https://graph.microsoft.com/v1.0"
@@ -76,19 +90,47 @@ class Settings(BaseSettings):
     # Google Drive: the id of the folder (the last part of its web address)
     gdrive_base_url: str = "https://www.googleapis.com"
     gdrive_folder_id: str = ""
-    # A bearer token for a test run only. Real sign-in (device code, service account, renewal)
-    # is LS-S2; these stay empty in every committed settings file.
+    # LS-S2: signing in without handling a password (listener/auth.py). Microsoft: the Entra
+    # app registration (client id, tenant id) and how to sign in - "device" (a person, once, by
+    # typing a code on Microsoft's page) or "app" (a service identity an administrator approved,
+    # with a certificate or a secret). The renewable token of a device sign-in is kept in the
+    # MSAL token cache file, on the persistent disk so a restart does not ask again.
+    graph_auth: str = "device"
+    graph_client_id: str = ""
+    graph_tenant_id: str = ""
+    graph_authority_host: str = "https://login.microsoftonline.com"
+    graph_token_cache: str = "/workspace/.cdi/graph_token_cache.json"
+    # app-only: a certificate (private key PEM + thumbprint) or a secret. Files outside git.
+    graph_client_cert_file: str = ""
+    graph_client_cert_thumbprint: str = ""
+    graph_client_secret_file: str = ""
+    graph_client_secret: str = Field(default="", repr=False)
+    # Google: the service account's JSON key, e.g. /workspace/secrets/gdrive_sa.json. Never in git.
+    gdrive_service_account_file: str = ""
+    # where the listener leaves its alert when it stops because the sign-in expired ("" = none)
+    listener_alert_file: str = "/workspace/logs/listener_alert.json"
+    # A bearer token for a test run only; these stay empty in every committed settings file.
     graph_access_token: str = Field(default="", repr=False)
     gdrive_access_token: str = Field(default="", repr=False)
 
     # S1 render resolution
     page_dpi: int = Field(default=200, ge=50, le=600)
+    # LS-S3: every dropped or uploaded file is untrusted. A document with more pages than this
+    # is REFUSED, never cut short (a prescription is a page or two; ASSUMPTION: 10 is ample).
+    # A picture or PDF page that would open to more pixels than this is refused unopened - a
+    # few kilobytes can claim to be a picture of billions of pixels (a decompression bomb).
+    max_pages: int = Field(default=10, ge=1)
+    max_image_pixels: int = Field(default=150_000_000, gt=0)
 
-    # UP-S2: is the photo good enough to read? OFF by default - switching it on starts rejecting
-    # pages, and a limit set too high rejects good ones, so the numbers below are defaults to be
-    # tuned on the E2-S4 gold set (IM-S1's work). With it off the pipeline behaves as it always
-    # has: no page is ever held, and the API carries no verdict. See recognition/quality.py.
-    quality_check: bool = False
+    # UP-S2 / IM-S1: is the photo good enough to read? ON by default since 2026-10-08 (IM-S1
+    # AC2, owner's decision): a page that is blurred, too dark, too small, blank, glared or
+    # photographed from too far away is held at the desk with a plain reason and a retake button,
+    # instead of being read wrongly. Set CDI_QUALITY_CHECK=false to let every page through. The
+    # limits below are starting values measured on rendered pages and sample scans, not yet tuned
+    # on the answer-key set (scripts/quality_answer_key.py reports the false-reject rate when
+    # that set exists) - so watch the weekly retake report (scripts/quality_report.py).
+    # See recognition/quality.py.
+    quality_check: bool = True
     quality_min_side_px: int = Field(default=700, ge=100)  # the shorter side of a page
     # variance of the Laplacian: a rendered prescription measures 73 (sparse) to 2153 (dense),
     # the same page blurred by 9 px measures 1.6 and blank paper 0.0
@@ -104,6 +146,10 @@ class Settings(BaseSettings):
     # already at or above quality_paper_white (a render, a clean scan) there is no glare to find
     quality_max_glare_fraction: float = Field(default=0.05, gt=0, le=1)
     quality_paper_white: float = Field(default=250.0, ge=0, le=255)
+    # IM-S1 AC4: a photo taken from far away is sharp *where the writing is* even though the
+    # frame as a whole measures blank or blurred. At or above this (sharp writing measured
+    # 700 - 26,000; blurred 4 - 330) tiny text is called "move closer", not "blurry".
+    quality_min_writing_sharpness: float = Field(default=500.0, ge=0)
 
     # IM-S2: turn a sideways or upside-down page upright and flatten an angled phone photo.
     # OFF by default - it changes the picture every later stage reads, and its limits are
@@ -238,6 +284,16 @@ class Settings(BaseSettings):
     # not on the answer-key set, and the story's own rule is that routing must prove its worth.
     line_regions: bool = False
     line_regions_min_handwritten: int = Field(default=3, ge=1)
+    # IM-S3 AC2 / AC4: read line by line. With this on (it needs line_regions too) every line
+    # that is not plainly printed is cut from the page to the crop standard and read by the
+    # handwriting reader: a handwritten line is read by it INSTEAD of the print reader, an
+    # uncertain or mixed line by BOTH. OFF by default: it is one model call per such line - 18
+    # on a neat real prescription, 38 on a hard one - and what it gains over reading the whole
+    # page once has not been measured (the story's own ablation). line_readers_max_per_page
+    # stops a page that is all "uncertain" from making hundreds of calls; lines past the cap
+    # keep their print reading.
+    line_readers: bool = False
+    line_readers_max_per_page: int = Field(default=60, ge=1)
 
     # S6 governance gate (§5 S6, §14 "The gate"); per-class fitted thresholds are backlog E4-S3
     gate_auto_accept_conf: float = Field(default=0.985, ge=0, le=1)
