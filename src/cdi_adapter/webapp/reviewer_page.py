@@ -1,4 +1,12 @@
-"""``GET /reviewer`` — workbasket -> worklist console (ARCHITECTURE §4.5). Vanilla JS, no CDN."""
+"""``GET /reviewer`` — workbasket -> worklist console (ARCHITECTURE §4.5). Vanilla JS, no CDN.
+
+**One entry per patient** (owner, 2026-10-09). A review item is one document - each prescription
+is approved into its own FHIR record - but the reviewer thinks in patients: when one patient has
+two prescriptions waiting, the workbasket and the worklist show **one entry** for the patient
+with both prescriptions under it. Claiming the entry claims them all; opening it shows them as
+tabs in one panel, each with its own facts, its own picture and its own Approve. Nothing about
+the items themselves changes: the grouping is how the lists are drawn.
+"""
 
 from __future__ import annotations
 
@@ -13,10 +21,13 @@ BODY = """
 .rv-doc .bar button{padding:2px 9px}.rv-doc .view{overflow:auto;padding:8px;flex:1;background:#eef2f9}
 .rv-doc img{display:block;margin:0 auto;box-shadow:0 1px 4px rgba(15,27,51,.25);background:#fff}
 .rv-doc [hidden]{display:none}
+.rv-tabs{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 14px;padding-bottom:10px;border-bottom:1px solid var(--border)}
+.rv-tabs button[aria-current=true]{background:var(--primary,#1d4ed8);color:#fff;border-color:transparent}
+.rv-docs{margin:4px 0 0;padding:0;list-style:none}.rv-docs li{margin:2px 0}
 @media (max-width:1000px){.rv-split{grid-template-columns:1fr}.rv-doc{position:static;max-height:80vh}}
 </style>
 <h1 style="margin:0 0 4px">Reviewer</h1>
-<p class=muted>Claim an item into your worklist, decide its held facts, then approve to promote it into the canonical EMR and generate its FHIR bundle.</p>
+<p class=muted>Claim a patient into your worklist, decide the held facts, then approve to promote into the canonical EMR and generate the FHIR bundle. A patient with several prescriptions is one entry: open it to see each prescription.</p>
 <p>Signed in as <b id=me>…</b> <button id=load class=primary>Refresh</button></p>
 <div class=grid style="grid-template-columns:1fr 1fr">
   <section class=card><h2 style="margin-top:0">Workbasket</h2><div id=wb class=muted>—</div></section>
@@ -37,11 +48,26 @@ const post = (url, body) => fetch(url, {method:'POST', headers:{'Content-Type':'
 const c360 = mpi => mpi ? ` <a href="/reviewer/c360?mpi=${encodeURIComponent(mpi)}" title="The patient's record across documents">Customer 360</a>` : '';
 const row = (i, btn) => `<tr><td>${esc(i.patient_name)} <span class=muted>${esc(i.mpi_id)}</span>${c360(i.mpi_id)}<br><small>${esc(i.filename)} · ${esc(i.doc_type)}</small></td>
   <td>${i.held ? `<span class="pill warn">${i.held} held</span>` : '<span class="pill ok">ready</span>'} ${i.elements} facts</td><td>${btn}</td></tr>`;
+// One entry per patient (2026-10-09): the items of one patient, in the order the list gave them.
+// An item with no patient yet stands alone.
+function byPatient(items){
+  const groups = new Map();
+  items.forEach(i => { const k = i.patient_id || 'item:' + i.id; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(i); });
+  return [...groups.values()];
+}
+const docLine = i => `${esc(i.filename)} · ${esc(i.doc_type)} — ${i.held ? `<span class="pill warn">${i.held} held</span> ` : ''}${i.elements} facts`;
+// a patient with one document is drawn exactly as before; with several, the documents are listed under the patient
+const groupRow = (g, btn) => g.length === 1 ? row(g[0], btn) : `<tr data-patient-entry="${g.length}"><td>${esc(g[0].patient_name)} <span class=muted>${esc(g[0].mpi_id)}</span>${c360(g[0].mpi_id)}
+    <ul class=rv-docs>${g.map(i => `<li><small>${docLine(i)}</small></li>`).join('')}</ul></td>
+  <td><span class=pill>${g.length} documents</span><br>${g.some(i => i.held) ? `<span class="pill warn">${g.reduce((n, i) => n + (i.held || 0), 0)} held</span>` : '<span class="pill ok">ready</span>'} ${g.reduce((n, i) => n + (i.elements || 0), 0)} facts</td><td>${btn}</td></tr>`;
+const ids = g => g.map(i => i.id).join(',');
+let group = [], groupMeta = {};
 async function load(){
-  const wb = await (await fetch('/api/reviewer/workbasket')).json();
-  $('#wb').innerHTML = wb.length ? '<table>' + wb.map(i => row(i, `<button onclick="claim('${i.id}')">Claim</button>`)).join('') + '</table>' : 'Empty.';
-  const wl = await (await fetch('/api/reviewer/worklist')).json();
-  $('#wl').innerHTML = wl.length ? '<table>' + wl.map(i => row(i, `<button onclick="openItem('${i.id}')">Open</button>`)).join('') + '</table>' : 'Empty.';
+  const wb = byPatient(await (await fetch('/api/reviewer/workbasket')).json());
+  $('#wb').innerHTML = wb.length ? '<table>' + wb.map(g => groupRow(g, `<button onclick="claimGroup('${ids(g)}')">Claim</button>`)).join('') + '</table>' : 'Empty.';
+  const wl = byPatient(await (await fetch('/api/reviewer/worklist')).json());
+  wl.forEach(g => g.forEach(i => { groupMeta[i.id] = i; }));
+  $('#wl').innerHTML = wl.length ? '<table>' + wl.map(g => groupRow(g, `<button onclick="openGroup('${ids(g)}')">Open</button>`)).join('') + '</table>' : 'Empty.';
   const ap = await (await fetch('/api/reviewer/approved')).json();
   $('#ap').innerHTML = ap.length ? '<table>' + ap.map(i => `<tr><td>${esc(i.patient_name)} <span class=muted>${esc(i.mpi_id)}</span>${c360(i.mpi_id)}<br><small>${esc(i.filename)} · ${esc(i.doc_type)}</small></td>
     <td>${i.bundle_status === 'ready_to_share' ? '<span class="pill ok">ready to share</span>' : `<span class="pill warn">${esc(i.bundle_status || 'no bundle')}</span>`}</td>
@@ -49,6 +75,22 @@ async function load(){
 }
 const download = id => `/api/reviewer/items/${id}/bundle/download`;
 async function claim(id){ const r = await post(`/api/reviewer/items/${id}/claim`, {}); if (!r.ok) alert((await r.json()).detail); load(); }
+// claiming a patient claims every document of theirs that is waiting
+async function claimGroup(list){
+  for (const id of list.split(',')){ const r = await post(`/api/reviewer/items/${id}/claim`, {}); if (!r.ok){ alert((await r.json()).detail); break; } }
+  load();
+}
+// opening a patient opens their first document; the others are one click away, in the same panel
+function openGroup(list){ group = list.split(','); openItem(group[0]); }
+const tabLabel = (id, n) => { const m = groupMeta[id] || {}; return `${esc((m.doc_type || 'document').replace(/_/g, ' '))} ${n} of ${group.length}${m.filename ? ' — ' + esc(m.filename) : ''}`; };
+// the patient's documents as tabs above the open one (nothing when the patient has only one)
+const groupTabs = id => group.length > 1 && group.includes(id)
+  ? `<div class=rv-tabs role=tablist aria-label="This patient's documents">${group.map((g, n) => `<button role=tab aria-current="${g === id}" onclick="openItem('${g}')">${tabLabel(g, n + 1)}</button>`).join('')}</div>` : '';
+// a decided document leaves the entry; what is left of the patient is offered next
+function leaveGroup(id){
+  group = group.filter(g => g !== id);
+  return group.length ? `<p><button class=primary onclick="openItem('${group[0]}')">Next for this patient: ${tabLabel(group[0], 1)}</button></p>` : '';
+}
 // Edit (2026-09-25): a fact stays correctable until its item is approved; a medication's
 // detail is what the canonical EMR and FHIR carry, so its form edits that detail
 let current = {};
@@ -238,7 +280,8 @@ async function openItem(id){
   const sections = shown.map(([k, label]) => { const cols = colsFor(k), g = groups[k], h = g.filter(e => e.state === 'held').length;
     return `<h3 style="margin:18px 0 6px">${esc(label)} <span class=muted style="font-weight:400;font-size:14px">${g.length}${h ? ` · <span class="pill warn">${h} held</span>` : ''}</span></h3>
       <div style="overflow-x:auto"><table><tr>${cols.map(([c]) => `<th>${esc(c)}</th>`).join('')}<th>Code</th><th>State</th><th></th></tr>${g.map(e => factRows(e, id, cols)).join('')}</table></div>`; }).join('');
-  $('#item').innerHTML = `<div class=rv-split><div>
+  if (!group.includes(id)) group = [id];
+  $('#item').innerHTML = `${groupTabs(id)}<div class=rv-split><div>
     <h2 style="margin:0 0 2px">${esc(d.item.patient_name)} <span class=muted style="font-weight:400">${esc(d.item.mpi_id || '')}</span><span style="font-size:14px;font-weight:400">${c360(d.item.mpi_id)}</span></h2>
     <p class=muted style="margin:0 0 8px">${esc(d.item.filename)} · ${esc(d.item.doc_type)} · ${d.elements.length} facts${held ? ` · <span class="pill warn">${held} held</span>` : ''}</p>
     <div>${chips}</div>${groups.medication ? `<p class=muted style="margin:10px 0 0">Medication agent: <span id=agentst>${esc(agentRun(d.agent_run))}</span> <button onclick="rerunAgent('${id}')" title="Re-read the medicines with the diagnoses and the catalogue">Run agent again</button></p>` : ''}${sections || '<p class=muted>No facts.</p>'}
@@ -265,8 +308,14 @@ function showPage(){
   img.style.width = (viewer.zoom * 100) + '%';
   const err = document.getElementById('pgerr');
   img.hidden = false; err.hidden = true;
-  img.onerror = () => { img.hidden = true; err.hidden = false; };
-  img.src = `/api/documents/${encodeURIComponent(viewer.id)}/pages/${viewer.page}`;
+  // the page turned the way its text reads and levelled (recognition/upright.py); if that
+  // copy cannot be had, the page as stored, and only then the "not available" note
+  const page = `/api/documents/${encodeURIComponent(viewer.id)}/pages/${viewer.page}`;
+  img.onerror = () => {
+    if (img.src.endsWith('/upright')) { img.src = page; return; }
+    img.hidden = true; err.hidden = false;
+  };
+  img.src = page + '/upright';
 }
 function turn(n){ const p = viewer.page + n; if (p >= 1 && p <= viewer.pages){ viewer.page = p; showPage(); } }
 function zoomBy(f){ viewer.zoom = f ? Math.min(4, Math.max(0.5, viewer.zoom * f)) : 1; showPage(); }
@@ -285,10 +334,16 @@ async function approve(id){
   $('#item').innerHTML = `<h2 style="margin-top:0">Approved</h2>
     <p>Promoted into the canonical EMR: ${esc(Object.entries(j.promoted).map(([t, n]) => `${n} ${t.replace('cn_', '')}`).join(', ') || 'nothing')} ·
       bundle <span class="pill ${j.status === 'ready_to_share' ? 'ok' : 'warn'}">${esc(j.status)}</span> (${esc(j.validation.engine)})</p>
-    <p><a href="${download(id)}">Download FHIR bundle</a> — it stays under <b>Approved</b> below.</p>`;
+    <p><a href="${download(id)}">Download FHIR bundle</a> — it stays under <b>Approved</b> below.</p>${leaveGroup(id)}`;
   load();
 }
-async function rejectItem(id){ const reason = prompt('Reason?') || ''; const r = await post(`/api/reviewer/items/${id}/reject`, {reason}); if (!r.ok) alert((await r.json()).detail); load(); }
+async function rejectItem(id){
+  const reason = prompt('Reason?') || ''; const r = await post(`/api/reviewer/items/${id}/reject`, {reason});
+  if (!r.ok){ alert((await r.json()).detail); load(); return; }
+  const next = leaveGroup(id);
+  $('#item').innerHTML = `<h2 style="margin-top:0">Rejected</h2>${next || '<p class=muted>Open an item from your worklist.</p>'}`;
+  load();
+}
 $('#load').onclick = load;
 load();
 """

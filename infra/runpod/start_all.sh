@@ -31,6 +31,16 @@ if [ "$USERS" = 0 ]; then
   echo "  $REPO/.venv/bin/python -m cdi_adapter.webapp.users add <name> --name \"<Full Name>\" --role admin"
 fi
 
+# LS-S9: after every pod start the file listener's retry agent comes back by itself, and the
+# listener too where CDI_START_LISTENER=1 (a pod that watches a folder). Their state is in the
+# database and on the drive, so a restart loses no file: one that was being read is picked up
+# again when its lease runs out.
+if [ "${CDI_START_LISTENER:-0}" = 1 ]; then
+  bash "$HERE/start_listener.sh" || echo "WARNING: the file listener did not start (docs/LISTENER.md)"
+else
+  bash "$HERE/start_listener.sh" recover || echo "WARNING: the listener's retry agent did not start"
+fi
+
 # the stable address staff use (E1-S9): this pod dials the ingress VM, whatever its own URL is
 bash "$HERE/start_tunnel.sh"
 if [ -n "${CDI_INGRESS_HOSTNAME:-}" ] && [ -n "${CDI_INGRESS_SSH:-}" ]; then

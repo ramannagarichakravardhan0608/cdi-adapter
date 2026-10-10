@@ -187,3 +187,69 @@ groups:
           summary: Accepted jobs are not being processed.
           description: Jobs whose runner died have not been taken over for 2 minutes; no job worker is alive to resume them.
           runbook_url: docs/alerts.md#cdijobsorphaned
+
+      # LS-S7: a file dropped in the watched folder failed on its run and on all three retries and
+      # is now in the quarantine folder. Nothing will try it again: a person has to look. Read
+      # from listener_file, so it fires whichever machine the listener runs on.
+      - alert: CdiListenerFileQuarantined
+        expr: max(cdi_listener_quarantined_recent) > 0
+        labels:
+          severity: ticket
+        annotations:
+          summary: A file from the watched folder is in quarantine.
+          description: A file failed on its run and on every retry and was moved to the quarantine folder in the last 24 hours; it will not be read until a person looks at it.
+          runbook_url: docs/alerts.md#cdilistenerfilequarantined
+
+      # LS-S9: the file listener has not looked at its folder successfully for 5 minutes: it is
+      # down, or it cannot reach the drive or the pipeline. Files dropped meanwhile sit unread.
+      # The 300 s is the owner's to set (it is also CDI_LISTENER_STALE_SECONDS, for the health
+      # view). No series at all - a host that runs no listener - raises nothing.
+      - alert: CdiListenerNotPolling
+        expr: time() - max(cdi_listener_last_ok_poll_timestamp_seconds) > 300
+        labels:
+          severity: page
+        annotations:
+          summary: The file listener has not polled its folder for 5 minutes.
+          description: No look at the watched folder has succeeded for 5 minutes; prescriptions dropped there are not being read.
+          runbook_url: docs/alerts.md#cdilistenernotpolling
+
+      # RD-S3: the two handwriting readers disagree far more often this hour than over the last
+      # week - a change in the pictures, the pens, the scanner or a model. ASSUMPTION, for the
+      # owner to set from measurement: twice the weekly share and 10 points more, over at least
+      # 20 lines compared this hour, held for 15 minutes.
+      - alert: CdiReaderDisagreementDrift
+        expr: |
+          max(cdi_reader_disagreement_ratio{window="1h"})
+            > 2 * max(cdi_reader_disagreement_ratio{window="7d"}) + 0.10
+          and max(cdi_reader_comparisons{window="1h"}) >= 20
+        for: 15m
+        labels:
+          severity: ticket
+        annotations:
+          summary: The two handwriting readers disagree much more often than usual.
+          description: This hour's share of handwritten lines on which TrOCR and Qwen disagree is more than twice the last week's; more values go to review, and something about the pictures or the readers may have changed.
+          runbook_url: docs/alerts.md#cdireaderdisagreementdrift
+
+      # RD-S5: the model gateway on :8077 - the batching server where one runs - has not answered
+      # Prometheus for a minute. With a serial server listed after it (CDI_MLSERVE_URL), documents
+      # still finish there, slowly; without one, extraction has stopped.
+      - alert: CdiModelServerDown
+        expr: up{job="cdi-mlserve"} == 0
+        for: 1m
+        labels:
+          severity: page
+        annotations:
+          summary: The model server is not answering.
+          description: The model gateway has not answered for a minute. Documents go to the next model server listed, if there is one, and are read more slowly; if there is none, nothing is being read.
+          runbook_url: docs/alerts.md#cdimodelserverdown
+
+      # RD-S5: calls to the model were moved to another replica in the last 10 minutes - the
+      # batching server refused them and the serial server took them. Documents still finish.
+      - alert: CdiModelServerFailover
+        expr: sum(increase(cdi_mlserve_failovers_total[10m])) > 0
+        labels:
+          severity: ticket
+        annotations:
+          summary: Documents are being read by the fallback model server.
+          description: A model server refused calls in the last 10 minutes and they went to the next one listed; documents still finish, more slowly.
+          runbook_url: docs/alerts.md#cdimodelserverfailover

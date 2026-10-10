@@ -44,6 +44,11 @@ ALERTS = (
     "CdiRestoreDrillOverdue",
     "CdiWebappInstanceDown",
     "CdiJobsOrphaned",
+    "CdiListenerFileQuarantined",  # LS-S7
+    "CdiListenerNotPolling",  # LS-S9
+    "CdiReaderDisagreementDrift",  # RD-S3
+    "CdiModelServerDown",  # RD-S5
+    "CdiModelServerFailover",  # RD-S5
 )
 
 
@@ -57,6 +62,9 @@ def _exposed_names() -> set[str]:
     job = SimpleNamespace(state="running", started_at=0.0)
     reg.register(metrics.JobsCollector(lambda: [job], clock=lambda: 10.0))
     reg.register(metrics.ReviewBacklogCollector(lambda: [("workbasket", 1)]))
+    reg.register(metrics.ListenerCollector(lambda: [("quarantined", 1, 1), ("failed", 2, 0)],
+                                           lambda: [("local", 1791500000.0, 2, 40.0)]))  # fmt: skip
+    reg.register(metrics.DisagreementCollector(lambda: [("1h", 40, 10), ("7d", 900, 90)]))
     reg.register(metrics.GpuCollector(lambda: "0, 50, 1000, 2000\n"))
     reg.register(metrics.PgReplicationCollector(lambda: (False, 1, 0.2, 0)))
     reg.register(metrics.MinioNodesCollector(["http://a", "http://b"], lambda urls: 2))
@@ -86,7 +94,10 @@ def test_exactly_the_alerts_of_the_blocks():
                    "CdiPgStandbyDisconnected": "ticket", "CdiMinioDegraded": "ticket",
                    "CdiBackupStale": "page", "CdiRestoreDrillFailed": "page",
                    "CdiRestoreDrillOverdue": "ticket", "CdiWebappInstanceDown": "ticket",
-                   "CdiJobsOrphaned": "page"}  # fmt: skip
+                   "CdiJobsOrphaned": "page", "CdiListenerFileQuarantined": "ticket",
+                   "CdiListenerNotPolling": "page",
+                   "CdiReaderDisagreementDrift": "ticket", "CdiModelServerDown": "page",
+                   "CdiModelServerFailover": "ticket"}  # fmt: skip
 
 
 def test_the_sla_rule_uses_the_adr_0002_window():
@@ -283,10 +294,14 @@ def test_gpu_out_of_memory_is_counted_where_it_happens():
     load0 = value("cdi_vlm_oom_total", where="load")
     batch0 = value("cdi_vlm_oom_total", where="batch")
     gen0 = value("cdi_vlm_oom_total", where="generate")
-    hf = HFBackend(Settings(_env_file=None, mlserve_backend="hf"),  # type: ignore[call-arg]
-                   loader=loader, runner=lambda *a: "ok", batch_runner=boom)  # fmt: skip
-    hf.generate("x")  # 7B does not fit -> the 3B serves
+    from cdi_adapter.mlserve.backends import ModelDoesNotFit
+
+    s = Settings(_env_file=None, mlserve_backend="hf")  # type: ignore[call-arg]
+    hf = HFBackend(s, loader=loader, runner=lambda *a: "ok", batch_runner=boom)
+    with pytest.raises(ModelDoesNotFit):  # 7B does not fit: counted, and no fallback (RD-S4)
+        hf.generate("x")
     assert value("cdi_vlm_oom_total", where="load") == load0 + 1
+    hf = HFBackend(s, loader=lambda mid, s: ("M", "P"), runner=lambda *a: "ok", batch_runner=boom)
     hf.generate_batch([GenItem("a"), GenItem("b")])  # the batch is split, not dropped
     assert value("cdi_vlm_oom_total", where="batch") == batch0 + 1
 

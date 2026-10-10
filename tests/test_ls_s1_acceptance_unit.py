@@ -221,8 +221,9 @@ def test_ac2_the_run_command_follows_the_setting(monkeypatch, capsys, tmp_path) 
     assert "watching     local:" in capsys.readouterr().out
 
 
-@pytest.mark.xfail(strict=True, reason=_AC2)
 def test_ac2_there_is_a_retry_agent() -> None:
+    """Was an expected failure until LS-S7 built it (2026-10-09). That it leaves another
+    drive's rows alone is tested in tests/test_ls_s7_acceptance_unit.py."""
     names = {p.stem for p in (ROOT / "src" / "cdi_adapter" / "listener").glob("*.py")}
     assert names & {"recovery", "retry", "retries"}
 

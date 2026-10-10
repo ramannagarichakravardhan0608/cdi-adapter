@@ -113,7 +113,13 @@ def test_ac1_with_line_regions_on_each_reading_is_stored_with_its_lines_label(mi
     kinds = ocr.region_kinds(reads, ocr.page_regions(_png(page), reads))  # type: ignore[arg-type]
     for read, kind in zip(reads, kinds, strict=True):
         assert kind == ("printed" if read.bbox[3] <= split else "handwritten")
-    assert '**({"region_kind": kind} if kind else {})' in inspect.getsource(ocr.ocr_document)
+    # the rows are built where every reader's lines become evidence (RD-S1)
+    from cdi_adapter.recognition import pipeline
+
+    assert "kinds=kinds" in inspect.getsource(ocr.ocr_document)
+    assert '**({"region_kind": kind} if kind else {})' in inspect.getsource(
+        pipeline.observation_rows
+    )
 
 
 def test_ac1_by_default_the_labels_are_counted_but_not_stored_or_acted_on() -> None:

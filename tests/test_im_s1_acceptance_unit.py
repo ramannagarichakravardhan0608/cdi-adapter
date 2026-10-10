@@ -286,12 +286,16 @@ def test_ac3_every_saved_record_carries_the_thresholds_it_was_judged_with(sharp)
     assert rec["limits"] == quality.limits(ON)
     assert set(rec["limits"]) == {"min_side_px", "min_sharpness", "min_ink", "max_ink",
                                   "min_text_px", "max_glare", "paper_white",
-                                  "min_writing_sharpness"}  # fmt: skip
+                                  "min_writing_sharpness", "min_stroke_sharpness",
+                                  "floor_side_px"}  # fmt: skip
 
 
 def test_ac3_a_page_can_be_rejudged_under_other_thresholds_from_what_was_saved(sharp) -> None:
     rec = quality.record(sharp, settings=ON)
-    strict = {**rec["limits"], "min_sharpness": rec["measures"]["sharpness"] + 1}
+    # both sharpness limits: since 2026-10-09 a page is "blurred" only when the whole frame
+    # AND the strokes themselves are under their limits
+    strict = {**rec["limits"], "min_sharpness": rec["measures"]["sharpness"] + 1,
+              "min_stroke_sharpness": rec["measures"]["stroke_sharpness"] + 1}  # fmt: skip
     assert quality.verdict(rec["measures"], **rec["limits"]).ok
     assert quality.verdict(rec["measures"], **strict).code == "blurred"
 
@@ -308,14 +312,14 @@ def test_ac3_the_answer_key_run_reports_the_false_reject_rate(answer_key) -> Non
 def test_ac3_the_report_states_the_thresholds_used(answer_key) -> None:
     out = _evaluate(answer_key)
     assert out["thresholds"] == quality.limits(Settings())
-    moved = _evaluate(answer_key, quality_min_sharpness=5000.0)
+    moved = _evaluate(answer_key, quality_min_sharpness=5000.0, quality_min_stroke_sharpness=5000.0)
     assert moved["thresholds"]["min_sharpness"] == 5000.0  # the run says what it was judged with
 
 
 def test_ac3_a_limit_set_too_high_shows_up_as_false_rejects(answer_key) -> None:
     """The point of the number: raise the sharpness limit until good pictures are turned away,
     and the rate, the reason and the pictures are all in the report."""
-    out = _evaluate(answer_key, quality_min_sharpness=5000.0)
+    out = _evaluate(answer_key, quality_min_sharpness=5000.0, quality_min_stroke_sharpness=5000.0)
     assert out["false_rejects"] == 3 and out["false_reject_rate"] == 1.0
     assert out["false_reject_reasons"] == [{"code": "blurred", "count": 3}]
     assert [r["image"] for r in out["false_rejected"]] == ["rx_sharp.png", "rx_soft.png",
@@ -331,7 +335,7 @@ def test_ac3_a_limit_set_too_low_shows_up_as_false_accepts(answer_key) -> None:
 
 
 def test_ac3_the_rate_is_given_by_document_type(answer_key) -> None:
-    out = _evaluate(answer_key, quality_min_sharpness=5000.0)
+    out = _evaluate(answer_key, quality_min_sharpness=5000.0, quality_min_stroke_sharpness=5000.0)
     assert set(out["by_doc_type"]) == {"prescription", "lab_report"}
     assert out["by_doc_type"]["lab_report"]["false_reject_rate"] == 1.0
     assert out["by_doc_type"]["prescription"]["readable"] == 2
@@ -375,7 +379,9 @@ def test_ac3_there_is_a_command_that_runs_the_check_over_an_answer_key(answer_ke
 def test_ac3_the_report_names_the_pictures_it_wrongly_held(answer_key) -> None:
     from cdi_adapter.recognition import quality_eval
 
-    said = quality_eval.as_text(_evaluate(answer_key, quality_min_sharpness=5000.0))
+    said = quality_eval.as_text(
+        _evaluate(answer_key, quality_min_sharpness=5000.0, quality_min_stroke_sharpness=5000.0)
+    )
     assert "FALSE-REJECT RATE          100.0 %" in said
     assert "Why readable pictures were held" in said and "rx_sharp.png  (blurred)" in said
 
@@ -404,8 +410,9 @@ def test_ac4_the_far_away_photos_really_are_large(far_away, far_away_dense) -> N
 
 
 def test_ac4_the_tiny_writing_is_measured(far_away, sharp) -> None:
-    """Text height is measured on its own, and it is right: 4 px far away, 19 px close."""
-    assert quality.measure(far_away)["text_height_px"] <= 5
+    """Text height is measured on its own, and it is right: 6 px far away, 23 px close (the
+    upper quartile of the letters; it was the median of every dark blob, 4 and 19)."""
+    assert quality.measure(far_away)["text_height_px"] <= 6
     assert quality.measure(sharp)["text_height_px"] >= 12
 
 
@@ -435,7 +442,7 @@ def test_ac4_the_same_page_filling_the_frame_is_not_held(sharp) -> None:
 
 
 def test_ac4_the_limit_is_a_setting() -> None:
-    assert Settings().quality_min_text_px == 8.0
+    assert Settings().quality_min_text_px == 10.0  # 8 until the measure changed, 2026-10-09
     lenient = Settings(quality_check=True, quality_min_text_px=0)
     assert "quality_min_text_px" in Settings.model_fields and lenient.quality_min_text_px == 0
 
@@ -455,10 +462,11 @@ def test_ac4_a_prescription_photographed_from_far_away_is_told_to_move_closer(fa
 
 @pytest.mark.parametrize("scale", [0.15, 0.2, 0.25, 0.3])
 def test_ac4_it_is_told_to_move_closer_at_every_distance(sharp, scale: float) -> None:
-    """From a seventh to a third of the frame: the writing is under 8 px every time, and every
-    time the advice is the same. (It used to be "blank" at the first two and "blurred" after.)"""
+    """From a seventh to a third of the frame: the writing is under the limit every time, and
+    every time the advice is the same. (It used to be "blank" at the first two and "blurred"
+    after.)"""
     verdict = quality.assess(_far(sharp, scale), "image/png", settings=ON)
-    assert verdict.measures["text_height_px"] < 8
+    assert verdict.measures["text_height_px"] < Settings().quality_min_text_px
     assert verdict.code == "text_too_small"
 
 

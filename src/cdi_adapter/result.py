@@ -36,7 +36,9 @@ grammar-lock (E2-S3); this one describes what we *hand over*, and uses JSON Sche
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -126,7 +128,9 @@ def build(conn: Connection, document_id: UUID | str) -> dict[str, Any]:
         "received_at": _iso(doc["created_at"]),
         "source": "upload_screen" if doc["source_channel"] == "upload" else doc["source_channel"],
         "page_count": doc["page_count"] or 0,
-        "document": {"source": {"channel": doc["source_channel"], "file_name": doc["filename"]}},
+        "document": {
+            "source": source_of(doc["source_channel"], doc["filename"], _arrivals(conn, doc["id"]))
+        },  # fmt: skip
         "patient": _patient(conn, doc),
         "doctor": _doctor(conn, facts),
         "visit": _visit(conn, facts),
@@ -138,6 +142,103 @@ def build(conn: Connection, document_id: UUID | str) -> dict[str, Any]:
     out["review"] = _review(out)
     out["status"] = _status(doc, out)
     return out
+
+
+# ------------------------------------------------------------------ where the result came from
+
+
+def drive_of(source_id: str | None) -> str | None:
+    """``local:/data/inbox`` -> ``local``: the kind of drive a watched folder is on."""
+    return (source_id or "").split(":", 1)[0] or None
+
+
+def _arrival(row: dict[str, Any]) -> dict[str, Any]:
+    source_id = row.get("source_id") or ""
+    return {"channel": "listener", "drive": drive_of(source_id),
+            "folder": row.get("folder") or source_id.split(":", 1)[-1] or None,
+            "file_name": row.get("original_name") or row.get("name")}  # fmt: skip
+
+
+def source_of(channel: str, filename: str | None,
+              arrivals: list[dict[str, Any]]) -> dict[str, Any]:  # fmt: skip
+    """Where a result came from (LS-S8). **The same four keys whatever the channel** - channel,
+    drive, folder, file name - so a result that arrived through the watched folder has exactly
+    the shape of one uploaded on the screen; an upload simply has no drive and no folder.
+
+    ``arrivals`` are the watched-folder files that became this document, oldest first. A
+    document is stored once however often its bytes arrive, so the same file dropped twice, or
+    dropped after being uploaded, is one result: the first arrival is its source, and the
+    later ones are listed under ``also_received`` - present only when there are any."""
+    source: dict[str, Any] = {"channel": channel, "drive": None, "folder": None,
+                              "file_name": filename}  # fmt: skip
+    rest = [_arrival(a) for a in arrivals]
+    if channel == "listener" and rest:
+        source.update(rest.pop(0))
+    if rest:
+        source["also_received"] = rest
+    return source
+
+
+def _arrivals(conn: Connection, document_id: Any) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        text("SELECT source_id, folder, original_name, name FROM listener_file "
+             "WHERE document_id = :d ORDER BY first_seen_at, id"), {"d": str(document_id)},
+    ).mappings().all()  # fmt: skip
+    return [dict(r) for r in rows]
+
+
+def _like(typed: str) -> str:
+    """What the person typed as a pattern that finds it anywhere in a name - with the three
+    characters that mean something to LIKE taken literally."""
+    escaped = typed.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+def find_by_file_name(conn: Connection, typed: str, limit: int = 20) -> list[dict[str, Any]]:
+    """The results of the files whose name contains ``typed`` (LS-S8 AC4), newest first.
+
+    A file is found by the name it was dropped or uploaded under - and by the name it was
+    kept under, if a second file of the same name made the listener add a number. A dropped
+    file that never became a result (it failed, or is in quarantine) is found too, with what
+    became of it, so "where is my file?" always has an answer."""
+    pattern = _like(typed.strip())
+    documents = conn.execute(
+        text("SELECT d.id, d.filename, d.source_channel, d.status, d.created_at, d.page_count, "
+             "  lf.original_name, lf.name, lf.source_id, lf.folder, lf.state "
+             "FROM source_document d "
+             "LEFT JOIN listener_file lf ON lf.document_id = d.id "
+             "WHERE d.filename ILIKE :q ESCAPE '\\' OR lf.original_name ILIKE :q ESCAPE '\\' "
+             "   OR lf.name ILIKE :q ESCAPE '\\' "
+             "ORDER BY d.created_at DESC, d.id, lf.first_seen_at LIMIT :n"),
+        {"q": pattern, "n": limit},
+    ).mappings().all()  # fmt: skip
+    found: dict[str, dict[str, Any]] = {}
+    for r in documents:
+        hit = found.setdefault(str(r["id"]), {
+            "document_id": str(r["id"]), "file_name": r["filename"],
+            "result_url": f"/result/{r['id']}", "channel": r["source_channel"],
+            "drive": None, "folder": None, "status": r["status"],
+            "received_at": _iso(r["created_at"]), "page_count": r["page_count"] or 0,
+            "dropped_as": []})  # fmt: skip
+        if r["source_id"]:
+            hit["dropped_as"].append(r["original_name"] or r["name"])
+            if hit["channel"] == "listener" and hit["drive"] is None:
+                arrival = _arrival(dict(r))
+                hit.update(drive=arrival["drive"], folder=arrival["folder"])
+    no_result = conn.execute(
+        text("SELECT original_name, name, source_id, folder, state, kind, first_seen_at "
+             "FROM listener_file WHERE document_id IS NULL AND state <> 'seen' "
+             "AND (original_name ILIKE :q ESCAPE '\\' OR name ILIKE :q ESCAPE '\\') "
+             "ORDER BY first_seen_at DESC, id LIMIT :n"),
+        {"q": pattern, "n": limit},
+    ).mappings().all()  # fmt: skip
+    return [*found.values(),
+            *({"document_id": None, "file_name": r["original_name"] or r["name"],
+               "result_url": None, **{k: v for k, v in _arrival(dict(r)).items()
+                                      if k != "file_name"},
+               "status": f"no result: {r['state']}" + (f" ({r['kind']})" if r["kind"] else ""),
+               "received_at": _iso(r["first_seen_at"]), "page_count": 0, "dropped_as": []}
+              for r in no_result)]  # fmt: skip
 
 
 def _iso(when: Any) -> str | None:
@@ -406,6 +507,85 @@ def as_json(conn: Connection, document_id: UUID | str) -> str:
     """The file's bytes: sorted keys and a stable separator, so two builds of one document are
     byte-identical (OUT-S2 AC2)."""
     return json.dumps(build(conn, document_id), indent=2, sort_keys=True, default=str) + "\n"
+
+
+# ------------------------------------------------------------------ the result as a file (OUT-S2)
+
+FILE_SUFFIX = ".result.v1.json"
+
+
+def file_name(document_id: UUID | str) -> str:
+    """``<document id>.result.v1.json``: one file per prescription, named by its document, with
+    the format's version in the name."""
+    return f"{document_id}{FILE_SUFFIX}"
+
+
+def write_file(conn: Connection, document_id: UUID | str, *, settings: Any = None,
+               store: Any = None) -> dict[str, Any]:  # fmt: skip
+    """Write the result of one prescription as a JSON file (OUT-S2), and say where it went.
+
+    * **Built from the database**, by the same function that serves the API - so the file
+      always matches the rows, and is the same for an upload and a dropped file.
+    * **Validated first.** A result that does not fit ``result.v1.json`` raises and nothing is
+      written; the file that was there before, if any, is left as it was.
+    * **Written all at once.** In a folder: a temporary file beside it, then a rename, so a
+      reader never sees half a file. In the document store: one ``put``, which is all or
+      nothing.
+    * **Writing it again gives the identical file** - same bytes, same name - so it is safe to
+      write after every change (a reviewer's correction, an approval).
+
+    Where: the document store under ``CDI_RESULT_OUTPUT_PREFIX`` and, when one is named, the
+    folder ``CDI_RESULT_OUTPUT_DIR``. With neither set nothing is written."""
+    from cdi_adapter.config import get_settings
+
+    s = settings or get_settings()
+    document = build(conn, document_id)
+    validate(document)
+    raw = (json.dumps(document, indent=2, sort_keys=True, default=str) + "\n").encode("utf-8")
+    name = file_name(document["document_id"])
+    out: dict[str, Any] = {"document_id": document["document_id"], "bytes": len(raw),
+                           "sha256": hashlib.sha256(raw).hexdigest(), "file": None,
+                           "key": None}  # fmt: skip
+    if s.result_output_dir:
+        folder = Path(s.result_output_dir)
+        folder.mkdir(parents=True, exist_ok=True)
+        target = folder / name
+        temp = folder / f".{name}.{os.getpid()}.tmp"
+        try:
+            temp.write_bytes(raw)
+            os.replace(temp, target)
+        finally:
+            temp.unlink(missing_ok=True)
+        out["file"] = str(target)
+    if s.result_output_prefix:
+        if store is None:
+            from cdi_adapter.storage import get_store
+
+            store = get_store()
+        key = f"{s.result_output_prefix.strip('/')}/{name}"
+        store.put_bytes(key, raw, "application/json")
+        out["key"] = key
+    return out
+
+
+def refresh_files(document_ids: Any) -> list[dict[str, Any]]:
+    """Write the result files of these documents again, each in its own short transaction.
+    For after something changed them (the pipeline finished, a reviewer corrected a value, an
+    item was approved). **Never raises**: the file follows the database, and a file that could
+    not be written must not undo or fail what was just saved - it is logged and left for the
+    next change, or for ``GET /api/documents/<id>/result.json``, which is always current."""
+    from cdi_adapter.db import session_scope
+    from cdi_adapter.logging import get_logger
+
+    written = []
+    for document_id in dict.fromkeys(str(d) for d in document_ids if d):
+        try:
+            with session_scope() as conn:
+                written.append(write_file(conn, document_id))
+        except Exception as exc:  # noqa: BLE001 - see above
+            get_logger(__name__).warning("result_file_not_written", document_id=document_id,
+                                         error=f"{type(exc).__name__}: {exc}")  # fmt: skip
+    return written
 
 
 def validate(document: dict[str, Any]) -> None:

@@ -1,0 +1,109 @@
+{
+ "dropped": 6,
+ "counts": {
+  "inbox": 0,
+  "processing": 0,
+  "success": 6,
+  "error": 0,
+  "quarantine": 0,
+  "rescan": 0,
+  "missing": 0,
+  "duplicated": 0
+ },
+ "final": 6,
+ "adds_up": true,
+ "none_missing": true,
+ "none_duplicated": true,
+ "read_more_than_once": [],
+ "documents_shared": [],
+ "changed": [],
+ "files_nobody_dropped": [],
+ "seconds_from_drop": {
+  "files": 6,
+  "median": 53.7,
+  "p95": 72.9,
+  "min": 31.5,
+  "max": 72.9
+ },
+ "problems": {},
+ "files": [
+  {
+   "name": "soak-kill-0000.png",
+   "places": [
+    "success"
+   ],
+   "state": "succeeded",
+   "jobs": 1,
+   "runs": 1,
+   "document_id": "b08916a7-944f-4abf-a3c6-8e4d50d49c79",
+   "seconds": 31.468,
+   "unchanged": true,
+   "problems": []
+  },
+  {
+   "name": "soak-kill-0001.png",
+   "places": [
+    "success"
+   ],
+   "state": "succeeded",
+   "jobs": 1,
+   "runs": 1,
+   "document_id": "ffa99e79-c81e-45aa-bb9a-c900e9e68915",
+   "seconds": 34.498,
+   "unchanged": true,
+   "problems": []
+  },
+  {
+   "name": "soak-kill-0002.png",
+   "places": [
+    "success"
+   ],
+   "state": "succeeded",
+   "jobs": 1,
+   "runs": 1,
+   "document_id": "d9c25324-3871-49fb-ad8f-6f93a7f9d9c3",
+   "seconds": 34.525,
+   "unchanged": true,
+   "problems": []
+  },
+  {
+   "name": "soak-kill-0003.png",
+   "places": [
+    "success"
+   ],
+   "state": "succeeded",
+   "jobs": 1,
+   "runs": 1,
+   "document_id": "ab8be8e2-ae87-4f65-acd9-7aac291f3966",
+   "seconds": 72.904,
+   "unchanged": true,
+   "problems": []
+  },
+  {
+   "name": "soak-kill-0004.png",
+   "places": [
+    "success"
+   ],
+   "state": "succeeded",
+   "jobs": 1,
+   "runs": 1,
+   "document_id": "bea86786-573d-4978-99ae-bcd65dd6fc0e",
+   "seconds": 72.916,
+   "unchanged": true,
+   "problems": []
+  },
+  {
+   "name": "soak-kill-0005.png",
+   "places": [
+    "success"
+   ],
+   "state": "succeeded",
+   "jobs": 1,
+   "runs": 1,
+   "document_id": "40fc7a13-4b0f-4110-b48d-e869d69713b8",
+   "seconds": 72.926,
+   "unchanged": true,
+   "problems": []
+  }
+ ]
+}

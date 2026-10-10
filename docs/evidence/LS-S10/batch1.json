@@ -1,0 +1,187 @@
+{
+ "dropped": 12,
+ "counts": {
+  "inbox": 0,
+  "processing": 0,
+  "success": 12,
+  "error": 0,
+  "quarantine": 0,
+  "rescan": 0,
+  "missing": 0,
+  "duplicated": 0
+ },
+ "final": 12,
+ "adds_up": true,
+ "none_missing": true,
+ "none_duplicated": true,
+ "read_more_than_once": [],
+ "documents_shared": [],
+ "changed": [],
+ "files_nobody_dropped": [],
+ "seconds_from_drop": {
+  "files": 12,
+  "median": 139.5,
+  "p95": 201.9,
+  "min": 27.4,
+  "max": 214.0
+ },
+ "problems": {},
+ "files": [
+  {
+   "name": "soak-batch1-0000.png",
+   "places": [
+    "success"
+   ],
+   "state": "succeeded",
+   "jobs": 1,
+   "runs": 1,
+   "document_id": "cd47f0d6-63a7-4045-8c8c-cc3d380faee3",
+   "seconds": 27.442,
+   "unchanged": true,
+   "problems": []
+  },
+  {
+   "name": "soak-batch1-0001.png",
+   "places": [
+    "success"
+   ],
+   "state": "succeeded",
+   "jobs": 1,
+   "runs": 1,
+   "document_id": "5ee47fcf-6ac8-4baf-a02e-4a0f2864f9ba",
+   "seconds": 58.555,
+   "unchanged": true,
+   "problems": []
+  },
+  {
+   "name": "soak-batch1-0002.png",
+   "places": [
+    "success"
+   ],
+   "state": "succeeded",
+   "jobs": 1,
+   "runs": 1,
+   "document_id": "a004b91b-5f9e-47bf-8970-a4cd57b2aa88",
+   "seconds": 79.669,
+   "unchanged": true,
+   "problems": []
+  },
+  {
+   "name": "soak-batch1-0003.png",
+   "places": [
+    "success"
+   ],
+   "state": "succeeded",
+   "jobs": 1,
+   "runs": 1,
+   "document_id": "15c6149e-f04e-4c2d-afbe-d7f1a4321f70",
+   "seconds": 99.284,
+   "unchanged": true,
+   "problems": []
+  },
+  {
+   "name": "soak-batch1-0004.png",
+   "places": [
+    "success"
+   ],
+   "state": "succeeded",
+   "jobs": 1,
+   "runs": 1,
+   "document_id": "84b4b38a-242d-4a61-9960-bfb6c71f20ae",
+   "seconds": 116.888,
+   "unchanged": true,
+   "problems": []
+  },
+  {
+   "name": "soak-batch1-0005.png",
+   "places": [
+    "success"
+   ],
+   "state": "succeeded",
+   "jobs": 1,
+   "runs": 1,
+   "document_id": "8012e945-221c-4f74-82a9-c65b2a598335",
+   "seconds": 133.49,
+   "unchanged": true,
+   "problems": []
+  },
+  {
+   "name": "soak-batch1-0006.png",
+   "places": [
+    "success"
+   ],
+   "state": "succeeded",
+   "jobs": 1,
+   "runs": 1,
+   "document_id": "a1bdb5af-2515-4654-88c4-04369eddd754",
+   "seconds": 145.572,
+   "unchanged": true,
+   "problems": []
+  },
+  {
+   "name": "soak-batch1-0007.png",
+   "places": [
+    "success"
+   ],
+   "state": "succeeded",
+   "jobs": 1,
+   "runs": 1,
+   "document_id": "59681afb-0efc-45b7-ae63-ece5c57f8f6e",
+   "seconds": 159.655,
+   "unchanged": true,
+   "problems": []
+  },
+  {
+   "name": "soak-batch1-0008.png",
+   "places": [
+    "success"
+   ],
+   "state": "succeeded",
+   "jobs": 1,
+   "runs": 1,
+   "document_id": "98d1a5b9-8a8b-49ec-9dcf-b1e163e5bd40",
+   "seconds": 175.245,
+   "unchanged": true,
+   "problems": []
+  },
+  {
+   "name": "soak-batch1-0009.png",
+   "places": [
+    "success"
+   ],
+   "state": "succeeded",
+   "jobs": 1,
+   "runs": 1,
+   "document_id": "11e8eb66-8af1-4be9-9505-b8402046caa3",
+   "seconds": 187.33,
+   "unchanged": true,
+   "problems": []
+  },
+  {
+   "name": "soak-batch1-0010.png",
+   "places": [
+    "success"
+   ],
+   "state": "succeeded",
+   "jobs": 1,
+   "runs": 1,
+   "document_id": "f48d8525-e396-40a6-ad92-bf68d4dae792",
+   "seconds": 201.927,
+   "unchanged": true,
+   "problems": []
+  },
+  {
+   "name": "soak-batch1-0011.png",
+   "places": [
+    "success"
+   ],
+   "state": "succeeded",
+   "jobs": 1,
+   "runs": 1,
+   "document_id": "14d68e78-e699-4949-a520-d3597aa31519",
+   "seconds": 214.009,
+   "unchanged": true,
+   "problems": []
+  }
+ ]
+}

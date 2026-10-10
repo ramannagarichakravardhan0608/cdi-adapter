@@ -1,0 +1,67 @@
+{
+ "dropped": 3,
+ "counts": {
+  "inbox": 0,
+  "processing": 0,
+  "success": 3,
+  "error": 0,
+  "quarantine": 0,
+  "rescan": 0,
+  "missing": 0,
+  "duplicated": 0
+ },
+ "final": 3,
+ "adds_up": true,
+ "none_missing": true,
+ "none_duplicated": true,
+ "read_more_than_once": [],
+ "documents_shared": [],
+ "changed": [],
+ "files_nobody_dropped": [],
+ "seconds_from_drop": {
+  "files": 3,
+  "median": 23567.4,
+  "p95": 23580.0,
+  "min": 136.9,
+  "max": 23580.0
+ },
+ "problems": {},
+ "files": [
+  {
+   "name": "soak-netcut-0000.png",
+   "places": [
+    "success"
+   ],
+   "state": "succeeded",
+   "jobs": 1,
+   "document_id": "cabca1ce-e303-4743-8e2c-849f643e1652",
+   "seconds": 136.938,
+   "unchanged": true,
+   "problems": []
+  },
+  {
+   "name": "soak-netcut-0001.png",
+   "places": [
+    "success"
+   ],
+   "state": "succeeded",
+   "jobs": 1,
+   "document_id": "c3707a6d-25ef-424d-a7f9-0eb58e59a526",
+   "seconds": 23567.366,
+   "unchanged": true,
+   "problems": []
+  },
+  {
+   "name": "soak-netcut-0002.png",
+   "places": [
+    "success"
+   ],
+   "state": "succeeded",
+   "jobs": 1,
+   "document_id": "f34c7fcb-36db-4339-8597-e1b56e15e930",
+   "seconds": 23580.006,
+   "unchanged": true,
+   "problems": []
+  }
+ ]
+}

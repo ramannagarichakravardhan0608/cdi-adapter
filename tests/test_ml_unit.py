@@ -373,38 +373,47 @@ def test_hf_lazy_loads_once_on_first_request():
     assert be.loaded and loads == ["Qwen/Qwen2.5-VL-7B-Instruct"]
 
 
-def test_hf_falls_back_7b_to_3b_on_oom():
+def test_hf_has_no_fallback_on_oom():
+    """RD-S4 (decided): the research-licensed 3B fallback was removed. Out of memory while
+    loading the 7B is an error the gateway reports - nothing else is loaded in its place."""
+    from cdi_adapter.mlserve.backends import ModelDoesNotFit
+
+    tried = []
+
     def loader(mid, s):
-        if "7B" in mid:
-            raise OutOfMemoryError("CUDA out of memory")
-        return ("M3", "P3")
+        tried.append(mid)
+        raise OutOfMemoryError("CUDA out of memory")
 
     be = HFBackend(_settings(), loader=loader, runner=lambda *a: "ok")
-    assert be.generate("x") == "ok"
-    assert be.model == "Qwen/Qwen2.5-VL-3B-Instruct"
+    with pytest.raises(ModelDoesNotFit, match="no fallback"):
+        be.generate("x")
+    assert tried == ["Qwen/Qwen2.5-VL-7B-Instruct"] and not be.loaded
 
 
-def test_hf_fallback_loads_only_after_the_failed_primary_is_released():
-    """Colab T4, 2026-09-26: the half-built 7B was still held by the caught error's traceback
-    while the 3B loaded, so the 3B ran out of memory too and no model was served at all."""
+def test_hf_releases_the_failed_model_before_saying_it_does_not_fit():
+    """Colab T4, 2026-09-26: the half-built 7B was held by the caught error's traceback, so its
+    memory could not be given back. It is released before the error is raised."""
+    from cdi_adapter.mlserve.backends import ModelDoesNotFit, _load_primary
 
     class HalfLoaded:  # the 7B weights materialised before the OOM
         pass
 
     held = []
 
-    def loader(mid, s):
-        if "7B" in mid:
-            weights = HalfLoaded()
-            weights.graph = weights  # module graphs hold reference cycles
-            held.append(weakref.ref(weights))
-            raise OutOfMemoryError("CUDA out of memory")
-        assert held[0]() is None, "the failed 7B is still alive while the 3B loads"
-        return ("M3", "P3")
+    def load(mid):
+        weights = HalfLoaded()
+        weights.graph = weights  # module graphs hold reference cycles
+        held.append(weakref.ref(weights))
+        raise OutOfMemoryError("CUDA out of memory")
 
-    be = HFBackend(_settings(), loader=loader, runner=lambda *a: "ok")
-    assert be.generate("x") == "ok"
-    assert be.loaded and be.model == "Qwen/Qwen2.5-VL-3B-Instruct"
+    def release():
+        import gc
+
+        gc.collect()
+        assert held[0]() is None, "the failed 7B is still alive when it is released"
+
+    with pytest.raises(ModelDoesNotFit):
+        _load_primary(load, _settings(), release)
 
 
 def test_hf_loads_bf16_by_default_and_int8_only_when_asked(monkeypatch):

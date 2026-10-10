@@ -232,9 +232,39 @@ def _request(ctx: _Ctx, store: ObjectStore | None) -> JsonRequest:
                        max_tokens_for(ctx.doc_type))  # fmt: skip
 
 
+def annotate(payload: dict[str, Any], doc_type: str, blocks: list[dict[str, Any]]
+             ) -> dict[str, Any]:  # fmt: skip
+    """RD-S4: what is saved beside the model's answer, never inside its values.
+
+    * ``_untrusted_text`` - lines of the page that read like an instruction to a model
+      (``guard.py``): the page is flagged, and nothing else of the answer changes;
+    * ``_absent`` - each top-level field the answer left null or empty, with why: not on the
+      page, or not readable - the model gives null rather than a guess."""
+    from cdi_adapter.extract.guard import untrusted_instructions
+
+    flagged = untrusted_instructions(blocks)
+    if flagged:
+        payload["_untrusted_text"] = flagged
+        log.warning("untrusted_text_on_page", lines=len(flagged),
+                    kinds=sorted({f["kind"] for f in flagged}))  # fmt: skip
+    from cdi_adapter.ml.client import bundled_schema
+
+    try:
+        fields = list((bundled_schema(SCHEMA_FOR_DOC_TYPE[doc_type]) or {}).get("properties", {}))
+    except Exception:  # noqa: BLE001 - the note is a courtesy; the answer is saved either way
+        fields = []
+    why = "not on the page, or not readable: the answer gave no value"
+    empty: tuple[Any, ...] = (None, "", [], {})
+    absent = {f: why for f in fields if f != "confidence" and payload.get(f) in empty}
+    if absent:
+        payload["_absent"] = absent
+    return payload
+
+
 def _complete(ctx: _Ctx, payload: dict[str, Any], vlm: MLClient, *,
               patient_id: UUID | str | None, expected_patient: dict[str, Any] | None,
               actor: str) -> dict[str, Any]:  # fmt: skip
+    payload = annotate(payload, ctx.doc_type, ctx.blocks)
     model_stack = {"classifier": (ctx.cls or {}).get("method"),
                    "ocr": ctx.blocks[0]["engine"] if ctx.blocks else None,
                    "extractor": vlm.model, "extractor_version": vlm.version,

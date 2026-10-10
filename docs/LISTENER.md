@@ -106,8 +106,7 @@ status 3. Every file stays where it was dropped and is read once the pipeline is
 run. Sending the same file twice is safe: the pipeline recognises an upload it has already
 accepted by its bytes.
 
-Not built yet: retrying a failed file and quarantining it after three tries (LS-S7), batches of
-three (LS-S5), the health view (LS-S9), and marking a stored document as having come from the
+Not built yet: retrying a failed file automatically (LS-S7), the health view (LS-S9), and marking a stored document as having come from the
 listener (LS-S8). Code: `src/cdi_adapter/listener/service.py`.
 
 ### Read exactly as an upload from the screen (LS-S4)
@@ -132,6 +131,180 @@ document's channel is `listener` instead of `upload`.
 Not yet shown on a running pipeline: that a stored listener document has the right pages, and
 that one file through the screen and through the folder gives identical values. Both need the
 database, the document store and the model.
+
+### Running, restart-safe and visible (LS-S9)
+
+**It starts by itself.** On every pod start `start_all.sh` starts the retry agent, and the
+listener too when `CDI_START_LISTENER=1` (`infra/runpod/start_listener.sh`; logs in
+`/workspace/logs/listener.log` and `listener-recover.log`). The scripts have not been run on a
+pod yet.
+
+**A restart loses nothing.** What a restart needs is in the database and in the folder, not in
+the process: the lease on each file, its run count, its history and the listener's heartbeat
+are rows; the files are where they were. A file that was being read when the pod went away
+stays in `processing` and is read again as soon as its lease has run out
+(`CDI_LISTENER_LEASE_SECONDS`, 900) - by whichever listener is looking, on any pass, not only
+the first after a start. The same pod coming back takes its own files at once.
+
+**It stops gently.** On a stop signal (SIGTERM from the pod, Ctrl+C from a person) the batch
+that is running finishes, no new one starts, and the command exits 0.
+`start_listener.sh stop` asks first and waits up to a lease for the batch before it kills.
+
+**It says how it is.** After every look the listener writes a heartbeat row
+(`listener_heartbeat`, migration **0034**). The health view reads it:
+
+```bash
+python -m cdi_adapter.listener health        # exit 0 healthy, 4 not polling
+```
+
+and so do the page **`/listener`** (in the header, for staff who may see results) and
+`GET /api/listener/health`. For each watched folder: the time of the last *good* look, the
+files waiting and the age of the oldest, the files in error and in quarantine, and the files
+being ignored with the reason. A listener that is alive but cannot reach its pipeline keeps
+looking and stops being "good", with the reason shown.
+
+**It raises an alert when it stops looking.** `CdiListenerNotPolling` fires when no look has
+succeeded for 5 minutes (the owner's number: `300` in the rule, `CDI_LISTENER_STALE_SECONDS`
+for the view). Like every alert here it reaches Alertmanager and the dashboard, and it is shown
+to the staff who are signed in: every page of the web app carries a banner with the alerts firing
+now (red for a page, amber for a ticket such as a file in quarantine), asked for once a minute
+(`GET /api/alerts/active`, `CDI_ALERTMANAGER_URL`). An alert silenced in Alertmanager is not
+shown. No email, chat or pager has been named yet, so somebody who is not at a screen is not told.
+
+The counts of files in error and in quarantine come from the listener's table, not from a
+fresh look at the folders: a file a person has taken out of `error` by hand is still counted
+until it is dropped again.
+
+### The same result as an upload, and where it came from (LS-S8)
+
+A file read from the watched folder ends as the same database rows and the same result JSON as
+one uploaded on the screen: the listener writes no clinical rows of its own, and the result is
+built by one function whatever the channel. What differs is only what the result says about its
+source:
+
+| | An upload | A dropped file |
+|---|---|---|
+| `document.source.channel` | `upload` | `listener` |
+| `document.source.drive` | none | `local`, `onedrive`, `sharepoint`, `gdrive` |
+| `document.source.folder` | none | the watched folder (a path; on Google Drive, the folder's id) |
+| `document.source.file_name` | the file's name | the name it was **dropped under** |
+
+- **One result per file.** A document is stored once however often its bytes arrive. The same
+  file dropped twice, or dropped after being uploaded, is one result; the first arrival is its
+  source and the later ones are listed under `also_received`.
+- **Each dropped file is linked to its result** (`listener_file.document_id`, migration
+  **0033**), with the name it was dropped under (`original_name`) - which stays the same when a
+  second file of that name is kept as `rx.1.pdf`.
+- **Find a result by file name:** the box under *Progress* on the Generate EMR screen, or
+  `GET /api/results/search?file=<part of the name>`. It finds uploaded and dropped files alike,
+  and a dropped file that never became a result (it failed, or is in quarantine) with what
+  became of it. Staff who may open results may search.
+- **The original file is kept unchanged**: in the `success` folder, and in the document store.
+- **Do not put a patient's name in a file name.** File names are shown in the folders, in the
+  notes in `log`, in search results and in the result's source. This is a rule for the people
+  who drop files (a product-owner policy); the system does not enforce it.
+
+- **Every result is also a JSON file** (the backlog's OUT-S2 writer): one per prescription,
+  named `<document id>.result.v1.json`, the same for an upload and a dropped file. It is put in
+  the document store under `CDI_RESULT_OUTPUT_PREFIX` (`results/`) and, when
+  `CDI_RESULT_OUTPUT_DIR` names a folder, there too. It is validated against the contract
+  before a byte is written, written all at once, and identical when written again. It is
+  written when a document is finished, and again whenever the result changes: when a dropped
+  file is linked to it, when a reviewer corrects a value, and when an item is approved. The
+  same JSON is served by the API (`/api/documents/<id>/result.json`).
+
+### A failed file is tried again by itself, then handed to a person (LS-S7)
+
+```bash
+python -m cdi_adapter.listener recover          # the retry agent, until stopped
+python -m cdi_adapter.listener recover --once   # one pass
+```
+
+Every failure is sorted into one of three kinds:
+
+| Kind | What it is | Retried? |
+|---|---|---|
+| **data** | The file itself: empty, not a picture, corrupt, too blurred, too big, too many pages, not a clinical document | **Never.** The note says to rescan and drop it again |
+| **transient** | The system: a timeout, a server down or busy, a rate limit, a lost connection | Yes |
+| **code** | Anything else: an error nobody planned for | Yes - it may heal; if not, a person gets it |
+
+- **The waits grow:** 60 s before the first retry, 120 s before the second, 240 s before the third
+  (`CDI_LISTENER_RETRY_BASE_SECONDS` x 2^n).
+- **At most four runs:** the first and `CDI_LISTENER_MAX_ATTEMPTS` (3) retries. When the last
+  retry fails the file goes to `quarantine`, with a note for each of the four runs.
+- **How a retry happens:** the agent moves the file from `error` back into the inbox when its
+  wait is over; the listener then takes it like any other file. The agent reads nothing itself
+  and keeps nothing itself - attempts and history are in `listener_file` - so it can be stopped
+  and started at any time.
+- **Only this drive's files:** the agent looks at rows of the drive the settings name, so files
+  that failed on another drive are left alone after the drive setting changes.
+- **An empty file** is given a minute (six looks) in case it is still arriving, then refused as
+  a data error.
+- **When a file reaches quarantine** the listener writes a `critical` log line
+  (`ListenerFileQuarantined`) and adds a line to `<alert file>.quarantine.jsonl`. **Telling a
+  person from that (an alert rule and a route) waits for ENT-S4.**
+
+The listener and the agent are two processes. On a pod, `infra/runpod/start_listener.sh` starts
+both, and `start_all.sh` calls it when `CDI_LISTENER_ENABLED=1`. That script has not been run.
+
+### Filed by outcome, with a note only for a failure (LS-S6)
+
+Open the folders and see at once what worked, what failed and why.
+
+| Outcome | Where the file goes | Note in `log` |
+|---|---|---|
+| Read, and the result saved in the database | `success` | **none** |
+| Failed | `error` | one, for that run |
+| Failed when its retries are used up (run 4; `CDI_LISTENER_MAX_ATTEMPTS`, 3 retries) | `quarantine` | one, saying the retries are used up |
+| A data error (not a scan, too large, too many pages, rescan, not a real PDF) | `error`, never run again, never quarantined | one |
+
+- **The move to `success` comes after the save.** If the pod stops in between, the file stays in
+  `processing`; on restart the listener takes it up again, the pipeline recognises the bytes it
+  has already saved, and the file is only moved - the result is not saved twice.
+- **One note per failed run**, named `<file>.<UTC time>.run<N>.log`, with: the reason, the kind
+  of error, the batch id, the run number, what happens next, and the end of the error trace.
+- **A note never holds what was read from the picture.** A reason this system wrote itself (a
+  size, a page count, a picture-quality verdict) is given in full. For any other failure only
+  the *kind of error* is written (`ValueError`), and the trace gives places in the code (file,
+  line, function) - never the error's message, which may quote the document. The message is in
+  the job and the log. The note does name the file, so a patient's name in a *file name* would
+  be in it.
+- **Nothing is ever deleted**, and a file moved where one of the same name already is is kept
+  beside it (`rx.pdf`, `rx.1.pdf`).
+- **Every move is written to the file's history** in `listener_file` (to which folder, under
+  which name, when). A quarantined file has the state `quarantined` (migration **0031**).
+- The folder names are settings: `CDI_LISTENER_SUCCESS`, `CDI_LISTENER_ERROR`,
+  `CDI_LISTENER_QUARANTINE`, `CDI_LISTENER_LOG`.
+
+A failed file is put back in the inbox by the retry agent (LS-S7, above) - or by a person; either
+way the same file is recognised and its run number goes up.
+
+### Batches of three (LS-S5)
+
+So the model server is kept busy but not flooded, finished files are run in batches.
+
+| Rule | Setting (default) |
+|---|---|
+| Up to this many finished files are taken together, oldest first, and read at the same time | `CDI_LISTENER_BATCH_SIZE` (3) |
+| Fewer than a batch start once the oldest of them has waited this long; 0 = start whatever is there | `CDI_LISTENER_BATCH_WAIT_SECONDS` (60) |
+| How often the folder is looked at | `CDI_LISTENER_POLL_SECONDS` (10) |
+
+- The next batch starts **only when every file of this one has finished**.
+- **One bad file does not stop its batch**: it goes to `error` with its note, the others carry on.
+- Seven files waiting are run as 3, then 3, and the last one after its waiting time.
+- `run --once` does not hold a short batch back, because it has no later pass to start it.
+- Each batch has an id, written into the history of every file in it (`listener_file.history`,
+  migration **0030**), together with each file's **seconds from the drop to its result**. "The
+  drop" is the moment the listener first saw the file. `run` prints both; the load test
+  (LS-S10, not built) will read them.
+
+How long a lone file can wait before reading starts: the waiting time (60 s) plus up to two
+looks at the folder for it to count as finished (2 x 10 s). Set these to the business need.
+
+**How long a batch takes.** The model server reads one document at a time, 24-37 s each
+(measured). The three files of a batch are handed over together but are read one after another
+by the server, so a batch takes about 72-111 s today. That is arithmetic on the measured times,
+not a measurement of a batch. Faster batches need the batching server of RD-S5.
 
 ### Only finished, new, allowed files (LS-S3)
 

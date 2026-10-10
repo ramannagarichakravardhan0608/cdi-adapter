@@ -130,6 +130,8 @@ def create_app(backend: Backend | None = None, *, version: str | None = None) ->
                 "output_chars": len(text),
                 "seconds": secs,
                 **({"grammar_locked": True} if locked(req.json_schema) else {}),
+                # RD-S4: the backend stopped at max_tokens rather than at the end of its answer
+                **({"truncated": True} if getattr(text, "cut", False) else {}),
             },
         )
 

@@ -107,15 +107,27 @@ def test_migration_0001_downgrade_drops_every_table():
     assert set(m.VIEWS) == set(re.findall(r"CREATE OR REPLACE VIEW (\w+)", VIEWS))
 
 
-def test_migration_chain_is_linear_0001_to_0029():
+def test_migration_chain_is_linear_0001_to_0035():
     cfg = Config(str(ROOT / "alembic.ini"))
     cfg.set_main_option("script_location", str(ROOT / "db" / "alembic"))
     script = ScriptDirectory.from_config(cfg)
     # 0029: the listener's file table (LS-S3). There is no 0028 on this branch: dev_main has one
     # (continuity views), so the number is left free for when the branches are joined.
-    assert script.get_heads() == ["0029"]
+    # 0030: the history list on that table (LS-S5: batch ids and timings)
+    # 0031: the 'quarantined' state (LS-S6)
+    # 0032: the mobile and token number typed at the desk, on web_job
+    # 0033: which document a dropped file became, and its original name and folder (LS-S8)
+    # 0034: the listener's heartbeat (LS-S9)
+    # 0035: why a reading needs a person, on ocr_observation (RD-S2)
+    assert script.get_heads() == ["0035"]
     chain = [r.revision for r in script.walk_revisions("base", "heads")]
     assert chain == [
+        "0035",
+        "0034",
+        "0033",
+        "0032",
+        "0031",
+        "0030",
         "0029",
         "0027",
         "0026",

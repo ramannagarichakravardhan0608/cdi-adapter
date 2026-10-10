@@ -364,7 +364,9 @@ def test_a_variant_that_does_not_fit_fails_instead_of_measuring_the_3b(tmp_path:
         return VLLMBackend(s, engine_factory=factory, prompt_builder=lambda m: (lambda p, i: p),
                            sampling=lambda n, g=None: {})  # fmt: skip
 
-    with pytest.raises(OutOfMemoryError):
+    from cdi_adapter.mlserve.backends import ModelDoesNotFit
+
+    with pytest.raises((OutOfMemoryError, ModelDoesNotFit)):
         bench.run_variant(
             "bf16",
             "Qwen/Qwen2.5-VL-7B-Instruct",

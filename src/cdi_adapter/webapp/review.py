@@ -25,7 +25,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import Connection, text
 
-from cdi_adapter import evidence, longitudinal, metrics, repo, summary
+from cdi_adapter import evidence, longitudinal, metrics, repo, result, summary
 from cdi_adapter.db import session_scope
 from cdi_adapter.terminology.parse import freq_per_day, is_prn, to_ucum
 from cdi_adapter.terminology.service import bind_text
@@ -359,4 +359,9 @@ def api_fact(fact_id: UUID) -> dict[str, Any]:
 def api_review(fact_id: UUID, body: ReviewDecision, request: Request) -> dict[str, Any]:
     reviewer = auth.actor(request).username
     with session_scope() as conn:
-        return _http(lambda: decide(conn, fact_id, body, reviewer))
+        documents = conn.execute(text("SELECT source_doc_ids FROM clinical_fact WHERE id = :f"),
+                                 {"f": str(fact_id)}).scalar_one_or_none()  # fmt: skip
+        decided = _http(lambda: decide(conn, fact_id, body, reviewer))
+    # OUT-S2: the result file follows the database - written again once the decision is saved
+    result.refresh_files(documents or [])
+    return decided

@@ -195,10 +195,11 @@ def test_a_file_named_like_a_scan_that_is_not_one_still_goes_to_error_with_a_not
     assert rec.read_files == []
     assert report["failed"] == [{"file": "letter.docx", "kind": "not_a_scan",
                                  "reason": "Please add a photo, PDF or scan",
-                                 "retry": False}]  # fmt: skip
+                                 "retry": False, "run": 1, "to": "error",
+                                 "class": "data"}]  # fmt: skip
     assert _names(folder, "error") == ["letter.docx"]
     (note,) = _names(folder, "log")
-    assert note == "letter.docx.20261008T093000Z.log"
+    assert note == "letter.docx.20261008T093000Z.run1.log"  # LS-S6: the run number is in it
     text = (folder / "log" / note).read_text(encoding="utf-8")
     assert "Please add a photo, PDF or scan" in text and "not_a_scan" in text
 
@@ -341,8 +342,9 @@ def test_one_pass_on_an_empty_folder_does_not_wait(folder) -> None:
 def test_the_note_says_what_happened_in_plain_lines() -> None:
     file = C.RemoteFile("error/rx.png", "rx.png", "error")
     note = S.failure_note(file, S.Outcome(False, "not finished after 900 s", "timeout", "j1"))
-    assert note.splitlines()[:4] == ["file:    rx.png", "reason:  not finished after 900 s",
-                                     "kind:    timeout", "job:     j1"]  # fmt: skip
+    assert note.splitlines()[:7] == ["file:    rx.png", "reason:  not finished after 900 s",
+                                     "kind:    timeout", "class:   transient", "batch:   none",
+                                     "run:     1 of 4", "job:     j1"]  # fmt: skip
     assert "may still be read" in note
 
 

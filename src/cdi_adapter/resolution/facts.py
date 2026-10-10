@@ -42,9 +42,30 @@ def _observations(conn: Connection, provenance: list[dict[str, Any]]) -> list[di
     if not ids:
         return []
     return [dict(r) for r in conn.execute(
-        text("SELECT engine, region_kind, ocr_conf FROM ocr_observation "
+        text("SELECT id, engine, region_kind, ocr_conf, review_reason FROM ocr_observation "
              "WHERE id = ANY(CAST(:ids AS uuid[]))"), {"ids": ids},
     ).mappings()]  # fmt: skip
+
+
+def _agreed_pairs(conn: Connection, obs: list[dict[str, Any]]) -> int:
+    """RD-S3: how many TrOCR/Qwen pairs behind a fact were compared and AGREE - provided every
+    handwriting reading behind it is in such a pair. Otherwise 0: an uncompared reading still
+    needs a person."""
+    trocr = {str(o.get("id")) for o in obs if o["engine"] == "trocr" and o.get("id")}
+    qwen = {str(o.get("id")) for o in obs if o["engine"] == "vlm" and o.get("region_kind")
+            and o["region_kind"] != "printed"}  # fmt: skip
+    if not trocr or not qwen or any(o.get("review_reason") for o in obs):
+        return 0
+    rows = conn.execute(
+        text("SELECT observation_id_a, observation_id_b, disagreement_state FROM ocr_agreement "
+             "WHERE observation_id_a = ANY(CAST(:a AS uuid[])) "
+             "AND observation_id_b = ANY(CAST(:b AS uuid[]))"),
+        {"a": sorted(trocr), "b": sorted(qwen)},
+    ).all()  # fmt: skip
+    pairs = {(str(a), str(b)) for a, b, state in rows if state == "AGREE"}
+    if {a for a, _ in pairs} != trocr or {b for _, b in pairs} != qwen:
+        return 0
+    return len(pairs)
 
 
 def candidate_of(fact: dict[str, Any]) -> str:
@@ -73,7 +94,20 @@ def evidence_for(conn: Connection, fact: dict[str, Any], provenance: list[dict[s
         signals.append(Signal("extraction-span", 1, cand, "supports",
                               fact.get("confidence_extract"),
                               "the extractor's quoted span (no OCR line linked)"))  # fmt: skip
-    if len({o["engine"] for o in obs}) > 1:
+    for why in sorted({o["review_reason"] for o in obs if o.get("review_reason")}):
+        # RD-S2: a handwritten line one of its two readers never read - nothing checked that
+        # reading. RD-S3: or one the checks sent to a person (the readers disagree, the
+        # picture does not show the number, the word is not a known one).
+        missed = why.startswith(("one reading", "no reading"))
+        source = "single-reading" if missed else "line-check"
+        signals.append(Signal(source, 1, cand, "contradicts", reason=why))
+    agreed = _agreed_pairs(conn, obs)
+    if agreed:
+        # RD-S3: the two readers of each handwritten line were compared, agreed, and every check
+        # on the line passed (otherwise its rows carry a review reason, handled above)
+        said = f"{agreed} line(s): TrOCR and Qwen agree and the checks passed"
+        signals.append(Signal("readers-agree", 1, cand, "supports", None, said))
+    if len({o["engine"] for o in obs}) > 1 and not agreed:
         # Different engines attached to a fact do not prove that their field readings agree.
         # E4-S11 deliberately does not join the concordance table into candidate resolution.
         signals.append(

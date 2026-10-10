@@ -16,6 +16,10 @@ BODY = """
   <p id=found class=muted></p>
   <p><label>ABHA number (optional)<br><input id=abha placeholder="91-XXXX-XXXX-XXXX" inputmode=numeric autocomplete=off></label>
      <span id=abhamsg role=alert style="display:none;color:var(--bad);font-size:13px"><br>The ABHA number must be 14 digits, like 91-1234-5678-9012. Correct it, or leave the box empty.</span></p>
+  <p><label>Mobile number (optional)<br><input id=mobile placeholder="98765 43210" inputmode=tel autocomplete=off maxlength=16></label>
+     <span id=mobilemsg role=alert style="display:none;color:var(--bad);font-size:13px"><br>The mobile number must be 10 digits, like 98765 43210. Correct it, or leave the box empty.</span></p>
+  <p><label>Token number (optional)<br><input id=token placeholder="A-12" autocomplete=off maxlength=20></label>
+     <span id=tokenmsg role=alert style="display:none;color:var(--bad);font-size:13px"><br>The token number can be up to 20 letters, digits and hyphens, like A-12. Correct it, or leave the box empty.</span></p>
   <div id=drop class=card style="border-style:dashed;text-align:center;padding:28px;cursor:pointer">
     Drop up to 10 scans here, or click to choose<input id=files type=file multiple accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff" hidden>
   </div>
@@ -48,10 +52,16 @@ BODY = """
 <section class=card>
   <h2 style="margin-top:0">Progress</h2>
   <p id=activity class=muted style="margin:0 0 8px" title="An upload is one press of Generate EMR, with 1 to 10 pages"></p>
+  <p id=visit class=muted style="margin:0 0 8px"></p>
   <div id=banner></div>
   <table id=grid><thead><tr><th>Document</th><th>Stage</th><th>Ingest</th><th>OCR</th><th>Classify</th><th>Extract</th><th>Terminology</th><th>Validate</th></tr></thead><tbody></tbody></table>
   <input id=retakefile type=file accept="image/*,.pdf,.png,.jpg,.jpeg,.tif,.tiff" capture=environment hidden>
   <div id=after></div>
+  <form id=findform style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
+    <label>Find a result by file name<br>
+      <input id=findq placeholder="part of the file's name" autocomplete=off style="width:60%"> <button id=findgo type=submit>Find</button></label>
+    <div id=findout class=muted style="margin-top:8px"></div>
+  </form>
 </section>
 </div>
 """
@@ -203,11 +213,38 @@ $('#lookup').onclick = async () => {
 // or too few or too many digits, stop the send with a plain message beside the box.
 const abhaOk = v => !v.trim() || /^\d(?:[ -]?\d){13}$/.test(v.trim());
 $('#abha').oninput = () => { if (abhaOk($('#abha').value)) $('#abhamsg').style.display = 'none'; };
+// The mobile number (ten digits, starting 6-9; spaces, hyphens and a leading +91, 91 or 0 are
+// fine) and the clinic's token number for the visit (2026-10-09). Both optional, both checked
+// here in plain words and again by the server, and both kept with the upload.
+const mobileOk = v => { const d = v.trim().replace(/[ -]/g, '').replace(/^(\+91|0)(?=\d{10}$)/, '').replace(/^91(?=\d{10}$)/, ''); return !v.trim() || /^[6-9]\d{9}$/.test(d); };
+const tokenOk = v => !v.trim() || /^[A-Za-z0-9][A-Za-z0-9\/ -]{0,19}$/.test(v.trim());
+$('#mobile').oninput = () => { if (mobileOk($('#mobile').value)) $('#mobilemsg').style.display = 'none'; };
+$('#token').oninput = () => { if (tokenOk($('#token').value)) $('#tokenmsg').style.display = 'none'; };
+// LS-S8: find a result by the name of its file - whether it was uploaded here or dropped in
+// the watched folder. A dropped file that never became a result is listed too, with why.
+const whence = r => r.channel === 'listener' ? `watched folder${r.drive ? ' (' + esc(r.drive) + ')' : ''}${r.folder ? ' · ' + esc(r.folder) : ''}` : 'uploaded on this screen';
+$('#findform').onsubmit = async ev => {
+  ev.preventDefault();
+  const q = $('#findq').value.trim(), out = $('#findout');
+  if (q.length < 2){ out.textContent = 'Type at least two characters of the file name.'; return; }
+  out.textContent = 'Looking…';
+  const r = await fetch('/api/results/search?file=' + encodeURIComponent(q));
+  if (r.status === 403){ out.textContent = 'Your account cannot open results. Ask a reviewer.'; return; }
+  if (!r.ok){ out.textContent = (await r.json()).detail || 'The search did not work.'; return; }
+  const found = (await r.json()).results;
+  out.innerHTML = found.length ? '<table>' + found.map(f => `<tr><td>${f.result_url ? `<a data-found href="${esc(f.result_url)}">${esc(f.file_name)}</a>` : esc(f.file_name)}
+      ${f.dropped_as && f.dropped_as.length && f.dropped_as.join() !== f.file_name ? `<br><small class=muted>also dropped as ${esc(f.dropped_as.join(', '))}</small>` : ''}</td>
+    <td class=muted>${whence(f)}</td><td class=muted>${esc(f.status)}</td></tr>`).join('') + '</table>' : 'No file with that in its name.';
+};
 $('#go').onclick = async () => {
   camStop(); camShow(false);  // sending the scans ends any use of the camera
   if (!abhaOk($('#abha').value)){ $('#abhamsg').style.display = 'inline'; $('#abha').focus(); return; }
+  if (!mobileOk($('#mobile').value)){ $('#mobilemsg').style.display = 'inline'; $('#mobile').focus(); return; }
+  if (!tokenOk($('#token').value)){ $('#tokenmsg').style.display = 'inline'; $('#token').focus(); return; }
   const fd = new FormData(); chosen.forEach(f => fd.append('files', f));
   if ($('#abha').value.trim()) fd.append('abha', $('#abha').value.trim());
+  if ($('#mobile').value.trim()) fd.append('mobile', $('#mobile').value.trim());
+  if ($('#token').value.trim()) fd.append('token_no', $('#token').value.trim());
   if (patientRef) fd.append('patient_ref', patientRef);
   $('#go').disabled = true;
   const r = await fetch('/api/jobs', {method:'POST', body:fd});
@@ -222,6 +259,7 @@ function stageOf(d){
   if (d.status === 'skipped') return 'skipped';
   if (d.steps_done.includes('validate')) return 'done';
   if (d.steps_done.includes('extract')) return 'saving';
+  if (d.step === 'waiting') return 'waiting';  // RD-S5: read, waiting its turn on the model
   if (d.steps_done.includes('ingest')) return 'reading';
   if (d.step === 'quality') return 'checking the picture';
   if (d.step === 'ingest') return 'received';
@@ -241,6 +279,8 @@ showActivity(); setInterval(showActivity, 5000);
 async function poll(id){
   jobId = id;
   const j = await (await fetch('/api/jobs/' + id)).json();
+  // what was typed at the desk for this visit, so the desk can see which upload this is
+  $('#visit').textContent = [j.token_no ? 'Token ' + j.token_no : '', j.mobile ? 'Mobile ' + j.mobile : ''].filter(Boolean).join(' · ');
   $('#grid tbody').innerHTML = j.documents.map((d, i) => {
     const held = d.status === 'quality_hold';
     const note = held

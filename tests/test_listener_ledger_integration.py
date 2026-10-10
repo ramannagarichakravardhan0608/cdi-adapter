@@ -93,3 +93,19 @@ def test_a_file_put_back_where_one_was_already_dealt_with_starts_fresh(db_env):
     ledger.finish(entry, "failed", kind="quality", reason="too dark")  # stays at inbox/rx.png
     back = ledger.observe(source, _file())
     assert back.state == "seen" and back.stable_polls == 1 and back.reason is None
+
+
+def test_history_keeps_the_batch_id_and_the_timing_in_order(db_env):
+    """LS-S5: every file of a batch carries the batch's id, and its seconds from the drop."""
+    ledger, source = L.DbLedger(), _source()
+    entry = ledger.observe(source, _file())
+    assert entry.history == () and entry.first_seen_at is not None
+    ledger.claim(entry, "w", 600)
+    ledger.note(entry, {"event": "batch", "batch_id": "abc123def456", "position": 1, "size": 3})
+    ledger.finish(entry, "succeeded", sha256=uuid.uuid4().hex * 2, job_id="job-1")
+    ledger.note(entry, {"event": "succeeded", "batch_id": "abc123def456",
+                        "seconds_from_drop": 91.5})  # fmt: skip
+    row = ledger.find(source, "inbox/rx.png")
+    assert row is not None and [e["event"] for e in row.history] == ["batch", "succeeded"]
+    assert {e["batch_id"] for e in row.history} == {"abc123def456"}
+    assert row.history[1]["seconds_from_drop"] == 91.5

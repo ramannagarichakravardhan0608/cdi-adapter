@@ -113,6 +113,10 @@ class Stages:
     # the medication agent (E12-S4), queued once a document is filed for review; it runs beside
     # the review, never in the job's way (advisory only, ADR-0003)
     agent: Callable[[str], Any] = lambda document_id: None
+    # OUT-S2: the result of a finished document, written as a JSON file (the same for an upload
+    # and a dropped file). After the document is done; a file that could not be written never
+    # fails the document.
+    result_file: Callable[[str], Any] = lambda document_id: None
 
     @classmethod
     def real(cls) -> Stages:
@@ -160,9 +164,15 @@ class Stages:
 
             medication_agent.delay(document_id)
 
+        def result_file(document_id: str) -> Any:
+            from cdi_adapter import result
+
+            return result.refresh_files([document_id])
+
         return cls(ingest_bytes, ocr_document, classify_document, extract_document,
                    bind_document, validate_document, counts, merge, enqueue,
-                   extract_batch=extract_documents, shape=shape, agent=agent)  # fmt: skip
+                   extract_batch=extract_documents, shape=shape, agent=agent,
+                   result_file=result_file)  # fmt: skip
 
 
 def handwritten_lines(read: Any, settings: Any) -> bool:
@@ -204,6 +214,11 @@ class Job:
     patient_id: str | None = None
     registry_patient: dict[str, Any] | None = None
     abha: str | None = None
+    # typed at the desk beside the ABHA number (2026-10-09): the patient's mobile number (ten
+    # digits) and the clinic's token number for the visit. Kept with the upload; not used to
+    # match a patient.
+    mobile: str | None = None
+    token_no: str | None = None
     mismatch: dict[str, Any] | None = None
     # where the files came from: "upload" (the screen) or "listener" (the watched folder,
     # LS-S4). Stored with the document; every step after that is the same for both.
@@ -237,6 +252,7 @@ class Job:
     def as_json(self) -> dict[str, Any]:
         return {"job_id": self.id, "state": self.state, "patient_id": self.patient_id,
                 "mismatch": self.mismatch, "trace_id": self.trace_id,
+                "mobile": self.mobile, "token_no": self.token_no,
                 "documents": [d.__dict__ for d in self.docs]}  # fmt: skip
 
 
@@ -711,6 +727,11 @@ class JobRunner:
             log.error("job_doc_failed", job=job.id, filename=d.filename, error=d.error)
         self._save(job)
         if d.status == "done":
+            try:  # OUT-S2: the result as a file; never fails the document
+                s.result_file(str(d.document_id))
+            except Exception as exc:  # noqa: BLE001
+                log.warning("result_file_not_written", document_id=str(d.document_id),
+                            error=str(exc))  # fmt: skip
             try:  # advisory: a queueing failure never fails the document
                 s.agent(str(d.document_id))
             except Exception as exc:  # noqa: BLE001
@@ -776,10 +797,13 @@ class JobRunner:
                 f.result()
             ready = [d for d in job.docs if d.status == "running"]
             self._queue(job, len(ready))  # E10-S1 queue depth: waiting for extraction
+            # RD-S5: said on the screen - read, and now waiting its turn on the model (the step
+            # becomes "extract" the moment a model slot takes it)
+            for d in ready:
+                d.step = WAITING
+            if ready:
+                self._save(job)
             if ready and self._hands_off():  # E9-S2: Phase 2 is the GPU pool's half of the job
-                for d in ready:  # no stage of theirs is running: they wait for the GPU pool
-                    d.step = None
-                self._save(job)  # Phase 1 is durable before the lease goes
                 handed = True
                 return
             # no patient yet: documents go one by one until one of them fixes it, so every
@@ -840,6 +864,8 @@ class JobRunner:
             job.extract_queued -= n
         metrics.EXTRACT_WAITING.dec(n)
 
+
+WAITING = "waiting"  # RD-S5: a document read and waiting for a model slot
 
 _runner: JobRunner | None = None
 

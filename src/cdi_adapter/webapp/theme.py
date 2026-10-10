@@ -59,15 +59,20 @@ button.bad{background:var(--bad);border-color:var(--bad);color:#fff}
 .pill.ok{background:var(--ok-weak);color:var(--ok)}
 table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)}
 input,select,textarea{font:inherit;padding:6px 8px;border:1px solid var(--border);border-radius:8px}
+#alerts div{padding:8px 20px;border-bottom:1px solid var(--border);background:var(--warn-weak);color:var(--warn)}
+#alerts div.page{background:var(--bad-weak);color:var(--bad);font-weight:600}
 """
     + RESPONSIVE
 )
 
 
 def header(active: str = "") -> str:
-    links = [("/", "Generate EMR"), ("/review", "Review"), ("/conflicts", "Merge conflicts"),
+    # No "Review" (owner, 2026-10-10): the Reviewer is the one screen where values are corrected
+    # and approved. The older /review console works on the same values and still answers at its
+    # address; it is only out of the menu.
+    links = [("/", "Generate EMR"), ("/conflicts", "Merge conflicts"),
              ("/reviewer", "Reviewer"), ("/evaluation", "Evaluation"),
-             ("/admin", "Admin")]  # fmt: skip
+             ("/listener", "Listener"), ("/admin", "Admin")]  # fmt: skip
     nav = "".join(
         f'<a href="{h}"{" aria-current=page" if h == active else ""}>{escape(t)}</a>'
         for h, t in links
@@ -84,11 +89,28 @@ def header(active: str = "") -> str:
     )
 
 
+# The alerts firing now, on every page (LS-S9 AC4, webapp/alerts.py): no email, chat or pager has
+# been named for on-call, so the signed-in staff are the people an alert can reach. Asked when the
+# page opens and once a minute; a failure to ask shows nothing and never breaks the page. Text is
+# set with textContent, never as HTML.
+ALERTS_SCRIPT = """
+(function(){const box=document.getElementById('alerts');if(!box)return;
+async function look(){try{const r=await fetch('/api/alerts/active');if(!r.ok)return;
+const found=(await r.json()).alerts||[];box.replaceChildren(...found.map(a=>{
+const line=document.createElement('div');line.className=a.severity;line.setAttribute('role','alert');
+const since=a.since?new Date(a.since):null;
+line.textContent=(a.severity==='page'?'ALERT: ':'Notice: ')+a.summary+
+(since&&!isNaN(since)?' (since '+since.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+')':'');
+line.title=a.name;return line}))}catch(e){}}
+look();setInterval(look,60000)})();
+"""
+
+
 def page(title: str, body: str, *, active: str = "", script: str = "") -> str:
     return (
         "<!doctype html><html lang=en><head><meta charset=utf-8>"
         '<meta name=viewport content="width=device-width,initial-scale=1">'
         f"<title>{escape(title)}</title><style>{CSS}</style></head><body>"
-        f"{header(active)}<main>{body}</main>"
-        f"<script>{script}</script></body></html>"
+        f'{header(active)}<div id="alerts" aria-live="polite"></div><main>{body}</main>'
+        f"<script>{ALERTS_SCRIPT}</script><script>{script}</script></body></html>"
     )

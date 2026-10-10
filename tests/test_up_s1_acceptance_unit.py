@@ -77,7 +77,8 @@ def _send(files: list[UploadFile], *, abha: str | None = None,
     for f in files:
         f.file.seek(0)
     return asyncio.run(app_module.create_job(_Request(headers), files=files, abha=abha,
-                                             patient_ref=None))  # fmt: skip
+                                             patient_ref=None, mobile=None,
+                                             token_no=None))  # fmt: skip
 
 
 # ------------------------------------------------------------------ AC1

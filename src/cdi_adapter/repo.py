@@ -227,7 +227,7 @@ def supersede_ocr_observations(conn: Connection, document_id: UUID | str,
 
 # recognizer metadata an observation may carry (E4-S7); none of it is a code or a concept
 OBSERVATION_EXTRA = ("crop_hash", "region_kind", "field_domain", "engine_version", "prompt_hash",
-                     "token_confidences")  # fmt: skip
+                     "token_confidences", "review_reason")  # fmt: skip
 
 
 def insert_ocr_blocks(conn: Connection, rows: list[dict[str, Any]]) -> None:
@@ -240,10 +240,11 @@ def insert_ocr_blocks(conn: Connection, rows: list[dict[str, Any]]) -> None:
         text(
             "INSERT INTO ocr_observation (document_id, page_id, block_type, raw_text, bbox, "
             "  polygon, ocr_conf, reading_order, engine, pipeline_run_id, crop_hash, region_kind, "
-            "  field_domain, engine_version, prompt_hash, token_confidences) "
+            "  field_domain, engine_version, prompt_hash, token_confidences, review_reason) "
             "VALUES (:document_id, :page_id, :block_type, :text, :bbox, CAST(:polygon AS jsonb), "
             "  :ocr_conf, :reading_order, :engine, :pipeline_run_id, :crop_hash, :region_kind, "
-            "  :field_domain, :engine_version, :prompt_hash, CAST(:token_confidences AS jsonb))"
+            "  :field_domain, :engine_version, :prompt_hash, CAST(:token_confidences AS jsonb), "
+            "  :review_reason)"
         ),
         [
             {

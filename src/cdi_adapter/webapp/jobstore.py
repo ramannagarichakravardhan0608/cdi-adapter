@@ -95,6 +95,7 @@ def _job(row: Any) -> Job:
     job = Job(id=row["id"], docs=[DocState(**d) for d in row["docs"]], state=row["state"],
               patient_id=str(row["patient_id"]) if row["patient_id"] else None,
               registry_patient=row["registry_patient"], abha=row["abha"],
+              mobile=row.get("mobile"), token_no=row.get("token_no"),
               mismatch=row["mismatch"], trace_id=row["trace_id"], span_id=row["span_id"],
               attempts=row["attempts"], channel=channel_of(row.get("created_by")))  # fmt: skip
     job.started_at = row["created_at"].timestamp()  # the upload: the SLA window starts here
@@ -122,16 +123,16 @@ class PgJobStore:
         with session_scope() as c:
             row = c.execute(text(
                 "INSERT INTO web_job (id, state, patient_id, registry_patient, abha, files, docs, "
-                "trace_id, span_id, created_by, accepted_by, idempotency_key, priority) "
-                "VALUES (:i, 'running', :p, "
+                "trace_id, span_id, created_by, accepted_by, idempotency_key, priority, "
+                "mobile, token_no) VALUES (:i, 'running', :p, "
                 "CAST(:r AS jsonb), :a, CAST(:f AS jsonb), CAST(:d AS jsonb), :t, :s, :u, :b, "
-                ":k, :pr) ON CONFLICT DO NOTHING RETURNING id"),
+                ":k, :pr, :m, :tk) ON CONFLICT DO NOTHING RETURNING id"),
                 {"i": job.id, "p": job.patient_id,
                  "r": json.dumps(job.registry_patient, default=str)
                  if job.registry_patient is not None else None,
                  "a": job.abha, "f": json.dumps(files), "d": _docs(job), "t": job.trace_id,
                  "s": job.span_id, "u": actor, "b": accepted_by, "k": key,
-                 "pr": priority}).first()  # fmt: skip
+                 "pr": priority, "m": job.mobile, "tk": job.token_no}).first()  # fmt: skip
             if row is None:  # the unique index on idempotency_key held: this upload is a repeat
                 raise Duplicate(key or job.id)
             detail = {"documents": len(files), "accepted_by": accepted_by,
@@ -204,9 +205,13 @@ class PgJobStore:
                 log.warning("job_staged_delete_failed", job=job.id, key=f["key"], error=str(exc))
 
     def release(self, job_id: str, owner: str) -> None:
-        """Give the lease up now (the run could not start), so a sweep retries the job."""
+        """Give the lease up now (the run could not start, or the job is handed to the GPU
+        pool), so another runner can claim it. The owner is cleared with it: a lease that still
+        named this runner was renewed by its next heartbeat, and the job - on the GPU queue,
+        claimable by nobody - sat there for good (found under load, LS-S10)."""
         with session_scope() as c:
-            c.execute(text("UPDATE web_job SET lease_until = now() - interval '1 second' "
+            c.execute(text("UPDATE web_job SET lease_until = now() - interval '1 second', "
+                           "lease_owner = NULL "
                            "WHERE id = :i AND lease_owner = :o AND finished_at IS NULL"),
                       {"i": job_id, "o": owner})  # fmt: skip
 
@@ -306,7 +311,8 @@ def channel_of(actor: str | None) -> str:
 
 def idempotency_key(files: list[tuple[str, bytes, str | None]], *, actor: str,
                     patient_id: str | None = None, abha: str | None = None,
-                    given: str | None = None) -> str:  # fmt: skip
+                    given: str | None = None, mobile: str | None = None,
+                    token_no: str | None = None) -> str:  # fmt: skip
     """The key that decides whether this upload has already been accepted (backlog E9-S3).
 
     ``given`` is the client's ``Idempotency-Key`` header, namespaced by the actor so two accounts
@@ -320,6 +326,8 @@ def idempotency_key(files: list[tuple[str, bytes, str | None]], *, actor: str,
         return "hdr:" + hashlib.sha256(f"{actor}\x00{given}".encode()).hexdigest()
     h = hashlib.sha256()
     h.update(f"{actor}\x00{patient_id or ''}\x00{abha or ''}\x00{len(files)}\x00".encode())
+    if mobile or token_no:  # only when given, so an upload without them keeps the key it had
+        h.update(f"{mobile or ''}\x00{token_no or ''}\x00".encode())
     for name, raw, _ in files:
         h.update(hashlib.sha256(raw).digest())
         h.update(f"\x00{name}\x00".encode())
@@ -329,7 +337,8 @@ def idempotency_key(files: list[tuple[str, bytes, str | None]], *, actor: str,
 def submit(files: list[tuple[str, bytes, str | None]], *, actor: str,
            registry_patient: dict[str, Any] | None = None, patient_id: str | None = None,
            abha: str | None = None, key: str | None = None, given_key: str | None = None,
-           priority: int = NORMAL_PRIORITY, st: PgJobStore | None = None) -> Job:  # fmt: skip
+           priority: int = NORMAL_PRIORITY, st: PgJobStore | None = None,
+           mobile: str | None = None, token_no: str | None = None) -> Job:  # fmt: skip
     """Make the upload durable, then dispatch it. Raises :class:`NotAccepted` (nothing kept)
     when the files or the row could not be written: the caller must not acknowledge.
 
@@ -341,7 +350,7 @@ def submit(files: list[tuple[str, bytes, str | None]], *, actor: str,
     """
     st = st or store()
     key = key or idempotency_key(files, actor=actor, patient_id=patient_id, abha=abha,
-                                 given=given_key)  # fmt: skip
+                                 given=given_key, mobile=mobile, token_no=token_no)  # fmt: skip
     first = st.by_key(key)
     if first is not None:
         log.info("job_duplicate_upload", job=first.id, actor=actor, idempotency_key=key)
@@ -349,7 +358,7 @@ def submit(files: list[tuple[str, bytes, str | None]], *, actor: str,
         return first
     job = Job(id=uuid.uuid4().hex, docs=[DocState(filename=f[0]) for f in files],
               patient_id=patient_id, registry_patient=registry_patient, abha=abha,
-              channel=channel_of(actor))  # fmt: skip
+              channel=channel_of(actor), mobile=mobile, token_no=token_no)  # fmt: skip
     staged: list[str] = []
     try:
         with tracing.span("job.accept", {"cdi.job_id": job.id,

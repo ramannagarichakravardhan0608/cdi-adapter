@@ -77,6 +77,7 @@ POLICY: dict[tuple[str, str], frozenset[str]] = {
     ("GET", "/api/documents/{document_id}/bundle"): _CLINICAL,
     ("GET", "/api/documents/{document_id}/evidence"): _CLINICAL,
     ("GET", "/api/documents/{document_id}/pages/{page_no}"): _CLINICAL,
+    ("GET", "/api/documents/{document_id}/pages/{page_no}/upright"): _CLINICAL,  # the same page
     ("GET", "/api/documents/{document_id}/original"): _CLINICAL,
     # UP-S3: the result on screen and its JSON are a document's extracted content, so they follow
     # the rule for everything under /api/documents: clinicians only (the counter is not shown it)
@@ -86,6 +87,14 @@ POLICY: dict[tuple[str, str], frozenset[str]] = {
     # UP-S3 AC5: "this result is wrong", and the backlog those reports are worked from
     ("POST", "/api/documents/{document_id}/result/report"): _CLINICAL,
     ("GET", "/api/evaluation/backlog"): _CLINICAL,
+    ("GET", "/api/results/search"): _CLINICAL,  # LS-S8: it leads to results
+    # LS-S9: the listener's health. It lists file names (the ignored files), and file names can
+    # carry a patient's name, so it is for the staff who may see results.
+    ("GET", "/api/listener/health"): _CLINICAL,
+    # LS-S9 AC4: the alerts firing now, for the banner on every page. Fixed sentences from the
+    # alert rules, no patient content - and whoever is at a screen is who an alert can reach.
+    ("GET", "/api/alerts/active"): _ANY_STAFF,
+    ("GET", "/listener"): _CLINICAL,
     ("GET", "/evaluation"): _CLINICAL,
     # UP-S1 AC2: the one result of a whole upload is the same content, so the same rule
     ("GET", "/result/job/{job_id}"): _CLINICAL,

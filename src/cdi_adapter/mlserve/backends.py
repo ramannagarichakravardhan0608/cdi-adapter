@@ -8,7 +8,9 @@
   transcription request and it echoes the document lines.
 * ``hf`` — transformers ``AutoModelForImageTextToText`` running Qwen2.5-VL-7B in bf16 with sdpa
   attention and a ``max_pixels`` cap (VRAM bound). Lazy-loads on the first request (~35 s on the
-  pod) and falls back 7B -> 3B on CUDA out-of-memory. One forward pass at a time (a lock).
+  pod). On CUDA out-of-memory it loads nothing else (RD-S4: the research-licensed 3B fallback
+  was removed) and the request fails, counted for the ``CdiGpuOom`` alert. One forward pass at
+  a time (a lock).
   ``hf`` cannot lock decoding to a grammar (that is ``vllm``, E2-S3), so a request's
   ``json_schema`` is shown to the model instead: :func:`with_schema` appends the schema's exact
   key layout to the prompt. Without it the model invents its own key names and wrappers, and the
@@ -530,24 +532,57 @@ def _release_cuda() -> None:
         pass
 
 
-def _load_with_fallback(load: Callable[[str], Any], settings: Settings,
-                        release: Callable[[], None]) -> tuple[Any, str]:  # fmt: skip
-    """``load`` the primary model, or the fallback on CUDA out-of-memory -> (loaded, model id).
+class ModelDoesNotFit(RuntimeError):
+    """The configured model ran out of GPU memory while loading. There is no smaller model to
+    fall back to (RD-S4: the research-licensed 3B was removed)."""
 
-    The fallback loads only after the ``except`` block has ended: until then the caught error's
-    traceback holds the loader's frames, and with them the half-built primary's weights, so
-    nothing can be freed (Colab T4, 2026-09-26: the 7B took 14.4 of 14.6 GiB, and the 3B then
-    ran out of memory on what the failed 7B still held)."""
-    primary, fallback = settings.vlm_model_id, settings.vlm_fallback_model_id
+
+def _load_primary(load: Callable[[str], Any], settings: Settings,
+                  release: Callable[[], None]) -> tuple[Any, str]:  # fmt: skip
+    """``load`` the configured model -> (loaded, model id).
+
+    On CUDA out-of-memory there is **no fallback** (RD-S4, decided): the 3B that used to load
+    instead is under the Qwen research licence, which is non-commercial. The out-of-memory is
+    counted (``cdi_vlm_oom_total{where="load"}`` - the ``CdiGpuOom`` alert pages), the half-built
+    model is released, and :class:`ModelDoesNotFit` is raised: the gateway answers with an
+    error, the document stays where it is - a dropped file goes back to the inbox and is tried
+    again by the listener's retries (LS-S7) - and nothing is read by another model.
+
+    The release waits until the ``except`` block has ended: until then the caught error's
+    traceback holds the loader's frames, and with them the half-built weights (Colab T4,
+    2026-09-26)."""
+    primary = settings.vlm_model_id
     try:
         return load(primary), primary
     except Exception as exc:
         if not _is_oom(exc):
             raise
     metrics.VLM_OOM.labels("load").inc()
-    log.warning("vlm_oom_fallback", primary=primary, fallback=fallback)
+    log.error("vlm_oom_no_fallback", model=primary,
+              action="the model does not fit this GPU; nothing else is loaded")  # fmt: skip
     release()
-    return load(fallback), fallback
+    raise ModelDoesNotFit(f"{primary} ran out of GPU memory while loading; there is no fallback")
+
+
+class Generated(str):
+    """A model's text, and whether it was cut off: ``cut`` when generation stopped at
+    ``max_tokens`` instead of at the end of the answer (RD-S4). The gateway reports it."""
+
+    cut: bool
+
+    def __new__(cls, text: str, *, cut: bool = False) -> Generated:
+        value = super().__new__(cls, text)
+        value.cut = cut
+        return value
+
+
+def was_cut(tokens: Any, max_tokens: int, eos_ids: Any) -> bool:
+    """True when ``tokens`` (the generated ids) fill the whole budget and none of them ends the
+    answer: the model was stopped, it did not stop."""
+    ids = [int(t) for t in tokens]
+    ends = {int(e) for e in (eos_ids if isinstance(eos_ids, (list, tuple, set)) else [eos_ids])
+            if e is not None}  # fmt: skip
+    return len(ids) >= max_tokens and not any(t in ends for t in ids[:max_tokens])
 
 
 def _default_runner(model, processor, prompt: str, image_png: bytes | None,
@@ -567,7 +602,9 @@ def _default_runner(model, processor, prompt: str, image_png: bytes | None,
     with torch.inference_mode():
         out = model.generate(**inputs, max_new_tokens=max_tokens, do_sample=False)
     trimmed = out[:, inputs.input_ids.shape[1] :]
-    return processor.batch_decode(trimmed, skip_special_tokens=True)[0]
+    text = processor.batch_decode(trimmed, skip_special_tokens=True)[0]
+    eos = model.generation_config.eos_token_id
+    return Generated(text, cut=was_cut(trimmed[0].tolist(), max_tokens, eos))
 
 
 def _default_batch_runner(model, processor, items: list[GenItem]) -> list[str]:  # pragma: no cover
@@ -627,7 +664,7 @@ class HFBackend(Backend):
         if self._model is not None:
             return
         t0 = time.perf_counter()
-        (self._model, self._processor), self.model = _load_with_fallback(
+        (self._model, self._processor), self.model = _load_primary(
             lambda mid: self._loader(mid, self.settings), self.settings, self._free
         )
         log.info("vlm_loaded", model=self.model, seconds=round(time.perf_counter() - t0, 1))
@@ -795,7 +832,7 @@ class VLLMBackend(Backend):
             t0 = time.perf_counter()
 
             async def initialize() -> tuple[Any, str, Callable[[str, bool], str]]:
-                engine, model = _load_with_fallback(
+                engine, model = _load_primary(
                     lambda mid: self._engine_factory(mid, self.settings),
                     self.settings,
                     _release_cuda,

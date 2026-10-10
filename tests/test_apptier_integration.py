@@ -143,6 +143,20 @@ def test_a_released_lease_is_retried_at_once(db_env) -> None:
     _drop(job.id)
 
 
+def test_a_released_lease_is_not_renewed_by_its_old_owners_heartbeat(db_env) -> None:
+    """LS-S10, found under load: the CPU pool released a job to the GPU queue, its own next
+    heartbeat renewed the lease it had just given up, and the GPU pool could never claim it."""
+    st = PgJobStore(objects=_Objects())  # type: ignore[arg-type]
+    job = _job("a.pdf")
+    st.insert(job, _meta(job), actor="counter1", accepted_by="web1")
+    assert st.claim(job.id, "cpu1", 30) is not None
+    st.release(job.id, "cpu1")
+    assert st.heartbeat("cpu1", 30) == 0  # nothing of cpu1's is left to renew
+    assert job.id in st.orphans(3600, 1000)
+    assert st.claim(job.id, "gpu1", 30, attempt=False) is not None
+    _drop(job.id)
+
+
 def test_any_instance_reads_a_job_from_the_database(db_env) -> None:
     from cdi_adapter.webapp.app import app
     from tests.helpers import signed_in

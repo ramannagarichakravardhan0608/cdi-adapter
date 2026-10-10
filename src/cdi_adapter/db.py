@@ -17,8 +17,22 @@ def get_engine() -> Engine:
     """Process-wide pooled engine for ``CDI_DATABASE_URL``."""
     global _engine
     if _engine is None:
-        _engine = create_engine(engine_url(get_settings()), pool_pre_ping=True, future=True)
+        url = engine_url(get_settings())
+        _engine = create_engine(
+            url, pool_pre_ping=True, future=True, connect_args=connect_args(url)
+        )
     return _engine
+
+
+CONNECT_TIMEOUT_S = 10
+
+
+def connect_args(url: URL) -> dict[str, int]:
+    """Never wait for ever on a connection (LS-S9): with no ``connect_timeout`` a connection
+    attempt to a database that has gone can sit until the process is killed - seen on a listener
+    whose link to the database dropped, which then never looked at its folder again. A timeout
+    given in the URL (or by ``engine_url`` for several hosts) is left as it is."""
+    return {} if "connect_timeout" in url.query else {"connect_timeout": CONNECT_TIMEOUT_S}
 
 
 def engine_url(s: Settings) -> URL:

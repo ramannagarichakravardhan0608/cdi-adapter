@@ -33,6 +33,7 @@ from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
+from cdi_adapter import result
 from cdi_adapter.agent.medication import latest_for_document
 from cdi_adapter.canon import promote
 from cdi_adapter.canon import repo as canon
@@ -100,11 +101,15 @@ def claim(item_id: UUID, request: Request) -> dict[str, Any]:
 def approve(item_id: UUID, request: Request) -> dict[str, Any]:
     user = auth.actor(request)
     with session_scope() as c:
-        return _call(
+        item = canon.get_item(c, item_id)
+        approved = _call(
             lambda: promote.promote_review_item(
                 c, item_id, user.username, override=user.role == "admin"
             )
         )
+    # OUT-S2: the result file follows the database - written again once the approval is saved
+    result.refresh_files([item.get("source_document_id")] if item else [])
+    return approved
 
 
 @router.post("/api/reviewer/items/{item_id}/reject")

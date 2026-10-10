@@ -432,12 +432,13 @@ def test_ac5_the_allowed_types_are_the_ones_in_the_setting(name: str) -> None:
     assert S.why_ignored("rx.pdf", S.patterns_of("*.png, *.JPG")) == "file type not allowed"
 
 
-@pytest.mark.xfail(strict=True, reason="LS-S3 technical item 3: the ignored list is to be shown "
-                   "on the health view, which is LS-S9 and is not built. Until then it is the "
-                   "`ignored` command, the run output and the listener_file rows.")  # fmt: skip
 def test_ac5_the_ignored_list_is_on_the_health_view() -> None:
+    """Was an expected failure until LS-S9 built the health view (2026-10-09): each watched
+    folder's card lists the files it ignores, with the reason."""
     web = (ROOT / "src" / "cdi_adapter" / "webapp" / "app.py").read_text(encoding="utf-8")
-    assert "listener_file" in web
+    assert "/api/listener/health" in web and "listener_file" in web
+    page = (ROOT / "src" / "cdi_adapter" / "webapp" / "listener_page.py").read_text("utf-8")
+    assert "f.ignored.map(" in page and "are ignored" in page
 
 
 # ------------------------------------------------------------------ oldest first, one worker
@@ -586,8 +587,11 @@ def test_the_listener_file_table_has_a_lease_a_hash_and_the_drive() -> None:
     for column in ("source_id", "file_id", "stable_polls", "sha256", "lease_owner", "lease_until",
                    "reason", "duplicate_of"):  # fmt: skip
         assert column in migration, column
+    later = (ROOT / "db" / "alembic" / "versions" / "0031_listener_file_quarantined.py").read_text(
+        "utf-8"
+    )  # LS-S6 added 'quarantined'
     for state in L.STATES:
-        assert f"'{state}'" in migration, state
+        assert f"'{state}'" in migration + later, state
     assert "UNIQUE (source_id, file_id)" in migration
 
 

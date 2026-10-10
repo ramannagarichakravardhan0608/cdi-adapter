@@ -139,7 +139,7 @@ def test_no_value_on_the_page_can_be_edited() -> None:
     assert "<input" not in BODY
     assert BODY.count("<textarea") == 1 and "<textarea id=reportnote" in BODY
     assert BODY.count("<select") == 1 and "<select id=reportdoc" in BODY
-    assert "/review" in BODY  # and it says where corrections are made
+    assert 'href="/reviewer"' in BODY  # and it says where corrections are made
     assert "method: 'PUT'" not in SCRIPT and "method: 'PATCH'" not in SCRIPT
 
 

@@ -286,6 +286,11 @@ class LocalConnector:
     def source_id(self) -> str:
         return f"local:{self.root.resolve().as_posix()}"
 
+    @property
+    def folder_label(self) -> str:
+        """The watched folder as a person would say it (LS-S8: recorded with every result)."""
+        return self.root.resolve().as_posix()
+
     def _dir(self, folder: str) -> Path:
         name = self._names[_check_folder(folder)]
         return self.root / name if name else self.root
@@ -388,6 +393,11 @@ class GraphConnector:
     def source_id(self) -> str:
         self._resolve()
         return f"{self.name}:{self._drive_id}:{self._ids['root']}"
+
+    @property
+    def folder_label(self) -> str:
+        """The watched folder as a person would say it: its path on the drive."""
+        return "/" + self._root_path
 
     def _resolve(self, *, create: bool = False) -> list[str]:
         """Find the root folder and the six folders in it; with ``create`` make the missing."""
@@ -549,6 +559,11 @@ class GoogleDriveConnector:
     @property
     def source_id(self) -> str:
         return f"gdrive:{self._root}"
+
+    @property
+    def folder_label(self) -> str:
+        """Google Drive knows a folder by its id; that is what can be said of it here."""
+        return f"folder {self._root}"
 
     def _children(self, folder_id: str) -> Iterator[dict[str, Any]]:
         params = {"q": f"'{folder_id}' in parents and trashed = false", "pageSize": "200",

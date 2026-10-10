@@ -292,15 +292,19 @@ def test_ac3_a_document_that_does_not_exist_downloads_nothing(stored) -> None:
     assert refused.value.status_code == 404
 
 
-def test_ac3_the_json_is_built_when_asked_for_not_kept_as_a_file() -> None:
-    """ISSUE, recorded as a fact: the AC says "the stored JSON". No JSON file is stored - the
-    document is built from the database each time it is asked for, in a fixed order, so the
-    download equals what the screen shows and what any later download gives while the
-    underlying values are unchanged. If a reviewer corrects a value, the next download differs."""
+def test_ac3_the_json_is_now_kept_as_a_file_and_the_download_equals_it() -> None:
+    """The AC says "the stored JSON". Until 2026-10-09 no JSON file was stored - this test then
+    recorded that as an issue. Since OUT-S2's writer was built, the result is written as a file
+    when a document is done and again after every reviewer change, by the same serialisation
+    the download uses, so the two are the same bytes (tests/test_result_file_unit.py)."""
     import inspect
 
     source = inspect.getsource(result)
-    assert "put_bytes" not in source and "INSERT INTO" not in source
+    assert "def write_file" in source and "put_bytes" in source
+    assert "INSERT INTO" not in source  # still built from the tables, never written to them
+    dumps = "json.dumps(document, indent=2, sort_keys=True, default=str)"
+    assert dumps in inspect.getsource(result.write_file)
+    assert "indent=2, sort_keys=True, default=str" in inspect.getsource(result.as_json)
 
 
 # ------------------------------------------------------------------ AC4

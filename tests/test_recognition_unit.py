@@ -333,7 +333,8 @@ def test_every_limit_is_a_setting() -> None:
     s = Settings()
     lim = quality.limits(s)
     assert set(lim) == {"min_side_px", "min_sharpness", "min_ink", "max_ink", "min_text_px",
-                        "max_glare", "paper_white", "min_writing_sharpness"}  # fmt: skip
+                        "max_glare", "paper_white", "min_writing_sharpness",
+                        "min_stroke_sharpness", "floor_side_px"}  # fmt: skip
     moved = quality.limits(Settings(quality_min_text_px=14.0, quality_max_glare_fraction=0.2))
     assert (moved["min_text_px"], moved["max_glare"]) == (14.0, 0.2)
 

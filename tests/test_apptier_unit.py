@@ -101,6 +101,7 @@ class MemStore:
         with self.lock:
             if self.rows[job_id]["owner"] == owner:
                 self.rows[job_id]["lease_until"] = time.monotonic() - 1
+                self.rows[job_id]["owner"] = None  # as the real store: see its release()
 
     def heartbeat(self, owner: str, lease_s: float) -> int:
         with self.lock:

@@ -1,0 +1,99 @@
+{
+ "dropped": 6,
+ "counts": {
+  "inbox": 0,
+  "processing": 0,
+  "success": 0,
+  "error": 0,
+  "quarantine": 6,
+  "rescan": 0,
+  "missing": 0,
+  "duplicated": 0
+ },
+ "final": 6,
+ "adds_up": true,
+ "none_missing": true,
+ "none_duplicated": true,
+ "read_more_than_once": [],
+ "documents_shared": [],
+ "changed": [],
+ "files_nobody_dropped": [],
+ "seconds_from_drop": {
+  "files": 0
+ },
+ "problems": {},
+ "files": [
+  {
+   "name": "soak-model-0000.png",
+   "places": [
+    "quarantine"
+   ],
+   "state": "quarantined",
+   "jobs": 1,
+   "document_id": null,
+   "seconds": 441.431,
+   "unchanged": true,
+   "problems": []
+  },
+  {
+   "name": "soak-model-0001.png",
+   "places": [
+    "quarantine"
+   ],
+   "state": "quarantined",
+   "jobs": 1,
+   "document_id": null,
+   "seconds": 441.432,
+   "unchanged": true,
+   "problems": []
+  },
+  {
+   "name": "soak-model-0002.png",
+   "places": [
+    "quarantine"
+   ],
+   "state": "quarantined",
+   "jobs": 1,
+   "document_id": null,
+   "seconds": 446.449,
+   "unchanged": true,
+   "problems": []
+  },
+  {
+   "name": "soak-model-0003.png",
+   "places": [
+    "quarantine"
+   ],
+   "state": "quarantined",
+   "jobs": 1,
+   "document_id": null,
+   "seconds": 451.482,
+   "unchanged": true,
+   "problems": []
+  },
+  {
+   "name": "soak-model-0004.png",
+   "places": [
+    "quarantine"
+   ],
+   "state": "quarantined",
+   "jobs": 1,
+   "document_id": null,
+   "seconds": 451.486,
+   "unchanged": true,
+   "problems": []
+  },
+  {
+   "name": "soak-model-0005.png",
+   "places": [
+    "quarantine"
+   ],
+   "state": "quarantined",
+   "jobs": 1,
+   "document_id": null,
+   "seconds": 451.489,
+   "unchanged": true,
+   "problems": []
+  }
+ ]
+}

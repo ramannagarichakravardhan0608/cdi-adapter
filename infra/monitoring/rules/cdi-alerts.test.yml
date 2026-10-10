@@ -465,3 +465,135 @@ tests:
       - eval_time: 7m
         alertname: CdiJobsOrphaned
         exp_alerts: []
+
+  - name: listener - a file in quarantine fires
+    interval: 1m
+    input_series:
+      - series: cdi_listener_quarantined_recent{job="cdi-webapp",instance="127.0.0.1:9464"}
+        values: "0 0 1 1 1"
+      - series: cdi_listener_quarantined_recent{job="cdi-webapp",instance="127.0.0.1:9465"}
+        values: "0 0 1 1 1"               # every instance reads the same listener_file rows
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: CdiListenerFileQuarantined
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: CdiListenerFileQuarantined
+        exp_alerts:
+          - exp_labels: {severity: ticket}
+            exp_annotations:
+              summary: A file from the watched folder is in quarantine.
+              description: A file failed on its run and on every retry and was moved to the quarantine folder in the last 24 hours; it will not be read until a person looks at it.
+              runbook_url: docs/alerts.md#cdilistenerfilequarantined
+
+  - name: model server - down for a minute pages
+    interval: 1m
+    input_series:
+      - series: up{job="cdi-mlserve",instance="127.0.0.1:8077"}
+        values: "1 1 0 0 0 0"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: CdiModelServerDown
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: CdiModelServerDown
+        exp_alerts:
+          - exp_labels: {severity: page, job: cdi-mlserve, instance: "127.0.0.1:8077"}
+            exp_annotations:
+              summary: The model server is not answering.
+              description: The model gateway has not answered for a minute. Documents go to the next model server listed, if there is one, and are read more slowly; if there is none, nothing is being read.
+              runbook_url: docs/alerts.md#cdimodelserverdown
+
+  - name: model server - calls moved to the fallback raise a ticket
+    interval: 1m
+    input_series:
+      - series: cdi_mlserve_failovers_total{job="cdi-worker",instance="127.0.0.1:9472"}
+        values: "0 0 0 3 5 5"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: CdiModelServerFailover
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: CdiModelServerFailover
+        exp_alerts:
+          - exp_labels: {severity: ticket}
+            exp_annotations:
+              summary: Documents are being read by the fallback model server.
+              description: A model server refused calls in the last 10 minutes and they went to the next one listed; documents still finish, more slowly.
+              runbook_url: docs/alerts.md#cdimodelserverfailover
+
+  - name: readers - disagreement well above the week's fires after 15 minutes
+    interval: 1m
+    input_series:
+      - series: cdi_reader_disagreement_ratio{job="cdi-webapp",window="1h"}
+        values: "0.6x30"
+      - series: cdi_reader_disagreement_ratio{job="cdi-webapp",window="7d"}
+        values: "0.1x30"
+      - series: cdi_reader_comparisons{job="cdi-webapp",window="1h"}
+        values: "40x30"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: CdiReaderDisagreementDrift
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: CdiReaderDisagreementDrift
+        exp_alerts:
+          - exp_labels: {severity: ticket}
+            exp_annotations:
+              summary: The two handwriting readers disagree much more often than usual.
+              description: This hour's share of handwritten lines on which TrOCR and Qwen disagree is more than twice the last week's; more values go to review, and something about the pictures or the readers may have changed.
+              runbook_url: docs/alerts.md#cdireaderdisagreementdrift
+
+  - name: readers - the usual disagreement, or too few lines, stays quiet
+    interval: 1m
+    input_series:
+      - series: cdi_reader_disagreement_ratio{job="cdi-webapp",window="1h"}
+        values: "0.25x30"
+      - series: cdi_reader_disagreement_ratio{job="cdi-webapp",window="7d"}
+        values: "0.2x30"
+      - series: cdi_reader_comparisons{job="cdi-webapp",window="1h"}
+        values: "40x30"
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: CdiReaderDisagreementDrift
+        exp_alerts: []
+
+  - name: listener - files failing and being retried stay quiet
+    interval: 1m
+    input_series:
+      - series: cdi_listener_quarantined_recent{job="cdi-webapp"}
+        values: "0 0 0 0 0 0"              # failures that are still being retried are not quarantine
+      - series: cdi_listener_files{job="cdi-webapp",state="failed"}
+        values: "0 2 3 1 0 0"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: CdiListenerFileQuarantined
+        exp_alerts: []
+
+  - name: listener - no good poll for 5 minutes fires
+    interval: 1m
+    input_series:
+      - series: cdi_listener_last_ok_poll_timestamp_seconds{job="cdi-webapp",drive="local"}
+        values: "60 60 60 60 60 60 60 60"    # the last good look was at t = 1 minute
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: CdiListenerNotPolling
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: CdiListenerNotPolling
+        exp_alerts:
+          - exp_labels: {severity: page}
+            exp_annotations:
+              summary: The file listener has not polled its folder for 5 minutes.
+              description: No look at the watched folder has succeeded for 5 minutes; prescriptions dropped there are not being read.
+              runbook_url: docs/alerts.md#cdilistenernotpolling
+
+  - name: listener - polling every minute stays quiet
+    interval: 1m
+    input_series:
+      - series: cdi_listener_last_ok_poll_timestamp_seconds{job="cdi-webapp",drive="local"}
+        values: "0+60x10"                    # a good look every minute
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: CdiListenerNotPolling
+        exp_alerts: []

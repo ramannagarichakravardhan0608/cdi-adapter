@@ -227,6 +227,82 @@ def check_evidence(provenance: list[dict[str, Any]]) -> list[Finding]:
     return [Finding("blocker", "evidence-missing", "no OCR block or extracted text supports it")]
 
 
+def _cited(provenance: list[dict[str, Any]]) -> str:
+    return " | ".join(str(p.get("extracted_text") or "") for p in provenance).strip(" |")
+
+
+def _number(value: Any) -> str | None:
+    if value is None:
+        return None
+    f = float(value)
+    return str(int(f)) if f.is_integer() else f"{f:g}"
+
+
+QUOTE_WORD_ALIKE = 0.8  # ASSUMPTION: a written word may differ from the OCR by a slip, no more
+
+
+def check_quote(fact: dict[str, Any], provenance: list[dict[str, Any]]) -> list[Finding]:
+    """RD-S4, quote first: a value must be in the line(s) it cites. Every number of it exactly
+    (a stand-in letter in a number's place is read as the digit: "4O" is 40); every word of
+    three letters or more, allowing a slip of the OCR. A value its cited line does not contain
+    is retracted - a blocker, so the field goes to a person. No cited text at all is
+    ``check_evidence``'s finding, not this one."""
+    from difflib import SequenceMatcher
+
+    from cdi_adapter.recognition.disagreement import name_of, numbers
+
+    cited = _cited(provenance)
+    if not cited:
+        return []
+    value = str(fact.get("drug_text") or fact.get("local_text") or fact.get("value_text") or "")
+    wanted = list(numbers(value))
+    for extra in (_number(fact.get("strength_num")),):
+        if extra and extra not in wanted and extra not in " ".join(wanted):
+            wanted.append(extra)
+    have = set(numbers(cited))
+    lost = [n for n in wanted if n not in have]
+    words = name_of(cited).split()
+
+    def seen(word: str) -> bool:
+        return any(word in c or SequenceMatcher(None, word, c).ratio() >= QUOTE_WORD_ALIKE
+                   for c in words)  # fmt: skip
+
+    unseen = [w for w in name_of(value).split() if len(w) >= 3 and not seen(w)]
+    if not lost and not unseen:
+        return []
+    missing = " ".join([*lost, *unseen])
+    said = f"retracted: {missing!r} is not in the line it cites ({cited[:80]!r})"
+    return [Finding("blocker", "quote-not-found", said)]
+
+
+def check_untrusted(extraction: dict[str, Any] | None) -> list[Finding]:
+    """RD-S4: the page held text that reads like an instruction to a model. Nothing extracted
+    from it is trusted without a person: a blocker on every value of the document."""
+    flagged = (extraction or {}).get("_untrusted_text") or []
+    if not flagged:
+        return []
+    first = flagged[0]
+    said = (
+        f"the page has text that reads like an instruction ({first.get('kind')}: "
+        f"{str(first.get('text'))[:60]!r}); it was not followed - check this page"
+    )
+    return [Finding("blocker", "untrusted-text", said)]
+
+
+def check_incomplete(extraction: dict[str, Any] | None) -> list[Finding]:
+    """RD-S4: the model's answer was cut off by its length limit. What was saved of it is not a
+    finished answer: every value waits for a person."""
+    if not (extraction or {}).get("_incomplete"):
+        return []
+    return [
+        Finding(
+            "blocker",
+            "incomplete",
+            "the answer was cut off by the length limit; it may be missing values",
+        )
+    ]
+
+
 def check_terminology(fact: dict[str, Any]) -> list[Finding]:
     if fact["fact_type"] in _CODED_TYPES and fact.get("code_status") != "bound":
         return [Finding("warn", "unmapped-terminology", "no standard code bound")]

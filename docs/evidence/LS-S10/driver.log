@@ -1,0 +1,63 @@
+16:32:27 === LS-S10 run starts: batch1 kill ===
+16:32:36 [batch1] listener up: listener  pid 38691  up listener-recover  pid 38698  up 
+16:36:20 [batch1] **PASS** - 12 files dropped; success + error + quarantine = 12.  inbox=0 processing=0 success=12 error=0 quarantine=0 rescan=0 log=0
+16:36:20 [batch1] Seconds from drop to saved, over 12 files that succeeded: median 139.5, 95th percentile 201.9, fastest 27.4, slowest 214.0.
+16:36:29 [kill] listener up: listener  pid 39685  up listener-recover  pid 39692  up 
+16:36:43 [kill] listener killed (kill -9) with these in processing: soak-kill-0000.png soak-kill-0001.png soak-kill-0002.png  | inbox=3 processing=3 success=0 error=0 quarantine=0 rescan=0 log=0
+16:37:03 [kill] 20 s later, nothing running: inbox=3 processing=3 success=0 error=0 quarantine=0 rescan=0 log=0
+16:37:04 [kill] listener started again
+16:37:52 [kill] **PASS** - 6 files dropped; success + error + quarantine = 6.  inbox=0 processing=0 success=6 error=0 quarantine=0 rescan=0 log=0
+16:37:52 [kill] Seconds from drop to saved, over 6 files that succeeded: median 53.7, 95th percentile 72.9, fastest 31.5, slowest 72.9.
+16:37:54 === LS-S10 run ends ===
+16:38:21 === LS-S10 run starts: batch3 batch6 replace model soak ===
+16:38:29 [batch3] listener up: listener  pid 40174  up listener-recover  pid 40181  up 
+16:41:04 [batch3] **PASS** - 12 files dropped; success + error + quarantine = 12.  inbox=0 processing=0 success=12 error=0 quarantine=0 rescan=0 log=0
+16:41:04 [batch3] Seconds from drop to saved, over 12 files that succeeded: median 92.9, 95th percentile 144.8, fastest 39.0, slowest 144.9.
+16:41:12 [batch6] listener up: listener  pid 40830  up listener-recover  pid 40836  up 
+16:43:47 [batch6] **PASS** - 12 files dropped; success + error + quarantine = 12.  inbox=0 processing=0 success=12 error=0 quarantine=0 rescan=0 log=0
+16:43:47 [batch6] Seconds from drop to saved, over 12 files that succeeded: median 109.1, 95th percentile 146.2, fastest 72.0, slowest 146.2.
+16:43:55 [replace] listener up: listener  pid 41496  up listener-recover  pid 41502  up 
+16:45:06 [replace] in success: soak-replace-0000.png=fa319803392a soak-replace-0001.1.png=9b6e2644c48b soak-replace-0001.png=df2b752181cc 
+16:45:06 [replace] second version expected: soak-replace-0001.png 9b6e2644c48bdec1a6  | second version of soak-replace-0001.png 9b6e2644c48bdec1a6cca1b6d2b6fdfccb800264ccc59b807063bcae88adae2a dropped while the first was in processing: True
+16:45:08 [replace] **FAIL** - 2 files dropped; success + error + quarantine = 2.  inbox=0 processing=0 success=3 error=0 quarantine=0 rescan=0 log=0
+16:45:08 [replace] Seconds from drop to saved, over 2 files that succeeded: median 35.5, 95th percentile 35.5, fastest 35.5, slowest 35.5.
+16:45:17 [model] listener up: listener  pid 41821  up listener-recover  pid 41828  up 
+16:45:28 [model] model server stopped: inbox=3 processing=3 success=0 error=0 quarantine=0 rescan=0 log=0
+16:50:28 [model] after 5 minutes without it: inbox=0 processing=0 success=0 error=6 quarantine=0 rescan=0 log=18
+16:50:29 [model] model server started again
+16:52:59 [model] notes in log: 24
+16:53:02 [model] **PASS** - 6 files dropped; success + error + quarantine = 6.  inbox=0 processing=0 success=0 error=0 quarantine=6 rescan=0 log=24
+16:53:02 [model] no timings
+16:53:10 [soak] listener up: listener  pid 42506  up listener-recover  pid 42512  up 
+16:53:10 [soak] dropping 200 files over 7200 s
+18:52:35 [soak] all dropped: inbox=3 processing=0 success=197 error=0 quarantine=0 rescan=0 log=0
+18:53:22 [soak] **PASS** - 200 files dropped; success + error + quarantine = 200.  inbox=0 processing=0 success=200 error=0 quarantine=0 rescan=0 log=0
+18:53:22 [soak] Seconds from drop to saved, over 200 files that succeeded: median 73.8, 95th percentile 111.0, fastest 33.2, slowest 118.0.
+18:53:25 === LS-S10 run ends ===
+23:37:58 === LS-S10 run starts: model ===
+23:38:07 [model] listener up: listener  pid 58265  up listener-recover  pid 58273  up 
+23:40:08 [model] model server stopped: inbox=0 processing=0 success=0 error=0 quarantine=6 rescan=0 log=6
+23:45:08 [model] after 5 minutes without it: inbox=0 processing=0 success=0 error=0 quarantine=6 rescan=0 log=6
+23:45:09 [model] model server started again
+23:45:09 [model] notes in log: 6
+23:45:12 [model] **PASS** - 6 files dropped; success + error + quarantine = 6.  inbox=0 processing=0 success=0 error=0 quarantine=6 rescan=0 log=6
+23:45:12 [model] no timings
+23:45:14 === LS-S10 run ends ===
+23:45:46 === LS-S10 run starts: model ===
+23:45:54 [model2] listener up: listener  pid 59348  up listener-recover  pid 59355  up 
+23:46:05 [model] model server stopped: inbox=3 processing=3 success=0 error=0 quarantine=0 rescan=0 log=0
+23:51:05 [model] after 5 minutes without it: inbox=6 processing=0 success=0 error=0 quarantine=0 rescan=0 log=6
+23:51:06 [model] model server started again
+23:53:16 [model] notes in log: 18
+23:53:19 [model2] **PASS** - 6 files dropped; success + error + quarantine = 6.  inbox=0 processing=0 success=0 error=6 quarantine=0 rescan=0 log=18
+23:53:19 [model2] no timings
+23:53:21 === LS-S10 run ends ===
+23:58:34 === LS-S10 run starts: model ===
+23:58:43 [model3] listener up: listener  pid 60678  up listener-recover  pid 60684  up 
+23:58:54 [model] model server stopped: inbox=3 processing=3 success=0 error=0 quarantine=0 rescan=0 log=0
+00:03:54 [model] after 5 minutes without it: inbox=6 processing=0 success=0 error=0 quarantine=0 rescan=0 log=6
+00:03:55 [model] model server started again
+00:05:20 [model] notes in log: 6
+00:05:23 [model3] **FAIL** - 6 files dropped; success + error + quarantine = 6.  inbox=0 processing=0 success=6 error=0 quarantine=0 rescan=0 log=6
+00:05:23 [model3] Seconds from drop to saved, over 6 files that succeeded: median 371.6, 95th percentile 390.5, fastest 352.6, slowest 390.5.
+00:05:25 === LS-S10 run ends ===

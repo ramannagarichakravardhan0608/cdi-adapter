@@ -1,0 +1,70 @@
+{
+ "dropped": 3,
+ "counts": {
+  "inbox": 0,
+  "processing": 0,
+  "success": 3,
+  "error": 0,
+  "quarantine": 0,
+  "rescan": 0,
+  "missing": 0,
+  "duplicated": 0
+ },
+ "final": 3,
+ "adds_up": true,
+ "none_missing": true,
+ "none_duplicated": true,
+ "read_more_than_once": [],
+ "documents_shared": [],
+ "changed": [],
+ "files_nobody_dropped": [],
+ "seconds_from_drop": {
+  "files": 3,
+  "median": 525.2,
+  "p95": 526.3,
+  "min": 514.7,
+  "max": 526.3
+ },
+ "problems": {},
+ "files": [
+  {
+   "name": "soak-b3-0000.png",
+   "places": [
+    "success"
+   ],
+   "state": "succeeded",
+   "jobs": 1,
+   "runs": 1,
+   "document_id": "3ee65422-3812-400a-b786-fb01085419e8",
+   "seconds": 514.689,
+   "unchanged": true,
+   "problems": []
+  },
+  {
+   "name": "soak-b3-0001.png",
+   "places": [
+    "success"
+   ],
+   "state": "succeeded",
+   "jobs": 1,
+   "runs": 1,
+   "document_id": "9a1d96e1-8edd-4aec-9601-f9d9adfd8a36",
+   "seconds": 525.24,
+   "unchanged": true,
+   "problems": []
+  },
+  {
+   "name": "soak-b3-0002.png",
+   "places": [
+    "success"
+   ],
+   "state": "succeeded",
+   "jobs": 1,
+   "runs": 1,
+   "document_id": "b3adccb4-f627-4001-803d-37f45851df0d",
+   "seconds": 526.329,
+   "unchanged": true,
+   "problems": []
+  }
+ ]
+}

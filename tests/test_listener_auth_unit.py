@@ -358,7 +358,9 @@ def test_ac3_a_failure_note_holds_no_token_secret_or_password(tmp_path) -> None:
     listener.poll()
     report = listener.poll()
     note = next((root / "log").iterdir()).read_text(encoding="utf-8")
-    assert "RuntimeError" in note and "[removed]" in note  # the reason is still there
+    # the kind of error is there; since LS-S6 the message itself is not written into a note
+    assert "RuntimeError" in note and "the message is not written here" in note
+    assert "[removed]" in json.dumps(report)  # where the message is kept, it is scrubbed
     for secret in [*SECRETS, "abc123def456"]:
         assert secret not in note, secret
         assert secret not in json.dumps(report), secret

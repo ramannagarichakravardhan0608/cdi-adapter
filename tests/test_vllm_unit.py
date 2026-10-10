@@ -115,17 +115,18 @@ def test_hf_stays_one_forward_pass_at_a_time() -> None:
     assert peak[0] == 1  # why Phase 2 is serialised with hf (§7.2)
 
 
-def test_out_of_memory_falls_back_to_the_3b_model() -> None:
+def test_out_of_memory_loads_no_other_model() -> None:
+    """RD-S4 (decided): no 3B fallback - it is under the Qwen research licence."""
+    from cdi_adapter.mlserve.backends import ModelDoesNotFit
+
     class OutOfMemoryError(RuntimeError):
         pass
 
-    engine, tried = FakeEngine(), []
+    tried: list[str] = []
 
     def factory(model_id: str, s: Settings) -> FakeEngine:
         tried.append(model_id)
-        if "7B" in model_id:
-            raise OutOfMemoryError("CUDA out of memory")
-        return engine
+        raise OutOfMemoryError("CUDA out of memory")
 
     be = VLLMBackend(
         _settings(),
@@ -133,9 +134,9 @@ def test_out_of_memory_falls_back_to_the_3b_model() -> None:
         prompt_builder=lambda mid: lambda p, img: p,
         sampling=lambda n, g=None: None,
     )
-    be.generate("x")
-    assert tried == ["Qwen/Qwen2.5-VL-7B-Instruct", "Qwen/Qwen2.5-VL-3B-Instruct"]
-    assert be.model == "Qwen/Qwen2.5-VL-3B-Instruct"
+    with pytest.raises(ModelDoesNotFit):
+        be.generate("x")
+    assert tried == ["Qwen/Qwen2.5-VL-7B-Instruct"]
 
 
 def test_other_start_up_errors_are_not_hidden() -> None:

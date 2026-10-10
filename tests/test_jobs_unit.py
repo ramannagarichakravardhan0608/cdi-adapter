@@ -141,7 +141,9 @@ def test_as_json_shape():
     runner = JobRunner(rec.stages())
     j = runner.wait(runner.create(_files("a")).id).as_json()
     # trace_id: E10-S3, the job's trace (None until a tracer provider is set up in the process)
-    assert set(j) == {"job_id", "state", "patient_id", "mismatch", "documents", "trace_id"}
+    # mobile, token_no: typed at the desk beside the ABHA number (2026-10-09)
+    assert set(j) == {"job_id", "state", "patient_id", "mismatch", "documents", "trace_id",
+                      "mobile", "token_no"}  # fmt: skip
     assert j["documents"][0]["filename"] == "a"
 
 

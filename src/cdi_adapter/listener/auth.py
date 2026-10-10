@@ -487,6 +487,36 @@ def raise_alert(settings: Settings, alert: str, reason: str) -> Path | None:
     return path
 
 
+def quarantine_alert(settings: Settings) -> Callable[[str, int], None]:
+    """What the listener calls when a file reaches quarantine (LS-S7 AC4): a ``critical`` line
+    in its log, and one line added to ``<alert file>.quarantine.jsonl`` on the persistent
+    disk - a list that is only ever added to, so a later clean start does not hide it. Telling
+    a person from either (an Alertmanager rule and route) waits for ENT-S4."""
+
+    def alert(name: str, runs: int) -> None:
+        log.critical(
+            "listener_alert",
+            alert="ListenerFileQuarantined",
+            file=name,
+            runs=runs,
+            action="look at the file in the quarantine folder and its notes in log",
+        )
+        if not settings.listener_alert_file:
+            return
+        path = Path(settings.listener_alert_file).with_suffix(".quarantine.jsonl")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as out:
+                out.write(json.dumps({"alert": "ListenerFileQuarantined", "file": name,
+                                      "runs": runs, "drive": settings.listener_connector,
+                                      "at": datetime.now(tz=UTC).isoformat(timespec="seconds")})
+                          + "\n")  # fmt: skip
+        except OSError as exc:
+            log.error("listener_alert_file_not_written", error=type(exc).__name__)
+
+    return alert
+
+
 def clear_alert(settings: Settings) -> None:
     if settings.listener_alert_file:
         Path(settings.listener_alert_file).unlink(missing_ok=True)

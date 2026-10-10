@@ -100,9 +100,8 @@ def run_variant(
     rows = doc["requests"]
     if not rows:
         raise ValueError("the corpus has no requests")
-    # no silent 7B->3B fallback: a variant that does not fit must fail, not measure another model
-    s = settings.model_copy(update={"mlserve_backend": "vllm", "vlm_model_id": model,
-                                    "vlm_fallback_model_id": model})  # fmt: skip
+    # a variant that does not fit must fail, not measure another model (there is no fallback)
+    s = settings.model_copy(update={"mlserve_backend": "vllm", "vlm_model_id": model})
     before = gpu()
     be = backend_factory(s)
     t0 = clock()

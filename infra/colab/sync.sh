@@ -59,8 +59,11 @@ fi
 (cd "$REPO" && .venv/bin/python -m alembic upgrade head 2>&1 | grep -v '^INFO  \[alembic.runtime.migration\] \(Context impl\|Will assume\)' || true)
 HEAD=$(cd "$REPO" && .venv/bin/python -m alembic current 2>/dev/null | tail -1)
 
-# web instances + job workers run the new code (start_apptier.sh starts what is down)
-for f in "$WS"/run/webapp-*.pid "$WS"/run/worker-*.pid; do
+# web instances + job workers run the new code (start_apptier.sh starts what is down). The
+# GPU-pool workers too (gpu-*.pid): they run the second half of every job - extraction,
+# terminology, validation, the review item, the result file - and were left on the old code
+# until 2026-10-09, when a result file that should have been written was not.
+for f in "$WS"/run/webapp-*.pid "$WS"/run/worker-*.pid "$WS"/run/gpu-*.pid; do
   [ -f "$f" ] && { kill "$(cat "$f")" 2>/dev/null || true; }
 done
 sleep 5

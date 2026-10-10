@@ -214,6 +214,8 @@ def _validate(conn: Connection, doc_id: str, s: Settings,
         findings = (range_findings + rules.check_unit_present(f) + rules.check_medication(f)
                     + rules.check_dates(f, enc_date)
                     + rules.check_evidence(provenance)
+                    + rules.check_quote(f, provenance)  # RD-S4: quote first
+                    + rules.check_untrusted(ext) + rules.check_incomplete(ext)
                     + rules.check_terminology(f)
                     + rules.check_field_grammars(f, med_readings.get(
                         fieldgrammar.normalise(f.get("drug_text")).lower())))  # fmt: skip

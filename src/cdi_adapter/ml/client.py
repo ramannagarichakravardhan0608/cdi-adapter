@@ -479,10 +479,12 @@ class GeneratedText(str):
     """A response's decoding guarantee travels with its text, including through batches."""
 
     grammar_locked: bool
+    truncated: bool  # RD-S4: the model stopped at its length limit, not because it had finished
 
-    def __new__(cls, text: str, *, grammar_locked: bool = False):
+    def __new__(cls, text: str, *, grammar_locked: bool = False, truncated: bool = False):
         value = super().__new__(cls, text)
         value.grammar_locked = grammar_locked
+        value.truncated = truncated
         return value
 
 
@@ -547,6 +549,20 @@ class MLClient:
                 text = first_text
             else:
                 text = self.generate(ask, image_png, max_tokens=max_tokens, json_schema=grammar)
+            if getattr(text, "truncated", False):
+                # RD-S4: cut off by the length limit. Asking again with the same limit gives the
+                # same cut, so it is not retried: what can be read of it is saved as INCOMPLETE,
+                # and nothing in it is trusted without a person (the gate holds it).
+                try:
+                    cut = repair_payload(extract_json(text), schema)
+                except ValueError:
+                    cut = copy.deepcopy(best) if best is not None else {}
+                cut["_partial"] = True
+                cut["_incomplete"] = True
+                cut["_errors"] = [f"the answer was cut off by the length limit ({max_tokens} "
+                                  "tokens)"]  # fmt: skip
+                log.warning("vlm_json_incomplete", schema=schema, max_tokens=max_tokens)
+                return cut
             if isinstance(text, GeneratedText) and text.grammar_locked:
                 # The gateway constrained every token. Never repair or retry an invalid
                 # constrained response: fail the document and expose the serving defect.
@@ -606,6 +622,11 @@ class HttpMLClient(MLClient):
     Each call starts at the next replica that is up; a replica that refuses the connection, drops
     it, or answers 502/503/504 is skipped for ``CDI_MLSERVE_DOWN_S`` and the call goes to the
     next one. When every replica fails, the last error is raised as with one gateway.
+
+    ``CDI_MLSERVE_FALLBACK_URL`` (RD-S5) is different: tried only after every replica has
+    refused, never in turn with them. Found under load: listed as a second replica, the serial
+    server behind the batching one was handed half of every burst, and could not load the model
+    while the batching server held the GPU.
     """
 
     backend = "http"
@@ -615,6 +636,9 @@ class HttpMLClient(MLClient):
         self._timeout, self._transport = timeout, transport
         self._clients: dict[str, httpx.Client] = {}
         self._set_urls(base_url or get_settings().mlserve_url)
+        # RD-S5: for every gateway, the routed one of a rollout too (E10-S5 passes its address
+        # in - found on the GPU host, where the fallback was then never used)
+        self.fallbacks = split_urls(get_settings().mlserve_fallback_url)
         self.model = get_settings().vlm_model_id
         self.replica: str | None = None  # the replica that answered last
 
@@ -633,14 +657,18 @@ class HttpMLClient(MLClient):
         return c
 
     def _order(self) -> list[str]:
-        if len(self.urls) == 1:
+        fallbacks = [u for u in getattr(self, "fallbacks", []) if u not in self.urls]
+        if len(self.urls) == 1 and not fallbacks:
             return self.urls
-        k = next(_turn) % len(self.urls)
+        k = next(_turn) % len(self.urls) if len(self.urls) > 1 else 0
         order = self.urls[k:] + self.urls[:k]
         now = time.monotonic()
         with _down_lock:
             up = [u for u in order if _down.get(u, 0.0) <= now]
-        return up + [u for u in order if u not in up]  # all down: try them anyway
+            spare = [u for u in fallbacks if _down.get(u, 0.0) <= now]
+        # the replicas that are up, then the fallback, then everything else (all down: try anyway)
+        return up + spare + [u for u in order if u not in up] + [u for u in fallbacks
+                                                                 if u not in spare]  # fmt: skip
 
     def _mark_down(self, url: str, why: str) -> None:
         from cdi_adapter import metrics
@@ -685,9 +713,9 @@ class HttpMLClient(MLClient):
         data = r.json()
         self.model = data.get("model", self.model)
         log.info("vlm_generate", model=self.model, seconds=round(time.perf_counter() - t0, 2))
-        return GeneratedText(
-            data["text"], grammar_locked=data.get("usage", {}).get("grammar_locked") is True
-        )
+        usage = data.get("usage", {})
+        return GeneratedText(data["text"], grammar_locked=usage.get("grammar_locked") is True,
+                             truncated=usage.get("truncated") is True)  # fmt: skip
 
     def generate_batch(self, items: list[GenItem]) -> list[str]:
         body = {"items": [{"prompt": i.prompt,

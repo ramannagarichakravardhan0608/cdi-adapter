@@ -4,6 +4,12 @@ Eleven alert rules in `infra/monitoring/rules/cdi-alerts.yml`, evaluated by the 
 every 15 s and routed by Alertmanager (`infra/monitoring/alertmanager.yml`). The Grafana dashboard
 "CDI-Adapter overview" shows them at the top. Metrics are described in `docs/metrics.md`.
 
+**Who is told.** The web app asks Alertmanager what is firing (`CDI_ALERTMANAGER_URL`, loopback;
+`src/cdi_adapter/webapp/alerts.py`) and every page shows it to the signed-in staff in a banner:
+red for `page`, amber for `ticket`. A silence in Alertmanager hides it there too; with Alertmanager
+down the banner is empty. The `oncall` receiver has no email, chat or pager behind it, so nobody
+who is not at a screen is told.
+
 | Alert | Severity | Fires when |
 |---|---|---|
 | [CdiSlaWindowBreach](#cdislawindowbreach) | page | a job is still running after 300 s, or one finished after 300 s in the last 10 min |
@@ -237,6 +243,83 @@ took them over for 2 minutes. The uploads are safe (the files in MinIO under `up
 4. A job that keeps killing its worker is stopped after `CDI_JOB_MAX_ATTEMPTS` (3) runs: its
    documents show `gave up after 3 attempts`. Send the file to the EMR team; do not re-upload
    it in a loop.
+
+## CdiListenerFileQuarantined
+
+A file dropped in the watched folder (backlog LS-S7, `docs/LISTENER.md`) failed on its first run
+and on all three retries, and the listener moved it to the `quarantine` folder in the last 24
+hours. Nothing will try it again. The file is safe - nothing is ever deleted - but it has not
+been read.
+
+1. Open the `quarantine` folder of the watched folder: the file is there under its own name.
+2. Open the `log` folder: there is one note per run, named `<file>.<time>.run1.log` to
+   `.run4.log`. Read `kind`, `class` and `reason`; `job` is the job number to look up in
+   `/admin` for the full error.
+3. `class: transient` on every run (timeouts, a server that was down): the pipeline was unwell
+   for more than seven minutes. Check the other alerts first (`CdiJobsOrphaned`, `CdiGpuOom`,
+   `CdiQueueBacklog`); once it is healthy, move the file back into the inbox - it is read as a
+   new file.
+4. `class: code`: an error nobody planned for. Send the file name and the job number to the EMR
+   team; do not move the file back in a loop.
+5. The alert clears by itself 24 hours after the file was quarantined, or as soon as the file
+   is moved back into the inbox.
+
+## CdiListenerNotPolling
+
+The file listener (backlog LS-S9, `docs/LISTENER.md`) has not looked at its watched folder
+successfully for 5 minutes. Prescriptions dropped there are sitting unread. Nothing is lost: the
+files stay in the folder, and a file that was being read is picked up again when its lease
+(15 minutes) runs out.
+
+1. Open `/listener` (or run `python -m cdi_adapter.listener health`): the card says when the
+   last good look was and, if the listener is alive but cannot work, why (`reason`).
+2. A reason is shown ("the database cannot be reached", "the document store ..."): the
+   listener is running and the pipeline is not. Fix that first (`CdiJobsOrphaned`,
+   `CdiPgReplicationLag`, `CdiMinioDegraded`); the listener carries on by itself.
+3. No reason, and "last look" is as old as "last good poll": the listener is not running.
+   `bash $REPO/infra/runpod/start_listener.sh` starts it (and the retry agent); the log is
+   `$WS/logs/listener.log`.
+4. The log ends with `LISTENER STOPPED` and `SIGN-IN EXPIRED`: the sign-in to the drive ran
+   out. `python -m cdi_adapter.listener login`, then start it again.
+5. The five minutes are the owner's to set: `300` in the rule (`cdi-alerts.yml`) and
+   `CDI_LISTENER_STALE_SECONDS` for the health view.
+
+## CdiReaderDisagreementDrift
+
+The two handwriting readers (TrOCR and Qwen, backlog RD-S2/RD-S3) have disagreed on a much larger
+share of handwritten lines this hour than over the last week. Nothing wrong has been accepted:
+every disagreement goes to a person. But the review queue grows, and something changed.
+
+1. Look at the lines behind it: `ocr_agreement` rows of the last hour (`reason` holds each
+   decision's record of checks). Are they from one clinic, one scanner, one doctor?
+2. A new kind of picture (a new phone, a new form, a different pen) explains most drifts.
+3. A model changed (a new checkpoint or a canary, `docs/model-rollout.md`): compare the two.
+4. The thresholds - twice the week and 10 points more, at least 20 lines - are an ASSUMPTION
+   in `cdi-alerts.yml`, for the owner to set from measurement.
+
+## CdiModelServerDown
+
+The model gateway (backlog RD-S5) has not answered Prometheus for a minute. Where a batching
+server (vLLM) runs on :8077 with a serial server listed after it (`CDI_MLSERVE_URL` holds both),
+documents still finish on the serial one - more slowly, and `CdiModelServerFailover` says so.
+Where no other server is listed, extraction has stopped and documents wait.
+
+1. `curl 127.0.0.1:8077/healthz` on the host; `$WS/logs/mlserve.log` for why it stopped
+   (out of GPU memory: `CdiGpuOom`; there is no smaller model to fall back to).
+2. Start it again: `bash $REPO/infra/runpod/start_mlserve.sh` (the model loads in under a minute).
+3. Documents that failed meanwhile: a dropped file is retried by the listener; an upload shows
+   as an error and is run again.
+
+## CdiModelServerFailover
+
+Calls to the model went to the next server listed in the last 10 minutes: the first refused them
+(RD-S5). Documents still finish; each takes longer, because the serial server reads one at a
+time.
+
+1. Find which server refused: `CdiModelServerDown` names it, or `curl` each address in
+   `CDI_MLSERVE_URL` on the host.
+2. Start it again (`bash $REPO/infra/runpod/start_mlserve.sh`); calls go back to it by themselves
+   once it answers (`CDI_MLSERVE_DOWN_S` after it last refused).
 
 ## Tests (synthetic triggers)
 

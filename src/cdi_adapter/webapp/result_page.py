@@ -9,7 +9,7 @@ Two rules the contract sets and this page keeps visible:
 * **no value without its status** - every value is rendered through one helper that prints the
   value and its tag together; there is no path that prints a bare value;
 * **corrections happen in the review console, not here** - no value on this page can be edited.
-  The held values are listed with their reason and a link to ``/review``.
+  The held values are listed with their reason and a link to ``/reviewer``.
 
 Three things a person can do here, none of which changes the result:
 
@@ -35,7 +35,7 @@ router = APIRouter()
 
 BODY = """
 <h1 style="margin:0 0 4px">What was read</h1>
-<p class=muted>Read-only. Nothing here is shared until every value is governed; corrections are made in the <a href="/review">review console</a>.</p>
+<p class=muted>Read-only. Nothing here is shared until every value is governed; corrections are made in the <a href="/reviewer">Reviewer</a>.</p>
 <style>
 button.ev{border:0;background:none;padding:0;min-height:0!important;font:inherit;color:var(--brand);
   text-decoration:underline dotted;text-underline-offset:3px;cursor:pointer;text-align:left}

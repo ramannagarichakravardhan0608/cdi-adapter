@@ -6,6 +6,7 @@
 | GET  /healthz                            | {db, s3, mlserve}                                    |
 | GET  /readyz                             | can THIS instance take uploads (the E10-S9 balancer) |
 | POST /api/jobs                           | files[] (<=10) + abha? + patient_ref? -> 202 |
+|                                          | (+ mobile? + token_no?, kept with the upload) |
 | GET  /api/jobs/{id}                      | job + patient + per-document status                  |
 | GET  /api/jobs/{id}/facts                | facts grouped by document, page url + bbox           |
 | POST /api/jobs/{id}/generate             | apply keep/drop/corrections, then re-project         |
@@ -28,6 +29,7 @@ any request; an upload is acknowledged only once it is durable.
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import NAMESPACE_URL, UUID, uuid5
@@ -101,6 +103,42 @@ def clean_abha(abha: str | None) -> str | None:
     digits = typed.replace("-", "").replace(" ", "")
     if not (digits.isascii() and digits.isdigit() and len(digits) == 14):
         raise HTTPException(422, BAD_ABHA)
+    return typed
+
+
+BAD_MOBILE = ("The mobile number must be 10 digits, like 98765 43210. Correct it, or leave "
+              "the box empty.")  # fmt: skip
+BAD_TOKEN = ("The token number can be up to 20 letters, digits and hyphens, like A-12. Correct "
+             "it, or leave the box empty.")  # fmt: skip
+_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9/ -]{0,19}")
+
+
+def clean_mobile(mobile: str | None) -> str | None:
+    """The mobile number as ten digits, or ``None`` for an empty box. Spaces and hyphens are
+    dropped, and so is a leading +91, 91 or 0; anything that is then not a ten-digit Indian
+    mobile number (starting 6 to 9) is refused in plain words."""
+    typed = (mobile or "").strip()
+    if not typed:
+        return None
+    digits = typed.replace("-", "").replace(" ", "")
+    for prefix in ("+91", "0"):
+        if digits.startswith(prefix) and len(digits) == 10 + len(prefix):
+            digits = digits[len(prefix) :]
+    if len(digits) == 12 and digits.startswith("91"):
+        digits = digits[2:]
+    if not (digits.isascii() and digits.isdigit() and len(digits) == 10 and digits[0] in "6789"):
+        raise HTTPException(422, BAD_MOBILE)
+    return digits
+
+
+def clean_token(token: str | None) -> str | None:
+    """The clinic's token number for the visit as typed, or ``None`` for an empty box: up to
+    20 letters, digits, hyphens, slashes and spaces, starting with a letter or a digit."""
+    typed = (token or "").strip()
+    if not typed:
+        return None
+    if not _TOKEN.fullmatch(typed):
+        raise HTTPException(422, BAD_TOKEN)
     return typed
 
 
@@ -189,7 +227,9 @@ def readyz() -> JSONResponse:
 @app.post("/api/jobs", status_code=202)
 async def create_job(request: Request, files: list[UploadFile] = File(...),
                      abha: str | None = Form(None),
-                     patient_ref: str | None = Form(None)) -> dict[str, Any]:  # fmt: skip
+                     patient_ref: str | None = Form(None),
+                     mobile: str | None = Form(None),
+                     token_no: str | None = Form(None)) -> dict[str, Any]:  # fmt: skip
     if not files or len(files) > MAX_FILES:
         raise HTTPException(422, f"upload 1 to {MAX_FILES} files")
     payload = [(f.filename or "upload", await f.read(), f.content_type) for f in files]
@@ -198,6 +238,7 @@ async def create_job(request: Request, files: list[UploadFile] = File(...),
     for name, raw, _ in payload:  # AC3: one file that is not a scan refuses the whole upload
         _must_be_a_scan(name, raw)
     abha = clean_abha(abha)  # AC6
+    mobile, token_no = clean_mobile(mobile), clean_token(token_no)
     reg, patient_id = None, None
     if patient_ref:
         with session_scope() as c:
@@ -210,11 +251,13 @@ async def create_job(request: Request, files: list[UploadFile] = File(...),
     # derived from the bytes, so an unchanged retry still lands on the job it already created.
     key = jobstore.idempotency_key(payload, actor=auth.actor(request).username,
                                    patient_id=patient_id, abha=(abha or None),
-                                   given=request.headers.get("Idempotency-Key"))  # fmt: skip
+                                   given=request.headers.get("Idempotency-Key"),
+                                   mobile=mobile, token_no=token_no)  # fmt: skip
     try:  # 202 only once the files and the job are durable (E10-S9)
         job = await run_in_threadpool(jobstore.submit, payload, actor=auth.actor(request).username,
                                       registry_patient=reg, patient_id=patient_id,
-                                      abha=(abha or None), key=key)  # fmt: skip
+                                      abha=(abha or None), key=key, mobile=mobile,
+                                      token_no=token_no)  # fmt: skip
     except jobstore.NotAccepted as exc:
         raise HTTPException(503, "the upload could not be stored and was NOT accepted; "
                                  "send it again") from exc  # fmt: skip
@@ -305,6 +348,46 @@ def report_wrong_result(document_id: UUID, body: WrongResult,
     return {"report_id": report_id, "document_id": str(document_id)}
 
 
+@app.get("/api/listener/health")
+def listener_health() -> dict[str, Any]:
+    """The file listener's health (LS-S9), read from the ``listener_heartbeat`` and
+    ``listener_file`` tables: for each watched folder, when it last looked and last looked
+    successfully, the files waiting and the age of the oldest, the files in error and in
+    quarantine, and the files it ignores with the reason (LS-S3)."""
+    from cdi_adapter.listener.ledger import DbLedger
+
+    stale = get_settings().listener_stale_seconds
+    return {"stale_after_seconds": stale, "folders": DbLedger().health(stale_seconds=stale)}
+
+
+@app.get("/api/alerts/active")
+def alerts_active() -> dict[str, Any]:
+    """The alerts firing now, as Alertmanager has them, for the banner every page shows
+    (LS-S9 AC4): the file listener not polling, a file in quarantine, and every other rule."""
+    from cdi_adapter.webapp import alerts
+
+    return alerts.active()
+
+
+@app.get("/listener", response_class=HTMLResponse)
+def listener_page_route() -> str:
+    from cdi_adapter.webapp.listener_page import listener_page
+
+    return listener_page()
+
+
+@app.get("/api/results/search")
+def find_results(file: str = "") -> dict[str, Any]:
+    """Find a result by the name of its file (LS-S8 AC4): the name it was uploaded or dropped
+    under, in whole or in part. At least two characters, so one letter does not list
+    everything."""
+    typed = file.strip()
+    if len(typed) < 2:
+        raise HTTPException(422, "Type at least two characters of the file name.")
+    with session_scope() as c:
+        return {"query": typed, "results": result.find_by_file_name(c, typed)}
+
+
 @app.get("/api/evaluation/backlog")
 def evaluation_backlog(limit: int = 100) -> dict[str, Any]:
     """The evaluation backlog: every result reported wrong, newest first, for whoever works
@@ -386,6 +469,8 @@ def get_job(job_id: str) -> dict[str, Any]:
     else:
         out["patient"] = None  # a mismatch never surfaces any identity
         out["patient_id"] = None
+        if job.state == "mismatch":
+            out["mobile"] = None
     return out
 
 
@@ -552,6 +637,44 @@ def document_page(document_id: UUID, page_no: int) -> Response:
     return Response(get_store().get_bytes(key), media_type="image/png")
 
 
+def upright_key(page_key: str) -> str:
+    """Where a page's upright copy is kept: beside the page itself."""
+    stem = page_key[:-4] if page_key.endswith(".png") else page_key
+    return f"{stem}.upright.png"
+
+
+@app.get("/api/documents/{document_id}/pages/{page_no}/upright")
+async def document_page_upright(document_id: UUID, page_no: int) -> Response:
+    """The page turned the way its text reads and levelled, for the Reviewer to look at
+    (``recognition/upright.py``). Made the first time it is asked for and kept beside the page.
+    A copy for the eye only: the page the pipeline read, and every box on it, are unchanged.
+    If it cannot be made, the page as stored is sent instead - a person always sees the page."""
+    with session_scope() as c:
+        _doc(c, document_id)
+        key = c.execute(text("SELECT storage_key FROM document_page WHERE document_id = :d "
+                             "AND page_no = :n"), {"d": str(document_id), "n": page_no}
+                        ).scalar_one_or_none()  # fmt: skip
+    if key is None:
+        raise HTTPException(404, "page not found")
+    store = get_store()
+    try:
+        return Response(store.get_bytes(upright_key(key)), media_type="image/png")
+    except Exception:  # noqa: BLE001 - not made yet: make it now
+        pass
+    page = store.get_bytes(key)
+    try:
+        from cdi_adapter.recognition import upright
+
+        made, record = await run_in_threadpool(upright.upright_png, page)
+        store.put_bytes(upright_key(key), made, "image/png")
+        log.info("page_upright", document_id=str(document_id), page=page_no, **record)
+        return Response(made, media_type="image/png")
+    except Exception as exc:  # noqa: BLE001 - see the docstring
+        log.warning("page_upright_failed", document_id=str(document_id), page=page_no,
+                    error=type(exc).__name__)  # fmt: skip
+        return Response(page, media_type="image/png")
+
+
 @app.get("/api/documents/{document_id}/original")
 def document_original(document_id: UUID) -> Response:
     """The scan exactly as uploaded (§5 S1 key ``documents/<sha[:2]>/<sha>/original.<ext>``): the
@@ -612,6 +735,8 @@ def start_metrics(port: int | None = None) -> None:
     # take max() across instances
     metrics.register_once("jobs", metrics.JobsCollector(lambda: jobstore.store().metric_rows()))
     metrics.register_once("review_backlog", metrics.ReviewBacklogCollector())
+    metrics.register_once("listener", metrics.ListenerCollector())  # LS-S7
+    metrics.register_once("disagreement", metrics.DisagreementCollector())  # RD-S3
     metrics.register_once("pg_replication", metrics.PgReplicationCollector())  # E10-S6
     metrics.register_once("minio_nodes", metrics.MinioNodesCollector())
     metrics.register_once("minio_drives", metrics.MinioDrivesCollector())

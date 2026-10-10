@@ -19,8 +19,10 @@ measurement         what it is                                            reason
 ``extent_px``       the shorter side of the page                          ``too_small``
 ``ink_fraction``    share of pixels darker than mid-grey                  ``too_dark``, ``blank``
 ``glare_fraction``  share of pixels burnt out to white (photos only)      ``glare``
-``text_height_px``  the median height of the written marks (v3)           ``text_too_small``
+``text_height_px``  how tall the writing is (see below)                   ``text_too_small``
 ``sharpness``       variance of the Laplacian                             ``blurred``
+``stroke_sharpness``  how crisp the edges of the strokes are              keeps a sharp page
+                                                                          from being ``blurred``
 ``rotated_90``      the lines run down the page instead of across         flag only
 ==================  ====================================================  ====================
 
@@ -36,6 +38,29 @@ Three things the measurements taught, which is why the checks look the way they 
   below ``CDI_QUALITY_PAPER_WHITE``.
 * **Brightness is not judged at all.** A document is mostly paper: a good page and a ruined one
   both average about 250, and the 5th percentile is white on any sparse page. Ink is what counts.
+
+**A readable page must not be held** (fixed 2026-10-09, on three real photographs of
+handwritten prescriptions that were each held for a different wrong reason):
+
+* **Text height is measured on the writing, not on everything dark.** It used to be the median
+  height of every blob darker than mid-grey. A photo taken on a patterned bedsheet, or saved as
+  a JPEG, is full of small dark specks, and handwriting itself breaks into dots and short
+  strokes - so the median came out at 6 px for writing that is 17 px tall, and the page was
+  held as "too small". It is now the **upper quartile** of the heights of marks that are
+  darker than the *paper around them*: the letters, not the specks.
+* **Blur is judged at the strokes.** The variance of the Laplacian over the whole frame is low
+  for any page that is mostly empty paper and for any low-contrast photo: a clear prescription
+  written in blue biro measured 15 against a limit of 20. ``stroke_sharpness`` is the edge
+  strength where the ink is, divided by how dark the ink is against the paper - 0.49 to
+  1.6 on the readable photographs, 0.3 and below once a page is blurred; the limit is 0.4.
+  A page under
+  the whole-frame limit is called blurred only if its strokes are soft too.
+* **Glare is a patch inside the page.** White that reaches the edge of the picture is margin,
+  a white table or a caption under a screenshot, and hides no writing. Only burnt-out areas
+  that do not touch the border are counted.
+* **A small picture is judged by its writing.** A picture under ``CDI_QUALITY_MIN_SIDE_PX`` is
+  accepted when its writing is tall enough to read; below ``CDI_QUALITY_FLOOR_SIDE_PX`` it is
+  always too small.
 
 **Sideways is a flag, not a failure.** A page whose lines run down it can still be read once it
 is turned, and turning it is IM-S2's work, so ``rotated_90_suspected`` is recorded and nothing is
@@ -123,7 +148,8 @@ _UNREADABLE: dict[str, Any] = {
     "extent_px": 0.0, "sharpness": 0.0, "ink_fraction": 0.0, "soft_ink_fraction": 0.0,
     "glare_fraction": 0.0, "paper_tone": 0.0, "text_height_px": 0.0, "blank_rows": 0.0,
     "blank_cols": 0.0, "rotated_90_suspected": False, "writing_sharpness": 0.0,
-    "writing_share": 0.0,
+    "writing_share": 0.0, "mark_height_px": 0.0, "stroke_sharpness": 0.0,
+    "stroke_contrast": 0.0, "glare_inside_fraction": 0.0,
 }  # fmt: skip
 
 
@@ -175,6 +201,105 @@ def _text_height(ink: Any, page_height: int) -> float:
     return float(np.median(marks)) if marks.size else 0.0
 
 
+# A mark counts as writing when it is this much darker than the paper *around it* (grey levels,
+# or this share of the paper's own tone on a bright page). Judged against the local paper, not
+# against mid-grey, so blue biro on a shadowed page counts and a dark bedsheet beside it is not
+# mistaken for one enormous letter.
+_STROKE_BELOW_PAPER = 35.0
+_STROKE_BELOW_PAPER_SHARE = 0.18
+
+
+def _sheet(arr: Any) -> Any:
+    """Where the sheet of paper is, as a mask - or ``None`` when the picture is all page (a
+    scan, a close photo) or no sheet stands out. The sheet is the largest bright area of the
+    picture; it has to be clearly brighter than what surrounds it and to cover between a
+    fiftieth and most of the frame, or nothing is assumed and the whole picture is used."""
+    import cv2
+    import numpy as np
+
+    scale = 256.0 / max(arr.shape[:2])
+    small = cv2.resize(arr, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+    soft = cv2.GaussianBlur(small, (0, 0), 3)
+    _, bright = cv2.threshold(soft, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(bright, connectivity=8)
+    if count <= 1:
+        return None
+    biggest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+    region = labels == biggest
+    share = float(region.mean())
+    if not 0.02 <= share <= 0.85:
+        return None
+    if float(soft[region].mean()) - float(soft[~region].mean()) < 15.0:
+        return None  # not a sheet on a background: just uneven light
+    contours, _ = cv2.findContours(region.astype(np.uint8), cv2.RETR_EXTERNAL,
+                                   cv2.CHAIN_APPROX_SIMPLE)  # fmt: skip
+    mask = np.zeros(small.shape, np.uint8)
+    cv2.fillConvexPoly(mask, cv2.convexHull(max(contours, key=cv2.contourArea)), 1)
+    return cv2.resize(mask, (arr.shape[1], arr.shape[0]), interpolation=cv2.INTER_NEAREST) > 0
+
+
+def _strokes(arr: Any) -> tuple[float, float, float]:
+    """The writing itself: ``(text height, stroke sharpness, stroke contrast)``.
+
+    * **text height** - the upper quartile of the heights of the written marks, in pixels.
+      Handwriting breaks into dots, commas and short strokes, and a photograph adds specks, so
+      the *median* mark is far smaller than a letter; the upper quartile is the letters.
+    * **stroke sharpness** - how strong the edges are where the ink is, relative to how dark the
+      ink is against its paper. A crisp stroke changes from paper to ink within a pixel or two
+      whatever its contrast; a blurred one takes many. Unlike the whole-frame sharpness it does
+      not fall because the page is mostly empty or the pen was pale.
+    * **stroke contrast** - the median darkness of the ink against the paper around it.
+    """
+    import cv2
+    import numpy as np
+
+    k = max(31, (min(arr.shape[:2]) // 20) | 1)
+    paper = cv2.morphologyEx(
+        arr, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (k, k))
+    )
+    paper = cv2.blur(paper, (k, k)).astype(np.float32)
+    below = paper - arr.astype(np.float32)
+    ink = below > np.maximum(_STROKE_BELOW_PAPER, _STROKE_BELOW_PAPER_SHARE * paper)
+    # only what is on the sheet: the pattern of a cloth or the grain of a table beside the page
+    # is not writing, and on a far-away photo it would outnumber the writing
+    sheet = _sheet(arr)
+    if sheet is not None and int((ink & sheet).sum()) >= 50:
+        ink &= sheet
+    if int(ink.sum()) < 50:
+        return 0.0, 0.0, 0.0
+    count, _, stats, _ = cv2.connectedComponentsWithStats(ink.astype(np.uint8), connectivity=8)
+    heights, widths = stats[1:, cv2.CC_STAT_HEIGHT], stats[1:, cv2.CC_STAT_WIDTH]
+    areas = stats[1:, cv2.CC_STAT_AREA]
+    # not specks, and not rules, boxes, logos or a table edge
+    marks = heights[(heights >= _MIN_MARK_PX) & (areas >= 6)
+                    & (heights <= max(_MIN_MARK_PX, arr.shape[0] // 10))
+                    & (widths <= max(_MIN_MARK_PX, arr.shape[1] // 3))]  # fmt: skip
+    text_height = float(np.percentile(marks, 75)) if marks.size else 0.0
+    contrast = float(np.median(below[ink]))
+    near = cv2.dilate(ink.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
+    edges = np.abs(cv2.Laplacian(arr, cv2.CV_64F))[near]
+    sharpness = float(np.percentile(edges, 90)) / contrast if contrast > 0 else 0.0
+    return text_height, sharpness, contrast
+
+
+def _glare_inside(arr: Any) -> float:
+    """The share of the picture burnt out to white **inside** it. White that reaches the border
+    of the picture is margin, a white table, or a caption under a screenshot: it hides no
+    writing. A reflection on the page is a patch with paper all round it."""
+    import cv2
+    import numpy as np
+
+    burnt = (arr >= 250).astype(np.uint8)
+    if not burnt.any():
+        return 0.0
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(burnt, connectivity=8)
+    edge = np.unique(np.concatenate([labels[0], labels[-1], labels[:, 0], labels[:, -1]]))
+    inside = np.ones(count, dtype=bool)
+    inside[edge] = False
+    inside[0] = False
+    return float(stats[inside, cv2.CC_STAT_AREA].sum() / arr.size)
+
+
 def _line_gaps(ink: Any) -> tuple[float, float]:
     """Inside the written area: the share of rows, and of columns, with no ink at all. Lines of
     text leave blank bands *between* them, so an upright page has many blank rows and few blank
@@ -207,6 +332,7 @@ def measure(png: bytes) -> dict[str, Any]:
     blank_rows, blank_cols = _line_gaps(ink)
     paper = float(np.median(arr))
     writing_sharpness, writing_share = _writing(arr, paper)
+    text_height, stroke_sharpness, stroke_contrast = _strokes(arr)
     return {
         "extent_px": float(min(arr.shape[:2])),
         "width_px": float(arr.shape[1]),
@@ -218,7 +344,15 @@ def measure(png: bytes) -> dict[str, Any]:
         "glare_fraction": float((arr >= 250).mean()),
         # the tone of the paper itself: white on a render or a clean scan, grey on a photograph
         "paper_tone": paper,
-        "text_height_px": _text_height(ink, arr.shape[0]),
+        # how tall the writing is: the upper quartile of the marks darker than their own paper
+        "text_height_px": text_height,
+        # the old measure, the median of every blob darker than mid-grey: recorded, not judged
+        "mark_height_px": _text_height(ink, arr.shape[0]),
+        # how crisp the strokes are, and how dark against the paper: see _strokes
+        "stroke_sharpness": stroke_sharpness,
+        "stroke_contrast": stroke_contrast,
+        # burnt-out white that does not reach the picture's border: a reflection on the page
+        "glare_inside_fraction": _glare_inside(arr),
         "blank_rows": blank_rows,
         "blank_cols": blank_cols,
         "rotated_90_suspected": rotated_90(blank_rows, blank_cols),
@@ -232,16 +366,24 @@ def measure(png: bytes) -> dict[str, Any]:
 
 def verdict(m: dict[str, Any], *, min_side_px: int, min_sharpness: float, min_ink: float,
             max_ink: float, min_text_px: float = 0.0, max_glare: float = 1.0,
-            paper_white: float = 250.0,
-            min_writing_sharpness: float = 500.0) -> Verdict:  # fmt: skip
+            paper_white: float = 250.0, min_writing_sharpness: float = 500.0,
+            min_stroke_sharpness: float = 0.4, floor_side_px: int = 0) -> Verdict:  # fmt: skip
     """The measurements judged against the limits. The order is deliberate: the person is told
     what to **change**, and a measurement is only used where it can be trusted. A thumbnail is
     called small and a dark page dark rather than "blurry", which they would also measure as;
     text height is read only once the page is known to be sharp."""
     if m.get("extent_px", 0) <= 0:
         return Verdict(False, "unreadable", m)
+    text = m.get("text_height_px", 0.0)
+    # A readable page must not be held: strokes that are crisp where the ink is mean the page is
+    # in focus, whatever the whole-frame numbers say about a sparse or pale page.
+    crisp = m.get("stroke_sharpness", 0.0) >= min_stroke_sharpness > 0
     if m["extent_px"] < min_side_px:
-        return Verdict(False, "too_small", m)
+        # a small picture is judged by its writing: tall enough and crisp, it can be read. Below
+        # the floor (a thumbnail) it is too small whatever it seems to hold.
+        readable = bool(min_text_px) and text >= min_text_px and crisp
+        if not (floor_side_px and m["extent_px"] >= floor_side_px and readable):
+            return Verdict(False, "too_small", m)
     ink = m.get("ink_fraction", 0.0)
     if ink >= max_ink:
         return Verdict(False, "too_dark", m)
@@ -250,23 +392,29 @@ def verdict(m: dict[str, Any], *, min_side_px: int, min_sharpness: float, min_in
     # whole frame, where a small page has too little ink to count ("blank") and too little
     # detail to count ("blurred"), and the person would be sent to fix the wrong thing. A page
     # that really is blurred is not sharp where its writing is, so it does not stop here.
-    text = m.get("text_height_px", 0.0)
     if (min_text_px and 0 < text < min_text_px
             and m.get("writing_sharpness", 0.0) >= min_writing_sharpness):  # fmt: skip
         return Verdict(False, "text_too_small", m)
     if ink <= min_ink:
-        # nothing dark on the page. If there is still soft ink the writing is there and smeared -
-        # that is a focus problem, and telling the person the page is blank would send them to
-        # check the wrong thing
+        # nothing dark on the page. If there is still soft ink the writing is there: smeared -
+        # a focus problem, and telling the person the page is blank would send them to check the
+        # wrong thing - or simply pale (pencil, a light pen) and crisp, which can be read
         smeared = m.get("soft_ink_fraction", 0.0) > min_ink
-        return Verdict(False, "blurred" if smeared else "blank", m)
-    # glare is a property of a photograph: where the paper is already white there is none to find
-    if m.get("paper_tone", 255.0) < paper_white and m.get("glare_fraction", 0.0) > max_glare:
+        if not (smeared and crisp):
+            return Verdict(False, "blurred" if smeared else "blank", m)
+    # glare is a property of a photograph: where the paper is already white there is none to
+    # find. Only a burnt-out patch inside the picture counts: white that reaches its border is
+    # margin, not a reflection (measurements made before that was recorded fall back to all of it)
+    glare = m.get("glare_inside_fraction", m.get("glare_fraction", 0.0))
+    if m.get("paper_tone", 255.0) < paper_white and glare > max_glare:
         return Verdict(False, "glare", m)
     # blur before text height, because blur corrupts it: a soft focus erodes each stroke to a few
     # dark specks, the median mark shrinks, and the person would be told to move closer when the
     # fault is focus. A far-away photo is *sharp*, so it passes this and is caught just below.
-    if m["sharpness"] < min_sharpness:
+    # The whole-frame sharpness is low for any page that is mostly empty paper and for any pale
+    # pen, so on its own it holds readable pages: it says "blurred" only when the strokes
+    # themselves are soft as well.
+    if m["sharpness"] < min_sharpness and not crisp:
         return Verdict(False, "blurred", m)
     if min_text_px and 0 < text < min_text_px:
         return Verdict(False, "text_too_small", m)
@@ -285,6 +433,8 @@ def limits(settings: Any) -> dict[str, Any]:
         "max_glare": s.quality_max_glare_fraction,
         "paper_white": s.quality_paper_white,
         "min_writing_sharpness": s.quality_min_writing_sharpness,
+        "min_stroke_sharpness": s.quality_min_stroke_sharpness,
+        "floor_side_px": s.quality_floor_side_px,
     }
 
 

@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     s3_access_key: str = Field(default="minioadmin", repr=False)
     s3_secret_key: str = Field(default="minioadmin", repr=False)
     s3_bucket: str = "cdi-documents"
+    # OUT-S2: every result is also written as a JSON file - one per prescription, the same
+    # whether it was uploaded or dropped in the watched folder. In the document store under
+    # this key prefix ("" = not there), and, when a folder is named, in that folder too.
+    result_output_prefix: str = "results"
+    result_output_dir: str = ""
 
     # secrets store for the four credentials above (backlog E1-S5, docs/secrets.md)
     secrets_dir: str | None = None
@@ -67,6 +72,9 @@ class Settings(BaseSettings):
     listener_log: str = "log"
     # how long one call may wait, in all, on a drive that says "too many requests"
     listener_max_wait_seconds: float = Field(default=300.0, ge=0)
+    # LS-S9 AC4: where the web app asks which alerts are firing, for the banner on every page
+    # (webapp/alerts.py). Loopback: start_monitoring.sh binds Alertmanager there. Empty = no banner.
+    alertmanager_url: str = "http://127.0.0.1:9093"
     # the listener's loop (listener/service.py): how often it looks at the folder, and how long
     # it waits for one file to be read before filing it under error with a "timeout" note
     listener_poll_seconds: float = Field(default=10.0, gt=0)
@@ -79,8 +87,25 @@ class Settings(BaseSettings):
     listener_stable_polls: int = Field(default=2, ge=1)
     listener_patterns: str = "*.pdf,*.png,*.jpg,*.jpeg,*.tif,*.tiff"
     listener_max_bytes: int = Field(default=50 * 1024 * 1024, gt=0)
-    listener_lease_seconds: float = Field(default=1200.0, gt=0)
+    listener_lease_seconds: float = Field(default=900.0, gt=0)
+    # LS-S9: the listener is "unwell" when no look at its folder has succeeded for this long.
+    # The health view says so; the alert rule (CdiListenerNotPolling) uses the same five
+    # minutes and is changed there.
+    listener_stale_seconds: float = Field(default=300.0, gt=0)
     listener_worker: str = ""
+    # LS-S5: files are run in batches. Up to this many finished files are taken together,
+    # oldest first, and run at the same time; the next batch starts only when the whole batch
+    # has finished. When fewer are waiting they are started once the oldest of them has waited
+    # this long, so a lone file is not stuck (0 = do not wait: start whatever is there).
+    # LS-S7: a failed file is tried again by itself when trying again can help (a timeout, a
+    # server that was down), up to this many times, after waits of base x 2^n seconds (60, 120,
+    # 240). So a file runs at most max_attempts + 1 times; when the last retry fails it is moved
+    # to quarantine (LS-S6). A data error (empty, corrupt, too blurred, too big ...) is never
+    # retried and stays in error.
+    listener_max_attempts: int = Field(default=3, ge=0)
+    listener_retry_base_seconds: float = Field(default=60.0, ge=0)
+    listener_batch_size: int = Field(default=3, ge=1)
+    listener_batch_wait_seconds: float = Field(default=60.0, ge=0)
     # Microsoft Graph (onedrive, sharepoint). The drive is /me/drive unless one of these says
     # otherwise: a drive id, a user (app-only sign-in), or - for sharepoint - a site id.
     graph_base_url: str = "https://graph.microsoft.com/v1.0"
@@ -138,10 +163,13 @@ class Settings(BaseSettings):
     # share of pixels darker than mid-grey: nothing to read ~0, a page in the dark ~1
     quality_min_ink_fraction: float = Field(default=0.0005, ge=0, le=1)
     quality_max_ink_fraction: float = Field(default=0.90, gt=0, le=1)
-    # IM-S1 v3: the median height of the written marks. A page photographed from far away is
-    # sharp but its letters are tiny (19 px on a normal render, 4 px at a fifth of the size),
-    # which sharpness cannot see. 0 = do not judge text height
-    quality_min_text_px: float = Field(default=8.0, ge=0)
+    # IM-S1 v3: how tall the writing is. A page photographed from far away is sharp but its
+    # letters are tiny, which sharpness cannot see. Since 2026-10-09 this is the upper quartile
+    # of the heights of the marks darker than their own paper (the letters, not the specks):
+    # 23 px on a normal render, 17 to 21 px on readable phone photos of handwriting. That
+    # measure reads about a fifth higher than the old median did, so the limit moved from 8 to
+    # 10 to hold the same pictures. 0 = do not judge text height
+    quality_min_text_px: float = Field(default=10.0, ge=0)
     # share of the page burnt out to white. Judged on photographs only: where the paper tone is
     # already at or above quality_paper_white (a render, a clean scan) there is no glare to find
     quality_max_glare_fraction: float = Field(default=0.05, gt=0, le=1)
@@ -150,6 +178,13 @@ class Settings(BaseSettings):
     # frame as a whole measures blank or blurred. At or above this (sharp writing measured
     # 700 - 26,000; blurred 4 - 330) tiny text is called "move closer", not "blurry".
     quality_min_writing_sharpness: float = Field(default=500.0, ge=0)
+    # A readable page must not be held (2026-10-09). How crisp the strokes must be - edge
+    # strength at the ink relative to the ink's darkness - for a page under the whole-frame
+    # sharpness limit to be accepted anyway (0 = never). And the size below which a picture is
+    # too small whatever it holds; between this and quality_min_side_px a picture is accepted
+    # when its writing is tall enough (quality_min_text_px) and crisp.
+    quality_min_stroke_sharpness: float = Field(default=0.4, ge=0)
+    quality_floor_side_px: int = Field(default=400, ge=0)
 
     # IM-S2: turn a sideways or upside-down page upright and flatten an angled phone photo.
     # OFF by default - it changes the picture every later stage reads, and its limits are
@@ -212,10 +247,16 @@ class Settings(BaseSettings):
     # model gateway. E10-S9: several replicas of the same model, comma separated; a call goes to
     # the next replica when one refuses the connection or answers 5xx
     mlserve_url: str = "http://127.0.0.1:8077"
+    # RD-S5: a model server used only when every one in mlserve_url refuses - the serial (hf)
+    # server behind a batching (vllm) one. Never shares the load: the replicas above do that.
+    # Empty = none.
+    mlserve_fallback_url: str = ""
     mlserve_port: int = 8077
     mlserve_backend: Literal["stub", "hf", "vllm"] = "stub"
     vlm_model_id: str = "Qwen/Qwen2.5-VL-7B-Instruct"
-    vlm_fallback_model_id: str = "Qwen/Qwen2.5-VL-3B-Instruct"
+    # RD-S4 (decided): no fallback model. The 3B that loaded on out-of-memory is under the Qwen
+    # research licence (non-commercial) and was removed; a CDI_VLM_FALLBACK_MODEL_ID left in an
+    # old .env is ignored.
     # model registry (backlog E10-S5): a gateway started for a registered version loads the model
     # at its pinned revision and reports the version on /healthz; the web app routes documents to
     # the primary or the canary gateway from the rollout log, re-read every model_route_ttl_s
@@ -275,6 +316,28 @@ class Settings(BaseSettings):
     ocr_engine: Literal["rapidocr", "vlm"] = "rapidocr"
     handwritten_uses_vlm: bool = True
     ocr_min_conf: float = Field(default=0.30, ge=0, le=1)  # §5 S3: RapidOCR line kept if >= this
+    # RD-S1: the OCR host (ocrhost/app.py, POST /ocr/rapid), a CPU-only process of its own. The
+    # port it listens on (loopback), and where the pipeline finds it: empty = read in-process.
+    ocr_host_port: int = 8079
+    ocr_host_url: str = ""
+    ocr_host_max_bytes: int = Field(default=40_000_000, gt=0)
+    # RD-S2: two handwriting readers on every handwritten line crop, each on its own
+    # (recognition/engines.py). The TrOCR checkpoint is English, trained on IAM: unmeasured on
+    # prescription handwriting, and its licence is a review item (ENT-S1) - so this is off
+    # unless set. It needs line_regions and line_readers. TrOCR reads on the OCR host when
+    # ocr_host_url is set, else in-process on the CPU. A reader that has not answered within
+    # two_readers_timeout_s is given up on for that line: the line keeps its one reading and
+    # goes to review.
+    trocr_model_id: str = "microsoft/trocr-base-handwritten"
+    two_readers: bool = False
+    two_readers_timeout_s: float = Field(default=20.0, gt=0)
+    # RD-S3: deciding each handwritten line (recognition/hierarchy.py). The readers' agreement,
+    # the picture check and the word lists always run when two_readers is on. Two more checks
+    # cost a model call per line each, so they are off unless set: self_consistency reads the
+    # crop again with other padding; second_opinion asks Qwen which reading the picture shows
+    # when the readers disagree (recorded only - it never decides).
+    self_consistency: bool = False
+    second_opinion: bool = False
     # IM-S3: S3 finds the lines of every page and labels them printed / handwritten / mixed /
     # uncertain (recognition/regions.py), and records the counts with the OCR run - always. This
     # switch is whether the labels are *acted on*: each observation is then stored with its

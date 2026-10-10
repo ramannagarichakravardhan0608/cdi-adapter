@@ -17,6 +17,11 @@ never a patient, document, file name or user, so no PHI can reach the metrics st
 | ``cdi_extract_in_flight`` | gauge | extraction calls holding a slot |
 | ``cdi_jobs{state}`` | gauge | web-app jobs by state (in-memory until E9-S1) |
 | ``cdi_review_backlog{queue}`` | gauge | open human work: held-fact tasks, workbasket, claimed |
+| ``cdi_listener_files{state}`` | gauge | LS-S7: files the listener has seen, by state |
+| ``cdi_listener_quarantined_recent`` | gauge | LS-S7: quarantined in the last 24 h |
+| ``cdi_listener_last_ok_poll_timestamp_seconds{drive}`` | gauge | LS-S9: the last good look |
+| ``cdi_listener_waiting_files{drive}`` | gauge | LS-S9: files waiting in the watched folder |
+| ``cdi_listener_oldest_waiting_seconds{drive}`` | gauge | LS-S9: age of the oldest of them |
 | ``cdi_gate_decisions_total{decision}`` | counter | S6 gate: ``auto_accepted`` vs ``in_review`` |
 | ``cdi_review_decisions_total{action}`` | counter | fact decisions: accept / correct / reject |
 | ``cdi_review_items_total{action}`` | counter | review items: claim / approve / reject |
@@ -223,6 +228,143 @@ class ReviewBacklogCollector(Collector):
         for q, n in rows:
             g.add_metric([q], n)
         yield g
+
+
+# LS-S7: what became of the files the listener has seen, and how many reached quarantine in the
+# last day. Read from listener_file, so every web app instance reports the same numbers whether
+# or not the listener runs on this machine. "Recent" is what the alert reads: a file stays
+# quarantined until a person deals with it, and an alert that never clears is not read.
+LISTENER_SQL = (
+    "SELECT state, count(*), "
+    "count(*) FILTER (WHERE state = 'quarantined' AND updated_at > now() - interval '24 hours') "
+    "FROM listener_file GROUP BY state"
+)
+
+
+class ListenerCollector(Collector):
+    """``cdi_listener_files{state}`` and ``cdi_listener_quarantined_recent``, read from
+    PostgreSQL at scrape time. A failed read (the table is not there yet, the database is
+    busy) yields nothing rather than a wrong number, and never breaks the scrape."""
+
+    def __init__(self, query: Callable[[], list[tuple[str, int, int]]] | None = None,
+                 beats: Callable[[], list[tuple[str, float | None, int, float | None]]]
+                 | None = None) -> None:  # fmt: skip
+        self._query = query or _listener_from_db
+        self._beats = beats or _listener_beats_from_db
+
+    def collect(self) -> Iterator[GaugeMetricFamily]:
+        try:
+            rows = self._query()
+        except Exception:  # noqa: BLE001 - a scrape must not fail on a database hiccup
+            return
+        files = GaugeMetricFamily("cdi_listener_files", "Files the listener has seen, by state",
+                                  labels=["state"])  # fmt: skip
+        recent = 0
+        for state, count, quarantined_recently in rows:
+            files.add_metric([state], count)
+            recent += quarantined_recently
+        yield files
+        yield GaugeMetricFamily("cdi_listener_quarantined_recent",
+                                "Files that reached quarantine in the last 24 hours",
+                                value=recent)  # fmt: skip
+        # LS-S9: the heartbeat. No row = no listener has ever reported = no series, so a host
+        # that runs no listener raises no "not polling" alert.
+        try:
+            beats = self._beats()
+        except Exception:  # noqa: BLE001
+            return
+        last_ok = GaugeMetricFamily("cdi_listener_last_ok_poll_timestamp_seconds",
+                                    "When the listener last looked at its folder successfully",
+                                    labels=["drive"])  # fmt: skip
+        waiting = GaugeMetricFamily(
+            "cdi_listener_waiting_files", "Files waiting in the watched folder", labels=["drive"]
+        )
+        oldest = GaugeMetricFamily("cdi_listener_oldest_waiting_seconds",
+                                   "How long the oldest waiting file has waited",
+                                   labels=["drive"])  # fmt: skip
+        for drive, ok_at, count, age in beats:
+            last_ok.add_metric([drive], ok_at or 0.0)  # never succeeded: 0 = 1970, plainly stale
+            waiting.add_metric([drive], count)
+            oldest.add_metric([drive], age or 0.0)
+        yield from (last_ok, waiting, oldest)
+
+
+# One series per kind of drive, however many folders have ever reported: two rows with the same
+# label would be a duplicate series and fail the whole scrape. Only one drive is watched at a
+# time (LS-S1), so the newest good look of a kind is the live listener's; a folder that is no
+# longer watched leaves a stale row behind and must not hold the alert on.
+# RD-S3 FR7: how often the two handwriting readers disagree - over the last hour and the last 7
+# days, from the comparisons saved in ocr_agreement. A sudden change is a drift alarm.
+DISAGREEMENT_SQL = (
+    "SELECT w.window, count(a.id), count(a.id) FILTER (WHERE a.disagreement_state <> 'AGREE') "
+    "FROM (VALUES ('1h', interval '1 hour'), ('7d', interval '7 days')) AS w(window, span) "
+    "LEFT JOIN ocr_agreement a ON a.computed_at > now() - w.span GROUP BY w.window"
+)
+
+
+class DisagreementCollector(Collector):
+    """``cdi_reader_comparisons{window}`` and ``cdi_reader_disagreement_ratio{window}``. No
+    comparison in a window = no ratio for it, so a host where two readers are off raises
+    nothing. A failed read yields nothing."""
+
+    def __init__(self, query: Callable[[], list[tuple[str, int, int]]] | None = None) -> None:
+        self._query = query or _disagreement_from_db
+
+    def collect(self) -> Iterator[GaugeMetricFamily]:
+        try:
+            rows = self._query()
+        except Exception:  # noqa: BLE001 - a scrape must not fail on a database hiccup
+            return
+        compared = GaugeMetricFamily("cdi_reader_comparisons",
+                                     "Handwritten lines whose two readings were compared",
+                                     labels=["window"])  # fmt: skip
+        ratio = GaugeMetricFamily("cdi_reader_disagreement_ratio",
+                                  "Share of compared lines on which the two readers disagreed",
+                                  labels=["window"])  # fmt: skip
+        for window, total, disagreed in rows:
+            compared.add_metric([window], total)
+            if total:
+                ratio.add_metric([window], round(disagreed / total, 4))
+        yield compared
+        yield ratio
+
+
+def _disagreement_from_db() -> list[tuple[str, int, int]]:  # pragma: no cover - needs PostgreSQL
+    from sqlalchemy import text
+
+    from cdi_adapter.db import session_scope
+
+    with session_scope() as c:
+        return [(r[0], int(r[1]), int(r[2])) for r in c.execute(text(DISAGREEMENT_SQL)).all()]
+
+
+LISTENER_BEATS_SQL = (
+    "SELECT split_part(source_id, ':', 1), max(extract(epoch FROM last_ok_at)), sum(waiting), "
+    "max(CASE WHEN waiting > 0 THEN extract(epoch FROM now() - oldest_waiting_at) END) "
+    "FROM listener_heartbeat GROUP BY 1"
+)
+
+
+def _listener_beats_from_db() -> list[
+    tuple[str, float | None, int, float | None]
+]:  # pragma: no cover
+    from sqlalchemy import text
+
+    from cdi_adapter.db import session_scope
+
+    with session_scope() as c:
+        return [(r[0], float(r[1]) if r[1] is not None else None, int(r[2]),
+                 float(r[3]) if r[3] is not None else None)
+                for r in c.execute(text(LISTENER_BEATS_SQL)).all()]  # fmt: skip
+
+
+def _listener_from_db() -> list[tuple[str, int, int]]:  # pragma: no cover - needs PostgreSQL
+    from sqlalchemy import text
+
+    from cdi_adapter.db import session_scope
+
+    with session_scope() as c:
+        return [(r[0], int(r[1]), int(r[2])) for r in c.execute(text(LISTENER_SQL)).all()]
 
 
 def _backlog_from_db() -> list[tuple[str, int]]:  # pragma: no cover - needs PostgreSQL
