@@ -314,7 +314,7 @@ async function poll(id){
   // a document not recognised as a clinical type is skipped: say so, never "All facts governed"
   const skipped = j.documents.filter(d => d.status === 'skipped' || d.status === 'error');
   const notDone = skipped.map(d => `<p><span class="pill bad">not processed</span> <b>${esc(d.filename)}</b> — ${d.status === 'error' ? 'failed: ' + esc(d.error) : `read as "${esc(d.doc_type)}", not a clinical document type, so nothing was extracted and nothing goes to review`}.</p>`).join('');
-  const verdict = held ? `<span class="pill warn">${held} fact(s) sent to the reviewer</span> — see <a href="/reviewer">Reviewer</a> or <a href="/review">Review</a>.`
+  const verdict = held ? `<span class="pill warn">${held} fact(s) sent to the reviewer</span> — see <a href="/reviewer">Reviewer</a>.`
     : facts ? '<span class="pill ok">All facts governed</span>' : '<span class="pill warn">No facts extracted</span>';
   const oneResult = j.documents.length > 1
     ? `<p><a id=jobresult class=pill href="/result/job/${id}" target=_blank style="font-size:14px;padding:4px 12px">See the result of this upload (${j.documents.length} pages, one result) &#8599;</a></p>` : '';

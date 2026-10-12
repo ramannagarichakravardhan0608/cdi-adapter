@@ -67,8 +67,8 @@ _DURATION_IN_TEXT = re.compile(r"(?:x|for)\s*\d+\s*\w+", re.I)
 _WHEN_TO_TAKE = re.compile(r"\b(food|meals?|breakfast|lunch|dinner|supper|stomach|bed ?time|"
                            r"night|morning|evening|milk|water)\b", re.I)  # fmt: skip
 _A_ROUTE = re.compile(r"\b(oral|orally|p\.?o\.?|i\.?v\.?|i\.?m\.?|s\.?c\.?|subcut\w*|topical|"
-                      r"local|inhal\w*|nebul\w*|nasal|sublingual|rectal|vaginal|transdermal|"
-                      r"eye|ear)\b", re.I)  # fmt: skip
+                      r"local|inhal\w*|nebul\w*|nasal|nostrils?|sublingual|rectal|vaginal|"
+                      r"transdermal|eye|ear)\b", re.I)  # fmt: skip
 _DOSE_UNITS = ("mg", "mcg", "µg", "g", "gm", "iu", "unit", "units")
 
 
@@ -227,6 +227,8 @@ def _vital_facts(payload, default: float, seen: set[str] | None = None) -> list[
         if kind is None:
             continue
         num, unit, txt = _qty(item.get("value"))
+        if kind == "heart_rate" and _BP.match(txt or ""):
+            kind = "blood_pressure"  # "110/70 mmHg" written under the wrong label: two numbers
         unit = unit or item.get("unit")
         ev, conf = _ev(item) or _ev(item.get("value")), _conf(item, default)
         if kind == "blood_pressure":
@@ -240,6 +242,11 @@ def _vital_facts(payload, default: float, seen: set[str] | None = None) -> list[
                                  value_unit_ucum="mm[Hg]"))  # fmt: skip
             continue
         if num is None or kind in seen:  # only emitted when a number was actually read
+            continue
+        # a height in kilograms (or a weight in centimetres) is the neighbouring line's value
+        # copied into an empty one: not a reading of this vital
+        wrong = {"body_height": ("kg", "kgs", "g"), "body_weight": ("cm", "cms", "m", "ft")}
+        if str(unit or "").strip().lower() in wrong.get(kind, ()):
             continue
         seen.add(kind)
         out.append(FactDraft("vital_sign", _VITAL_TEXT.get(kind, kind), conf, ev,
@@ -320,17 +327,33 @@ def parse_medication(item: dict[str, Any]) -> MedDraft:
     if tokens and tokens[0].lower().rstrip(".") in _LEAD_FORMS:
         form = _LEAD_FORMS[tokens[0].lower().rstrip(".")]
         tokens = tokens[1:]
+    elif len(tokens) > 1 and tokens[0].lower().rstrip(".:") in _MISREAD_FORMS:
+        # "Ing Rejunex": "Inj" as the reader spelt it. No medicine's name begins with it
+        form = _MISREAD_FORMS[tokens[0].lower().rstrip(".:")]
+        tokens = tokens[1:]
+    elif len(tokens) > 1 and _UNREAD_FORM.match(tokens[0]) and (
+        tokens[0].lower() not in _NOT_A_FORM
+    ):
+        # "Rel. Zincoilt": a form word the reader got wrong ("Tab."). It is no part of the
+        # medicine's name; the line as written stays in the fact's local_text
+        tokens = tokens[1:]
     name = _SCHEDULE.split(" " + " ".join(tokens), maxsplit=1)[0].strip()
-    # a form word later in the name ("... PEN") describes the device, not the drug
+    # a form word later in the name ("... PEN", "... PFS") describes the device, not the drug
     kept: list[str] = []
     for w in name.split():
-        if w.lower().rstrip(".") in _FORMS and kept:
-            form = form or _FORMS[w.lower().rstrip(".")]
+        later = _FORMS.get(w.lower().rstrip(".")) or _DEVICE_FORMS.get(w.lower().rstrip("."))
+        if later and kept:
+            form = form or later
             continue
         kept.append(w)
     name = " ".join(kept)
 
-    s_num, s_unit, _ = _qty(item.get("strength"))
+    strength = item.get("strength")
+    if isinstance(strength, str):
+        strength = strength.strip(" ()[]")  # "(25)", "(5mg)": brackets are how it is written
+    s_num, s_unit, _ = _qty(strength)
+    if s_num == 0:
+        s_num = s_unit = None  # "00": no medicine has a strength of nothing
     found = [(float(n), u.lower()) for n, u in _STRENGTH.findall(name)]
     if s_num is None and found:
         dose_like = [f for f in found if f[1] in _DOSE_UNITS]
@@ -344,11 +367,20 @@ def parse_medication(item: dict[str, Any]) -> MedDraft:
     text_all = f"{text_all} {raw_name}"
     freq_text = item.get("frequency") or None
     fpd = freq_per_day(freq_text) if freq_text else freq_per_day(text_all)
+    if fpd is None and (times := _N_X_M.match(str(freq_text or ""))):
+        fpd = float(times.group(2))  # "1x1": one, once a day; "1x2": one, twice a day
     route = item.get("route")
+    if form == "injection" and isinstance(route, str) and _ORAL.match(route):
+        route = None  # an injection is not taken by mouth: a usual value the page does not give
     instructions = item.get("instructions") or None
-    if isinstance(route, str) and _WHEN_TO_TAKE.search(route) and not _A_ROUTE.search(route):
-        instructions = "; ".join(x for x in (instructions, route.strip()) if x)
+    if isinstance(route, str) and route.strip() and not _A_ROUTE.search(route):
+        # "BBF", "before lunch", "(after dinner)": when to take it, not how it enters the body.
+        # It is kept, as written, with the instructions
+        said = route.strip(" ()/")
+        if said and said.lower() not in str(instructions or "").lower():
+            instructions = "; ".join(x for x in (instructions, said) if x)
         route = None
+    route = route.strip(" /()") or None if isinstance(route, str) else route
     if not route and (form in ("injection", "pen") or re.search(r"\b(pen|insulin)\b", raw_name,
                                                                 re.I)):  # fmt: skip
         route = (
@@ -375,11 +407,295 @@ def parse_medication(item: dict[str, Any]) -> MedDraft:
     )  # fmt: skip
 
 
+# the dose written after the name ("Cap. Sonpraz 1 cap", "Tab. Montina fx 1 tab at bedtime"):
+# where the name ends. "ml" is left out - a pen's fill volume belongs to its name.
+_DOSE_IN_NAME = re.compile(
+    r"\s+((?:\d+(?:\.\d+)?|\d\s*/\s*\d|½|half|one|two)\s*"
+    r"(?:tab|tabs|tablet|tablets|cap|caps|capsule|capsules|tsp|tbsp|puffs?|drops?|sachets?))\b"
+    r"\.?(.*)$",
+    re.I,
+)
+_LIST_MARK = re.compile(r"^[\s=\-–•*·>]+|^\s*\d{1,2}\s*[.)]\s+")
+_UNREAD_FORM = re.compile(r"^[A-Za-z]{2,4}\.$")
+_NOT_A_FORM = {"vit.", "dr.", "co.", "st.", "mr.", "no.", "sr.", "ds.", "xr.", "er.", "cr."}
+# "Inj" as a reader spells it at the head of a line, and a device word after the name
+_MISREAD_FORMS = {"ing": "injection", "lnj": "injection", "1nj": "injection", "inj": "injection"}
+_DEVICE_FORMS = {"pfs": "injection"}  # pre-filled syringe
+_ORAL = re.compile(r"^\s*(?:p\.?o\.?|oral(?:ly)?|by mouth)\s*$", re.I)
+# "1x1", "1 x 2", "½x3": how many, times a day
+_N_X_M = re.compile(r"^\s*(\d+(?:\.\d+)?|½)\s*[x×*]\s*(\d)\s*$", re.I)
+_SLOTS = re.compile(r"^\s*\d(?:\.\d)?\s*-\s*\d(?:\.\d)?\s*-\s*\d(?:\.\d)?(?:\s*-\s*\d)?\s*$")
+_DOSE_FIRST = re.compile(
+    r"^\s*((?:\d+(?:\.\d+)?|½)\s*(?:tabs?|tablets?|caps?|capsules?|tsp|puffs?|drops?))\b\.?\s+(?=\S)",
+    re.I,
+)
+_ARROW = re.compile(r"^[\s\-–—=>→~]+")
+_LEAD_DURATION = re.compile(
+    r"^(?:x|for)?\s*\d+(?:\s*-\s*\d+)?\s*(?:d|days?|wks?|weeks?|mths?|months?)\b", re.I
+)
+
+
+def tidy_medication(item: dict[str, Any]) -> dict[str, Any]:
+    """One medicine line with each written part in its own field (owner, 2026-10-10: names came
+    out as "Sonpraz 1" and "Audeflu (#5) 1", with "5 days" as the frequency).
+
+    * ``drug_name`` ends where the dose begins: "Cap. Sonpraz 1 cap" -> "Cap. Sonpraz", and the
+      "1 cap" becomes the dose when the dose field is empty;
+    * a frequency that is only a number of days is the duration; a duration or frequency that
+      only says when to take it ("after meals", "after lunch") is an instruction;
+    * ``instructions`` keeps the whole direction as written ("1 tab at bedtime x 5 days") when
+      the model gave none.
+
+    Nothing is invented: every value was written by the model for this line, and the line's
+    OCR text stays its evidence."""
+    item = dict(item)
+    name = _LIST_MARK.sub("", str(item.get("drug_name") or "")).strip()
+    tail = ""
+    if m := _DOSE_IN_NAME.search(name):
+        name, tail = name[: m.start()].strip(), m.group(2).strip(" ,;")
+        if not str(item.get("dose") or "").strip():
+            item["dose"] = m.group(1).strip()
+    item["drug_name"] = name
+    freq, dur = (str(item.get(k) or "").strip() for k in ("frequency", "duration"))
+    when: list[str] = []
+    dose_said = str(item.get("dose") or "").strip()
+    if _A_ROUTE.fullmatch(freq) and not str(item.get("route") or "").strip():
+        item["route"], freq = freq, ""  # "SC" written where the frequency goes
+    if _SLOTS.match(dose_said) and freq_per_day(freq) is None:
+        # "1-0-0" given as the dose: it is the day's pattern (morning-noon-night). What stood in
+        # the frequency is the days ("X 30 days"), or is kept as written ("X Day 1")
+        if not freq or _LEAD_DURATION.match(_ARROW.sub("", freq)):
+            dur = dur or _ARROW.sub("", freq)
+        else:
+            when.append(freq)
+        freq, item["dose"] = dose_said, ""
+    elif not dose_said and (lead := _DOSE_FIRST.match(freq)):
+        # "1 tab OD": the dose written in front of the frequency
+        item["dose"], freq = lead.group(1).strip(), freq[lead.end() :].strip()
+    if dur and duration_days(dur) is None and _WHEN_TO_TAKE.search(dur):
+        when.append(dur.strip("() "))
+        dur = ""
+    extra = ""
+    # "-> 30d", "- 30d Night", "5 days": the days are the duration, a word after them says when
+    if freq and (lead := _LEAD_DURATION.match(_ARROW.sub("", freq))):
+        rest = _ARROW.sub("", freq)[lead.end() :].strip(" ,;")
+        if not dur:
+            dur = lead.group(0).strip()
+        freq = ""
+        if rest and _WHEN_TO_TAKE.search(rest):
+            when.insert(0, rest.strip("() "))
+        else:
+            extra = rest  # kept as written, in the instructions
+    if freq and freq_per_day(freq) is None and _WHEN_TO_TAKE.search(freq) and not is_prn(freq):
+        when.insert(0, freq.strip("() "))
+        freq = ""
+    dose = str(item.get("dose") or "").strip()
+    if not freq and (times := _N_X_M.match(dose)):
+        item["dose"], freq = times.group(1), dose  # "1x1": the dose is 1, taken once a day
+    item["frequency"], item["duration"] = freq, dur
+    if not str(item.get("instructions") or "").strip():
+        days = f"x {dur}" if dur[:1].isdigit() else dur
+        written = [dose, "" if freq == dose else freq, *when, days, tail, extra]
+        seen: list[str] = []
+        for part in written:  # the model often repeats the dose's tail in its own fields
+            if part and not any(part.lower() in s.lower() for s in seen):
+                seen.append(part)
+        item["instructions"] = " ".join(seen) if len(seen) > 1 or when or tail else ""
+    return item
+
+
+# a line that only carries on the one above it: it starts with an amount, or is only a date
+_CARRIES_ON = re.compile(
+    r"^\s*\d+(?:\.\d+)?\s*(?:ml|mg|mcg|g|iu|units?|tabs?|caps?|tsp|puffs?|drops?)\b", re.I
+)
+_ONLY_A_DATE = re.compile(
+    r"^\s*(?:\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}|(?:\d{1,2}\s+)?(?:jan|feb|mar|apr|may|jun|jul|aug|"
+    r"sep|sept|oct|nov|dec)[a-z]*\.?,?\s+\d{2,4}|(?:19|20)\d{2})\s*$",
+    re.I,
+)
+_LEAD_NUMBER = re.compile(r"^\s*(\d{1,2})\s+(?=[A-Za-z])")
+LISTS = ("advice", "investigations_advised")
+
+
+def _joined(prev: Any, item: Any) -> dict[str, Any]:
+    """``item`` added to the end of ``prev``: one written entry, with the evidence of both lines
+    and the lower of their confidences."""
+    base = dict(prev) if isinstance(prev, dict) else {"text": str(prev)}
+    key = next((k for k in ("text", "display", "name") if isinstance(base.get(k), str)), "text")
+    base[key] = f"{_coded_text(prev)} {_coded_text(item)}"
+    base["evidence"] = [*_ev(prev), *(e for e in _ev(item) if e not in _ev(prev))]
+    confs = [x["confidence"] for x in (prev, item)
+             if isinstance(x, dict) and isinstance(x.get("confidence"), int | float)]  # fmt: skip
+    if confs:
+        base["confidence"] = min(confs)
+    return base
+
+
+def tidy_lists(payload: dict[str, Any]) -> dict[str, Any]:
+    """The written entries of a list, one item each (owner, 2026-10-10: two vaccines came out as
+    four lines, and "Bladder Training" as "17 Bladder Training").
+
+    * A line that starts with an amount ("0.5 ml IM Deltoid every year") or is only a date
+      ("June 2023") carries on the line above it, and is joined to it.
+    * The same number in front of two or more entries of one list ("17 Bladder Training",
+      "17 Kegel exercise") is the list's mark - an arrow or bullet read as digits - and is taken
+      off: a numbered list does not repeat a number. A number seen once is left alone.
+
+    The OCR lines stay the evidence, so the reviewer still sees what was read."""
+    out = payload
+    for key in LISTS:
+        items = _items(payload, key)
+        if len(items) < 2:
+            continue
+        texts = [_coded_text(i) or "" for i in items]
+        leads = [m.group(1) if (m := _LEAD_NUMBER.match(t)) else None for t in texts]
+        marks = {n for n in leads if n and leads.count(n) > 1}
+        tidy: list[Any] = []
+        for item, t, lead in zip(items, texts, leads, strict=True):
+            if lead in marks:
+                clean = _LEAD_NUMBER.sub("", t)
+                item = {**item, "text": clean} if isinstance(item, dict) else clean
+                t = clean
+            if tidy and t and (_CARRIES_ON.match(t) or _ONLY_A_DATE.match(t)):
+                tidy[-1] = _joined(tidy[-1], item)
+            else:
+                tidy.append(item)
+        if tidy != items:
+            out = {**out, key: tidy}
+    return out
+
+
+# an advice line that is a medicine: it starts with a dosage form and a name
+_MED_LINE = re.compile(
+    r"^[\s=\-–•*·>]*(?:tab|tabs|tablet|cap|caps|capsule|syp|syr|syrup|inj|injection|susp|oint)"
+    r"\b\.?\s+(?!(?:site|sites|to|at|in|on|of|the|and|should|must|is|are|if|for|with|after|"
+    r"before|form)\b)[A-Za-z]",
+    re.I,
+)
+_FOLLOW_UP = re.compile(
+    r"\b(follow[\s-]?up|f/u|review|r/w|re-?visit|re-?check|come back|next visit|report back|"
+    r"with (?:the )?reports?)\b",
+    re.I,
+)
+
+
+def advice_kind(text: str | None) -> str:
+    """``follow_up`` for a line about coming back ("Review after 5 days", "R/w with reports"),
+    ``advice`` for home care (rest, gargle, fluids). Both are stored as advice facts; this is how
+    a page tells them apart."""
+    return "follow_up" if _FOLLOW_UP.search(text or "") else "advice"
+
+
+def _name_words(text: str) -> list[str]:
+    words = re.findall(r"[a-z]{3,}", text.lower())
+    return [w for w in words if w not in _LEAD_FORMS]
+
+
+def split_advice(payload: dict[str, Any]) -> dict[str, Any]:
+    """Medicines out of ``advice`` (owner, 2026-10-10: every medicine of a handwritten
+    prescription was also listed under Advice & follow-up).
+
+    The model repeats a medicine line under advice when the Rx section mixes home care and
+    drugs. An advice line that starts with a dosage form and a name is a medicine: it is dropped
+    when ``medications`` already has that line (same evidence, or the same name), and otherwise
+    moved there at a low confidence so a reviewer sees it - never lost, never left as advice."""
+    advice = _items(payload, "advice")
+    if not advice:
+        return payload
+    meds = [m for m in _items(payload, "medications")
+            if isinstance(m, dict) and str(m.get("drug_name") or "").strip()]  # fmt: skip
+    kept: list[Any] = []
+    moved: list[dict[str, Any]] = []
+    for a in advice:
+        t = _coded_text(a) or ""
+        words = set(_name_words(t))
+        twin = any(
+            (first := _name_words(str(m["drug_name"]))[:1]) and first[0] in words
+            and (_MED_LINE.match(t) or set(_ev(a)) & set(_ev(m)))
+            for m in meds
+        )  # fmt: skip
+        if twin:
+            continue
+        if _MED_LINE.match(t):
+            moved.append({"drug_name": _LIST_MARK.sub("", t).strip(), "evidence": _ev(a),
+                          "confidence": min(_conf(a, 0.5), 0.5)})  # fmt: skip
+            continue
+        kept.append(a)
+    if len(kept) == len(advice):
+        return payload
+    return {**payload, "advice": kept, "medications": [*_items(payload, "medications"), *moved]}
+
+
+_TEST_SPLIT = re.compile(r"\s*(?:[/,+&\[\]()]|\band\b)\s*", re.I)
+_TEST_CUE = re.compile(r"\b(tests?|check|repeat|investigat\w*|ix|reports?|do|get|advised)\b", re.I)
+
+
+_INTAKE = re.compile(r"\b(take|taken|eat|drink|avoid|diet|rich|supplements?|tab|tabs|tablets?|"
+                     r"cap|caps|capsules?|syp|syrup)\b", re.I)  # fmt: skip
+
+
+def _a_test(text: str) -> str | None:
+    """The test ``text`` names, as written: the whole of it, or the words of it that are a test
+    ("To review after 2wks of HbA1c" -> "HbA1c"). None when it names none."""
+    from cdi_adapter.terminology.service import bind_text  # the seed lookup only, no I/O
+
+    words = text.split()
+    for n in range(min(len(words), 3), 0, -1):  # the longest name first
+        for start in range(len(words) - n + 1):  # words may lead up to it, or follow it
+            name = " ".join(words[start : start + n])
+            if bind_text("lab_order", name) is not None:
+                return name
+    return None
+
+
+def tests_in_advice(payload: dict[str, Any]) -> dict[str, Any]:
+    """The tests an advice line orders, as investigations too (owner, 2026-10-10: "To review
+    after 2 wks with HbA1c / FBS / PPBS / S. Lipase" stayed one line of advice and no test).
+
+    A line is read for tests when it lists them: two or more of its parts ("/", ",", "+", "and")
+    are tests the terminology knows. Then every part of that list is a test - one the lookup
+    does not know (a misread, or a rare test) is kept as written at a low confidence, for the
+    reviewer. A line naming one known test counts only when it also says so ("check", "repeat",
+    "test"): "Take calcium" orders nothing. The advice line itself stays where it is - it still
+    says when to come back - and a test already under investigations is not added twice."""
+    if "advice" not in payload:
+        return payload
+    have = {(_coded_text(i) or "").strip().lower()
+            for i in _items(payload, "investigations_advised")}  # fmt: skip
+    added: list[dict[str, Any]] = []
+    for item in _items(payload, "advice"):
+        line = _coded_text(item) or ""
+        parts = [p.strip(" .:;-") for p in _TEST_SPLIT.split(line)]
+        parts = [p for p in parts if p]
+        if _INTAKE.search(line):
+            continue  # "Take calcium and vitamin D": something to take, not a test to do
+        known = [_a_test(p) for p in parts]
+        hits = [i for i, k in enumerate(known) if k]
+        if len(hits) < 2 and not (hits and _TEST_CUE.search(line)):
+            continue
+        for i in range(hits[0], len(parts)):
+            name = known[i] or parts[i]
+            if len(hits) < 2 and not known[i]:
+                continue  # one known test: only that one
+            if len(name.split()) > 4 or name.lower() in have:
+                continue
+            have.add(name.lower())
+            conf = _conf(item, 0.5)
+            added.append({"text": name, "evidence": _ev(item),
+                          "confidence": conf if known[i] else min(conf, 0.5)})  # fmt: skip
+    if not added:
+        return payload
+    return {**payload, "investigations_advised": [*_items(payload, "investigations_advised"),
+                                                  *added]}  # fmt: skip
+
+
 def _med_facts(payload, default: float) -> list[FactDraft]:
     out = []
     for item in _items(payload, "medications"):
         if isinstance(item, dict) and str(item.get("drug_name") or "").strip():
-            item = reslot_name(item)
+            item = tidy_medication(reslot_name(item))
+            if not item["drug_name"]:
+                continue
             med = parse_medication(item)
             out.append(FactDraft("medication", str(item["drug_name"]).strip(),
                                  _conf(item, default), _ev(item), medication=med))  # fmt: skip
@@ -390,9 +706,15 @@ def _med_facts(payload, default: float) -> list[FactDraft]:
 
 
 def _facts_prescription(p, d):
-    return (_coded_facts(p, "diagnoses", "condition", d) + _med_facts(p, d)
+    from cdi_adapter.extract.doctor import doctor_drafts  # EX-S2
+    from cdi_adapter.extract.patient import patient_drafts  # EX-S1
+    from cdi_adapter.extract.preparation import preparation_drafts  # EX-S4
+
+    return (patient_drafts(p, d) + doctor_drafts(p, d)
+            + _coded_facts(p, "diagnoses", "condition", d) + _med_facts(p, d)
             + _vital_facts(p, d) + _allergy_facts(p, d)
-            + _coded_facts(p, "advice", "advice", d) + _order_facts(p, d))  # fmt: skip
+            + _coded_facts(p, "advice", "advice", d) + _order_facts(p, d)
+            + preparation_drafts(p, d))  # fmt: skip
 
 
 def _facts_lab(p, d):
@@ -453,4 +775,7 @@ ENCOUNTER_DATE_KEYS = ("encounter_date", "reported_at", "study_date", "discharge
 
 def facts_from_payload(doc_type: str, payload: dict[str, Any]) -> list[FactDraft]:
     default = _conf(payload, 0.5)
-    return HANDLERS[doc_type](payload, default)
+    from cdi_adapter.extract.preparation import with_preparation  # EX-S4
+
+    tidy = tests_in_advice(split_advice(tidy_lists(payload)))
+    return HANDLERS[doc_type](with_preparation(tidy), default)

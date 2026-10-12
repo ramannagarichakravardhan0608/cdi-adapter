@@ -56,7 +56,9 @@ def test_a_wrapped_answer_with_its_own_key_names_keeps_every_value() -> None:
 def test_the_repaired_answer_becomes_facts_for_every_line() -> None:
     facts = facts_from_payload("prescription", repair_payload(copy.deepcopy(WRAPPED), RX))
     kinds = sorted(f.fact_type for f in facts)
+    # EX-S1: the patient's name, age, sex and hospital number are facts too
     assert kinds == ["advice", "condition", "medication", "medication", "medication",
+                     "patient_detail", "patient_detail", "patient_detail", "patient_detail",
                      "vital_sign", "vital_sign"]  # fmt: skip
     bp = next(f for f in facts if f.local_text == "blood pressure")
     assert bp.value_text == "145/84"

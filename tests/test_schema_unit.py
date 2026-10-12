@@ -107,7 +107,7 @@ def test_migration_0001_downgrade_drops_every_table():
     assert set(m.VIEWS) == set(re.findall(r"CREATE OR REPLACE VIEW (\w+)", VIEWS))
 
 
-def test_migration_chain_is_linear_0001_to_0035():
+def test_migration_chain_is_linear_0001_to_0038():
     cfg = Config(str(ROOT / "alembic.ini"))
     cfg.set_main_option("script_location", str(ROOT / "db" / "alembic"))
     script = ScriptDirectory.from_config(cfg)
@@ -119,9 +119,15 @@ def test_migration_chain_is_linear_0001_to_0035():
     # 0033: which document a dropped file became, and its original name and folder (LS-S8)
     # 0034: the listener's heartbeat (LS-S9)
     # 0035: why a reading needs a person, on ocr_observation (RD-S2)
-    assert script.get_heads() == ["0035"]
+    # 0036: the 'patient_detail' fact type (EX-S1)
+    # 0037: the doctor list, the document's link to a doctor, 'doctor_detail' (EX-S2)
+    # 0038: the 'preparation' fact type (EX-S4)
+    assert script.get_heads() == ["0038"]
     chain = [r.revision for r in script.walk_revisions("base", "heads")]
     assert chain == [
+        "0038",
+        "0037",
+        "0036",
         "0035",
         "0034",
         "0033",

@@ -1,0 +1,60 @@
+{
+  "about": "Which tests go with which written reasons (backlog EX-S5). Used for ONE thing: to say 'check: does not fit' when a test is ordered and none of the reasons written on the same prescription is one it goes with. It never adds a reason, never removes a test and never changes a value. A test or a reason that is not in this file is simply not judged. Plain data: a clinician can read it, correct it and approve it.",
+  "version": "indication-groups.2026-10-12.1",
+  "review_status": "unreviewed - written by the engineer; a clinician must approve which test / reason pairs are acceptable",
+  "fits_any_reason": [
+    "CBC", "Hemoglobin", "ESR", "CRP", "Urine routine", "Blood group", "RBS", "Chest X-ray", "ECG"
+  ],
+  "groups": [
+    {
+      "name": "diabetes",
+      "reasons": ["t2dm", "t1dm", "type 2 dm", "type 1 dm", "type 2 diabetes", "type 1 diabetes", "diabetes mellitus", "diabetes", "diabetic", "dm", "niddm", "iddm", "hyperglycemia", "hyperglycaemia", "prediabetes", "impaired fasting glucose", "igt", "gdm"],
+      "tests": ["HbA1c", "FBS", "PPBS", "RBS", "OGTT", "Fructosamine", "C-peptide", "Fasting insulin", "Urine ACR", "Urine microalbumin", "Lipid profile", "Creatinine", "RFT", "Fundus", "eGFR"]
+    },
+    {
+      "name": "thyroid",
+      "reasons": ["hypothyroidism", "hypothyroid", "hyperthyroidism", "hyperthyroid", "thyroid", "goitre", "goiter", "thyroiditis", "graves"],
+      "tests": ["TSH", "T3", "T4", "Free T4", "Free T3", "Thyroid profile", "Lipid profile"]
+    },
+    {
+      "name": "lipids and heart",
+      "reasons": ["dyslipidemia", "dyslipidaemia", "hyperlipidemia", "hyperlipidaemia", "hypercholesterolemia", "cad", "ihd", "coronary artery disease", "ischemic heart disease", "ischaemic heart disease", "hypertension", "htn", "chest pain", "angina", "mi", "heart failure", "ccf", "palpitations"],
+      "tests": ["Lipid profile", "Total cholesterol", "LDL", "HDL", "Triglycerides", "ECG", "2D Echo", "TMT", "Troponin I", "Troponin T", "CK MB", "NT-proBNP", "Creatinine", "RFT", "Serum electrolytes", "Sodium", "Potassium", "Coronary angiogram", "Holter", "Chest X-ray"]
+    },
+    {
+      "name": "kidney",
+      "reasons": ["ckd", "chronic kidney disease", "aki", "renal failure", "kidney disease", "nephropathy", "nephrotic", "renal", "oliguria"],
+      "tests": ["RFT", "Creatinine", "Blood urea", "BUN", "Serum electrolytes", "Sodium", "Potassium", "eGFR", "Urine routine", "Urine ACR", "Urine microalbumin", "24 hour urine protein", "USG abdomen", "Calcium", "Phosphorus", "Uric acid"]
+    },
+    {
+      "name": "liver",
+      "reasons": ["jaundice", "hepatitis", "liver disease", "cld", "cirrhosis", "fatty liver", "nafld", "alcoholic liver"],
+      "tests": ["LFT", "Total bilirubin", "Direct bilirubin", "SGPT", "SGOT", "ALP", "GGT", "Albumin", "Total protein", "PT/INR", "HBsAg", "Anti HCV", "Viral markers", "USG abdomen"]
+    },
+    {
+      "name": "anaemia",
+      "reasons": ["anemia", "anaemia", "pallor", "iron deficiency", "b12 deficiency", "weakness", "fatigue"],
+      "tests": ["CBC", "Hemoglobin", "Peripheral smear", "Iron studies", "Serum iron", "TIBC", "Ferritin", "Vitamin B12", "Folate", "Reticulocyte count", "Hb electrophoresis", "Stool occult blood"]
+    },
+    {
+      "name": "fever and infection",
+      "reasons": ["fever", "pyrexia", "puo", "infection", "sepsis", "viral fever", "dengue", "malaria", "typhoid", "enteric fever", "urti", "lrti", "cough", "cold", "pneumonia", "covid"],
+      "tests": ["CBC", "ESR", "CRP", "Malaria parasite", "Dengue NS1", "Dengue serology", "Widal", "Typhidot", "Fever profile", "Blood culture", "Urine routine", "Urine culture", "Procalcitonin", "Chest X-ray", "Sputum AFB", "Sputum culture", "D-dimer", "IL6", "LFT"]
+    },
+    {
+      "name": "urinary",
+      "reasons": ["uti", "urinary tract infection", "dysuria", "burning micturition", "cystitis", "pyelonephritis", "haematuria", "hematuria", "urinary incontinence", "bph", "prostate"],
+      "tests": ["Urine routine", "Urine culture", "USG abdomen", "Creatinine", "PSA", "RFT"]
+    },
+    {
+      "name": "joints and bones",
+      "reasons": ["arthritis", "rheumatoid arthritis", "ra", "joint pain", "gout", "osteoporosis", "osteoarthritis", "oa", "low back pain", "lba", "back pain", "sle", "lupus"],
+      "tests": ["RA factor", "Anti CCP", "ANA", "Uric acid", "ESR", "CRP", "Calcium", "Vitamin D", "ASO", "X-ray", "BMD", "MRI", "ALP", "Phosphorus"]
+    },
+    {
+      "name": "abdomen",
+      "reasons": ["pancreatitis", "abdominal pain", "pain abdomen", "epigastric pain", "gastritis", "acid peptic disease", "apd", "gerd", "dyspepsia", "vomiting", "diarrhoea", "diarrhea", "gastroenteritis"],
+      "tests": ["Amylase", "Lipase", "LFT", "USG abdomen", "Stool routine", "Stool occult blood", "Upper GI endoscopy", "Serum electrolytes", "CBC", "CT scan"]
+    }
+  ]
+}

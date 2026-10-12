@@ -11,6 +11,8 @@ dist/
 htmlcov/
 .env
 data/
+# ...but not the reviewed lists that ship with the code (lab tests, preparation phrases)
+!src/cdi_adapter/*/data/
 # small synthetic test fixtures (the catalogue sample) are part of the repo
 !tests/data/
 logs/

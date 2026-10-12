@@ -56,10 +56,7 @@ ACCEPTED, NEEDS_CHECK = "accepted", "needs_check"
 # contract fields whose extractor or table is not built yet (OUT-S1, EX-S1/S2/S4/S5): reported as
 # absent rather than guessed. Keeping the list here means the screen and the file agree on it.
 ABSENT: tuple[str, ...] = (
-    "patient.phone", "patient.address", "patient.dob",
-    "doctor.clinic", "doctor.qualification", "doctor.stamp_present", "doctor.signature_present",
-    "lab_tests[].specimen", "lab_tests[].urgency", "lab_tests[].context",
-    "lab_tests[].preparation_refs", "engines",
+    "engines",
 )  # fmt: skip
 
 
@@ -131,14 +128,18 @@ def build(conn: Connection, document_id: UUID | str) -> dict[str, Any]:
         "document": {
             "source": source_of(doc["source_channel"], doc["filename"], _arrivals(conn, doc["id"]))
         },  # fmt: skip
-        "patient": _patient(conn, doc),
-        "doctor": _doctor(conn, facts),
+        "patient": _patient(conn, doc, facts),
+        "doctor": _doctor(conn, facts, doc["id"]),
         "visit": _visit(conn, facts),
         "lab_tests": _lab_tests(conn, facts),
+        "lab_master_version": _lab_master_version(conn, doc["id"]),
         "diagnoses": _diagnoses(conn, facts),
         "preparation": _preparation(conn, facts),
+        "preparation_phrases_version": _preparation_version(facts),
         "absent": list(ABSENT),
     }
+    _link_preparation(out["lab_tests"], out["preparation"])
+    out["context_rules_version"] = _link_context(conn, out["lab_tests"], facts)
     out["review"] = _review(out)
     out["status"] = _status(doc, out)
     return out
@@ -251,9 +252,42 @@ def _facts(conn: Connection, document_id: UUID | str) -> list[dict[str, Any]]:
     return repo.get_facts_for_document(conn, document_id)
 
 
-def _patient(conn: Connection, doc: dict[str, Any]) -> dict[str, Any]:
+# EX-S1: the result's key for each patient detail read from this page
+_DETAIL_KEYS = {"name": "name", "sex": "sex", "age": "age_text", "date of birth": "dob",
+                "phone": "phone", "address": "address"}  # fmt: skip
+_DETAIL_IDS = {"hospital number": "mrn", "abha number": "abha"}
+
+
+def _patient_details(conn: Connection, facts: list[dict[str, Any]]) -> dict[str, Any]:
+    """EX-S1: what THIS page says about the patient - each value as written, with its proof (the
+    part of the picture) and its status. A detail the page does not give is not in the result:
+    empty, and nothing to review."""
+    out: dict[str, Any] = {}
+    ids = []
+    for f in _by_type(facts, "patient_detail"):
+        label, raw = str(f["local_text"]), f.get("value_text")
+        if not raw or f.get("review_state") == "rejected":
+            continue
+        if label in _DETAIL_KEYS:
+            out[_DETAIL_KEYS[label]] = _fact_value(conn, f, raw)
+        elif label in _DETAIL_IDS:
+            ids.append({"type": _DETAIL_IDS[label], **_fact_value(conn, f, raw)})
+    if ids:
+        out["ids_read"] = ids
+    return out
+
+
+def _patient(conn: Connection, doc: dict[str, Any],
+             facts: list[dict[str, Any]] | None = None) -> dict[str, Any]:  # fmt: skip
     """Identity as the documents gave it. The MPI row is the system's own record, so its fields
-    carry the identity confidence rather than a per-fact one."""
+    carry the identity confidence rather than a per-fact one. A detail read from this page
+    (EX-S1) takes the place of the record's: it has a proof and a status of its own."""
+    read = _patient_details(conn, facts or [])
+    known = _patient_record(conn, doc)
+    return {**known, **read}
+
+
+def _patient_record(conn: Connection, doc: dict[str, Any]) -> dict[str, Any]:
     if not doc["patient_id"]:
         return {}
     p = conn.execute(
@@ -283,16 +317,66 @@ def _by_type(facts: list[dict[str, Any]], *types: str) -> list[dict[str, Any]]:
     return [f for f in facts if f["fact_type"] in types]
 
 
-def _doctor(conn: Connection, facts: list[dict[str, Any]]) -> dict[str, Any]:
-    """What the letterhead gave. The clinic block, qualification and stamp/signature are contract
-    fields nothing extracts yet (see :data:`ABSENT`)."""
+# EX-S2: the result's key for each doctor detail read from the page
+_DOCTOR_KEYS = {"name": "name", "registration number": "registration_no",
+                "qualification": "qualification", "department": "department"}  # fmt: skip
+_CLINIC_KEYS = {"clinic name": "name", "clinic address": "address", "clinic phone": "phone"}
+UNKNOWN_DOCTOR = {"method": "unknown", "confidence": None, "practitioner_id": None}
+
+
+def _doctor(conn: Connection, facts: list[dict[str, Any]],
+            document_id: Any = None) -> dict[str, Any]:  # fmt: skip
+    """EX-S2: what the page says about the doctor - each value as written, with its proof and
+    status - whether it is stamped and signed, and how the doctor was identified. ``link`` is
+    always there: "unknown" is an answer, and the rest of the result does not depend on it."""
     out: dict[str, Any] = {}
-    for f in _by_type(facts, "referral", "document"):
-        text_value = _text_of(f)
-        if text_value and "name" not in out:
-            out["name"] = _fact_value(conn, f, text_value)
-    out["link"] = {"method": "unknown", "confidence": None, "practitioner_id": None}
+    clinic: dict[str, Any] = {}
+    for f in _by_type(facts, "doctor_detail"):
+        label, raw = str(f["local_text"]), f.get("value_text")
+        if not raw or f.get("review_state") == "rejected":
+            continue
+        if label in _DOCTOR_KEYS:
+            out[_DOCTOR_KEYS[label]] = _fact_value(conn, f, raw)
+        elif label in _CLINIC_KEYS:
+            clinic[_CLINIC_KEYS[label]] = _fact_value(conn, f, raw)
+    if "name" not in out:  # documents read before EX-S2: the name some carried as a fact
+        for f in _by_type(facts, "referral", "document"):
+            text_value = _text_of(f)
+            if text_value and "name" not in out:
+                out["name"] = _fact_value(conn, f, text_value)
+    if clinic:
+        out["clinic"] = clinic
+    link = _doctor_link(conn, document_id)
+    out["stamp_present"] = link.pop("stamp_present", None)
+    out["signature_present"] = link.pop("signature_present", None)
+    if stamp_text := link.pop("stamp_text", None):
+        out["stamp_text"] = stamp_text
+    out["link"] = link
     return out
+
+
+def _doctor_link(conn: Connection, document_id: Any) -> dict[str, Any]:
+    if document_id is None or conn is None:
+        return dict(UNKNOWN_DOCTOR)
+    from cdi_adapter.recognition import practitioner
+
+    row = practitioner.link_of(conn, document_id)
+    if row is None:
+        return dict(UNKNOWN_DOCTOR)
+    link: dict[str, Any] = {
+        "method": row["method"],
+        "confidence": float(row["confidence"]) if row["confidence"] is not None else None,
+        "practitioner_id": str(row["practitioner_id"]) if row["practitioner_id"] else None,
+        "stamp_present": row["stamp_present"], "signature_present": row["signature_present"],
+        "stamp_text": row["stamp_text"],
+    }  # fmt: skip
+    if row["practitioner_id"]:
+        link["practitioner_name"] = row["practitioner_name"]
+    if row["candidates"]:
+        link["candidates"] = row["candidates"]
+    if row["why"]:
+        link["why"] = row["why"]
+    return link
 
 
 def _visit(conn: Connection, facts: list[dict[str, Any]]) -> dict[str, Any]:
@@ -305,13 +389,101 @@ def _visit(conn: Connection, facts: list[dict[str, Any]]) -> dict[str, Any]:
         out["encounter_date"] = value(str(enc), review_state="auto_accepted", confidence=None,
                                       evidence={"page": None, "bbox": None,
                                                 "observation_ids": []})  # fmt: skip
+    # EX-S5: the follow-up, when one is written - as written, with its own proof and status
+    from cdi_adapter.extract.facts import advice_kind
+
+    follow = [_fact_value(conn, f, _text_of(f)) for f in _by_type(facts, "advice")
+              if advice_kind(f.get("local_text")) == "follow_up"
+              and f.get("review_state") != "rejected"]  # fmt: skip
+    if follow:
+        out["follow_up"] = follow
+    return out
+
+
+def reasons_of(conn: Connection, facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """EX-S5: the reasons written on the prescription - its diagnoses, complaints and findings
+    - each with the text it came from and its proof. One that was rejected is not a reason."""
+    from cdi_adapter.extract.context import REASON_TYPES
+
+    out = []
+    for f in _by_type(facts, *REASON_TYPES):
+        if f.get("review_state") == "rejected":
+            continue
+        ev = _evidence(conn, f["id"]) or {}
+        written = _text_of(f)
+        proven = bool(ev.get("bbox") or ev.get("observation_ids"))
+        out.append({"type": REASON_TYPES[f["fact_type"]], "text": written, "quote": written,
+                    "page": ev.get("page"), "blocks": ev.get("observation_ids") or [],
+                    "evidence": ev if proven else None})  # fmt: skip
+    # FR5: a link rests on a quote of the page; a reason with no proof gives no link
+    return [r for r in out if r["evidence"]]
+
+
+def _link_context(conn: Connection, tests: list[dict[str, Any]],
+                  facts: list[dict[str, Any]]) -> str | None:  # fmt: skip
+    """EX-S5: ``lab_tests[].context`` - for each ordered test, the reasons written on the same
+    prescription, with how the page connects them (same line / same page / other page: never
+    "ordered because") - and ``check: does not fit`` when the test goes with none of them. The
+    test itself is never changed. Returns the version of the rules used, or None when there is
+    no ordered test to link."""
+    from cdi_adapter.extract import context
+
+    ordered = [t for t in tests if "match" in t]  # not the lab RESULTS written on the page
+    if not ordered:
+        return None
+    asked = [{"as_written": t["as_written"],
+              "page": ((t.get("value") or {}).get("evidence") or {}).get("page"),
+              "blocks": ((t.get("value") or {}).get("evidence") or {}).get("observation_ids")}
+             for t in ordered]  # fmt: skip
+    for test, link in zip(ordered, context.link_context(asked, reasons_of(conn, facts)),
+                          strict=True):  # fmt: skip
+        test["context"] = link["context"]
+        if link.get("check"):
+            test["check"] = link["check"]
+    return context.version()
+
+
+def _lab_master_version(conn: Connection, document_id: Any) -> str | None:
+    """EX-S3: which version of the lab-test master named this document's tests - the one its
+    terminology run used, so a result read under an older list still says so."""
+    if conn is None:
+        return None
+    return conn.execute(
+        text("SELECT model_version FROM pipeline_run WHERE document_id = :d "
+             "AND stage = 'terminology' AND model_version IS NOT NULL "
+             "ORDER BY started_at DESC LIMIT 1"), {"d": str(document_id)},
+    ).scalar_one_or_none()  # fmt: skip
+
+
+def _ordered_tests(conn: Connection, facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """EX-S3: every test or panel the prescription orders - as written (always), its standard
+    name and code when the lab-test master has one, whether it is a test, a panel or a study,
+    its specimen when known, and how the name was arrived at. ``match`` is ``not_matched`` for a
+    text the list does not know: listed all the same, with the candidates a reviewer can pick
+    from. A panel is ONE item: it is never expanded into its tests."""
+    from cdi_adapter.terminology import lab_master
+
+    out = []
+    for f in _by_type(facts, "lab_order"):
+        if f.get("review_state") == "rejected":
+            continue
+        written = _text_of(f)
+        seen = lab_master.describe(str(written), f.get("code"))
+        row: dict[str, Any] = {
+            "as_written": written, "kind": seen["kind"], "specimen": seen["specimen"],
+            "urgency": seen["urgency"], "standard": seen["standard"], "match": seen["match"],
+            "matched_by": seen["how"], "value": _fact_value(conn, f, written),
+        }  # fmt: skip
+        if seen.get("candidates"):
+            row["candidates"] = seen["candidates"]
+        out.append(row)
     return out
 
 
 def _lab_tests(conn: Connection, facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The investigations this prescription orders. ``cn_lab_order`` holds the advised tests
-    (E12 lab_order); a lab *result* on the same page is reported with its value."""
-    out = []
+    """The investigations this prescription orders (EX-S3), then any lab *result* written on the
+    same page, reported with its value."""
+    out = _ordered_tests(conn, facts)
     for f in _by_type(facts, "lab_result", "procedure", "diagnostic_report"):
         written = _text_of(f)
         row: dict[str, Any] = {
@@ -354,17 +526,62 @@ def preparation_kind(written: Any) -> str | None:
     return None
 
 
+def _preparation_version(facts: list[dict[str, Any]]) -> str | None:
+    from cdi_adapter.extract import preparation
+
+    return preparation.version() if _by_type(facts, "preparation") else None
+
+
 def _preparation(conn: Connection, facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The preparation instructions on this prescription: each one a value object like any
-    other (status, confidence, evidence), with what kind of instruction it is. Which test an
-    instruction belongs to (``lab_tests[].preparation_refs``) is still not worked out."""
+    """The preparation instructions on this prescription (EX-S4): each one a value object like
+    any other (status, confidence, evidence) with its **original words** (``text``), and beside
+    them its type, its value and unit when a number is written, and what it applies to -
+    ``"all"``, a list of the tests as written, or ``"unclear"``. Nothing is here that was not
+    written: no preparation written, no item.
+
+    A document read before EX-S4 has no preparation facts; its advice lines that say a
+    preparation are still listed, as they were (UP-S3), with no test to apply to."""
+    from cdi_adapter.extract import preparation
+
     out = []
+    for f in _by_type(facts, "preparation"):
+        if f.get("review_state") == "rejected":
+            continue
+        written = _text_of(f)
+        seen = preparation.describe(str(written), f.get("value_text"))
+        item = {**_fact_value(conn, f, written), "text": written, "type": seen["type"],
+                "amount": seen["value"], "unit": seen["unit"],
+                "applies_to": seen["applies_to"],
+                "instruction": preparation_kind(written) or seen["type"]}  # fmt: skip
+        if "range" in seen:
+            item["range"] = seen["range"]
+        if seen["problems"]:
+            item["problems"] = seen["problems"]
+        out.append(item)
     for f in _by_type(facts, "advice", "care_plan"):
         written = _text_of(f)
         kind = preparation_kind(written)
         if kind:
             out.append({**_fact_value(conn, f, written), "text": written, "instruction": kind})
     return out
+
+
+def _link_preparation(tests: list[dict[str, Any]], notes: list[dict[str, Any]]) -> None:
+    """``lab_tests[].preparation_refs``: the positions, in ``preparation``, of the notes that
+    apply to each ordered test - by what the note says ("all"), or by the test it was written
+    with. A note whose test is unclear is linked to none: it waits for a person."""
+    for test in tests:
+        if "match" not in test:  # a lab RESULT on the page: nothing to prepare for
+            continue
+        name = " ".join(str(test.get("as_written") or "").lower().split())
+        refs = []
+        for i, note in enumerate(notes):
+            applies = note.get("applies_to")
+            listed = {" ".join(str(a).lower().split()) for a in applies} if isinstance(
+                applies, list) else set()  # fmt: skip
+            if applies == "all" or name in listed:
+                refs.append(i)
+        test["preparation_refs"] = refs
 
 
 def _diagnoses(conn: Connection, facts: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -33,12 +33,17 @@ from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
-from cdi_adapter import result
+from cdi_adapter import repo, result
 from cdi_adapter.agent.medication import latest_for_document
 from cdi_adapter.canon import promote
 from cdi_adapter.canon import repo as canon
 from cdi_adapter.catalogue.service import matches_for_facts
 from cdi_adapter.db import session_scope
+from cdi_adapter.extract import preparation
+from cdi_adapter.extract.doctor import doctor_of
+from cdi_adapter.extract.facts import advice_kind
+from cdi_adapter.recognition import practitioner
+from cdi_adapter.terminology import lab_master
 from cdi_adapter.webapp import auth, med_replace
 from cdi_adapter.webapp.c360_page import c360_page
 from cdi_adapter.webapp.reviewer_page import reviewer_page
@@ -140,6 +145,15 @@ def item_elements(item_id: UUID) -> dict[str, Any]:
             f = e["fact"]
             e["medication"] = None
             e["catalogue"] = None
+            # the section a fact is shown under: a "come back" line is follow-up, not home care
+            e["category"] = (advice_kind(f.get("local_text")) if f and f["fact_type"] == "advice"
+                             else e.get("element_type"))  # fmt: skip
+            if f and f["fact_type"] == "preparation":
+                # EX-S4: the note's type, value and the test(s) it applies to
+                e["prep"] = preparation.describe(f.get("local_text"), f.get("value_text"))
+            if f and f["fact_type"] == "lab_order":
+                # EX-S3: its standard name, test / panel, and the candidates when not matched
+                e["lab"] = lab_master.describe(f.get("local_text"), f.get("code"))
             if f and f["fact_type"] == "medication":
                 m = c.execute(text("SELECT * FROM medication_detail WHERE fact_id = :i"),
                               {"i": str(f["id"])}).mappings().first()  # fmt: skip
@@ -149,7 +163,54 @@ def item_elements(item_id: UUID) -> dict[str, Any]:
                 # the medication agent's suggestion, also for the fact a correction replaced
                 e["agent"] = agent["by_fact"].get(str(f["id"])) or agent["by_fact"].get(
                     str(f.get("supersedes") or ""))  # fmt: skip
-        return {"item": item, "elements": els, "agent_run": agent["run"]}
+        _add_context(c, els)
+        return {"item": item, "elements": els, "agent_run": agent["run"],
+                "doctor": _doctor(c, item.get("source_document_id"))}  # fmt: skip
+
+
+def _add_context(c: Any, els: list[dict[str, Any]]) -> None:
+    """EX-S5: for each ordered test, the reasons written on the same prescription and how the
+    page connects them - and the "does not fit" check. Shown beside the test; changes nothing."""
+    from cdi_adapter.extract import context
+
+    def where(f: dict[str, Any]) -> dict[str, Any]:
+        rows = repo.get_provenance(c, f["id"])
+        blocks = [str(b) for p in rows for b in (p.get("ocr_block_ids") or [])]
+        return {"page": rows[0].get("page_id") if rows else None, "blocks": blocks,
+                "quote": f.get("local_text")}  # fmt: skip
+
+    live = [e for e in els if e.get("fact") and e["state"] != "rejected"]
+    tests = [e for e in live if e["fact"]["fact_type"] == "lab_order"]
+    if not tests:
+        return
+    reasons = [{"type": context.REASON_TYPES[e["fact"]["fact_type"]],
+                "text": e["fact"]["local_text"], **where(e["fact"])}
+               for e in live if e["fact"]["fact_type"] in context.REASON_TYPES]  # fmt: skip
+    asked = [{"as_written": e["fact"]["local_text"], **where(e["fact"])} for e in tests]
+    for e, link in zip(tests, context.link_context(asked, reasons), strict=True):
+        e["context"] = link
+
+
+def _doctor(c: Any, document_id: Any) -> dict[str, Any] | None:
+    """The prescribing doctor as the page gives it - shown, never stored (extract/doctor.py)."""
+    if not document_id:
+        return None
+    payload = c.execute(
+        text("SELECT payload FROM extraction WHERE document_id = :d "
+             "ORDER BY created_at DESC LIMIT 1"), {"d": str(document_id)}
+    ).scalar()  # fmt: skip
+    lines = [str(b["text"] or "") for b in repo.get_ocr_blocks(c, str(document_id))]
+    shown = doctor_of(payload if isinstance(payload, dict) else None, lines)
+    # EX-S2: how the doctor was identified (linked, or unknown with the candidates)
+    link = practitioner.link_of(c, document_id)
+    if link is not None:
+        shown["link"] = {k: (str(link[k]) if k == "practitioner_id" and link[k] else link[k])
+                         for k in ("method", "practitioner_id", "practitioner_name",
+                                   "candidates", "why", "stamp_present",
+                                   "signature_present")}  # fmt: skip
+        if link["confidence"] is not None:
+            shown["link"]["confidence"] = float(link["confidence"])
+    return shown
 
 
 @router.post("/api/reviewer/items/{item_id}/agent")

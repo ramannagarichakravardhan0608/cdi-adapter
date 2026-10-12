@@ -164,6 +164,21 @@ class _Checked:
     outcome: Outcome | None = None
 
 
+def review_is_live(first: Entry) -> bool:
+    """The real answer to :attr:`Listener.filed`, from the review tables. When the database
+    cannot say, the file is a duplicate - reading twice is the mistake to avoid."""
+    if not first.document_id:
+        return True
+    try:
+        from cdi_adapter.canon.repo import has_live_item
+        from cdi_adapter.db import session_scope
+
+        with session_scope() as conn:
+            return has_live_item(conn, [str(first.document_id)])
+    except Exception:  # noqa: BLE001
+        return True
+
+
 @dataclass
 class Listener:
     """One watched folder, the reader its files go to, and the ledger of what was seen."""
@@ -186,6 +201,11 @@ class Listener:
     batch_size: int = 3
     batch_wait_seconds: float = 0.0
     now: Callable[[], datetime] = lambda: datetime.now(tz=UTC)
+    # Is the document an earlier file became still in front of a reviewer (or approved)? If
+    # not - its review was rejected or cleared away - the same bytes dropped again are read
+    # again instead of being filed as a duplicate (owner, 2026-10-10). A listener built by hand
+    # says yes: the same bytes are a duplicate, as they always were.
+    filed: Callable[[Entry], bool] = lambda first: True
     # LS-S9: set to stop gently - the running batch finishes, no new one starts, the loop ends
     stop: threading.Event = field(default_factory=threading.Event)
     _ready_since: dict[str, datetime] = field(default_factory=dict)
@@ -207,6 +227,7 @@ class Listener:
                    max_attempts=settings.listener_max_attempts,
                    retry_base_seconds=settings.listener_retry_base_seconds,
                    alert=quarantine_alert(settings),
+                   filed=review_is_live if reader.ledger is not None else (lambda first: True),
                    lease_seconds=settings.listener_lease_seconds,
                    worker=settings.listener_worker or socket.gethostname(),
                    batch_size=settings.listener_batch_size,
@@ -335,7 +356,7 @@ class Listener:
                 self._file(file, entry, checked.outcome, checked.sha, report, batch_id)
                 continue
             first = self.ledger.processed(checked.sha or "")
-            if first is not None and first.id != entry.id:
+            if first is not None and first.id != entry.id and self.filed(first):
                 self._duplicate(file, entry, first, checked.sha or "", report, batch_id)
             elif checked.sha in {c.sha for c in to_read}:
                 same_bytes.append((file, entry))  # the same picture twice in one batch
@@ -436,7 +457,7 @@ class Listener:
         outcome = checked.outcome
         if outcome is None:
             first = self.ledger.processed(checked.sha or "")
-            if first is not None and first.id != entry.id:
+            if first is not None and first.id != entry.id and self.filed(first):
                 self._duplicate(file, entry, first, checked.sha or "", report, batch_id)
                 return
             outcome = self._read_checked(checked)

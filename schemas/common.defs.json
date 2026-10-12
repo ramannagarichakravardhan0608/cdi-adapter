@@ -56,6 +56,8 @@
         "dob": {"$ref": "#/$defs/date_text"},
         "mrn": {"type": ["string", "null"]},
         "abha": {"type": ["string", "null"]},
+        "phone": {"type": ["string", "null"], "description": "the PATIENT's phone number exactly as written; never the clinic's or the doctor's"},
+        "address": {"type": ["string", "null"], "description": "the PATIENT's address as written; never the clinic's"},
         "evidence": {"$ref": "#/$defs/evidence"}
       },
       "additionalProperties": true

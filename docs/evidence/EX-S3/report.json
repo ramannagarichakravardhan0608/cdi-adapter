@@ -1,0 +1,28 @@
+{
+ "master_version": "lab-master.2026-10-12.1",
+ "master_rows": 133,
+ "texts": 146,
+ "with_a_right_answer": 139,
+ "should_not_match": 7,
+ "matched": 127,
+ "correct": 127,
+ "doubtful": 4,
+ "share_matched": 0.9137,
+ "share_correct": 0.9137,
+ "wrong": [],
+ "not_matched": [
+  "Vit D3",
+  "Lipid Profile (fasting)",
+  "Complete Haemogram",
+  "Dengue NS1 Ag",
+  "NT pro BNP",
+  "S. Creat",
+  "Blood sugar (F)",
+  "Blood sugar (PP)",
+  "Lipid prof.",
+  "Liver functon test",
+  "M.P",
+  "Bl. urea"
+ ],
+ "named_but_should_not_be": []
+}

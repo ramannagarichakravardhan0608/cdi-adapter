@@ -92,11 +92,11 @@ def test_a_value_object_must_have_its_status_to_validate() -> None:
 def test_the_absent_list_names_what_no_extractor_fills_yet() -> None:
     """A contract field whose table or extractor is not built (OUT-S1, EX-S1/S2/S4/S5) is listed,
     not emitted empty - so a blank is never read as "not written on the page"."""
-    assert "lab_tests[].preparation_refs" in result.ABSENT
+    assert "lab_tests[].preparation_refs" not in result.ABSENT  # EX-S4: worked out now
     assert "preparation" not in result.ABSENT  # UP-S3 AC1: recognised among the advice now
-    assert "lab_tests[].context" in result.ABSENT
-    assert "doctor.clinic" in result.ABSENT
-    assert "patient.phone" in result.ABSENT
+    assert "lab_tests[].context" not in result.ABSENT  # EX-S5: the written reasons, linked
+    assert "doctor.clinic" not in result.ABSENT  # EX-S2: read from the page now
+    assert "patient.phone" not in result.ABSENT  # EX-S1: read from the page now
 
 
 def test_the_bytes_are_stable() -> None:

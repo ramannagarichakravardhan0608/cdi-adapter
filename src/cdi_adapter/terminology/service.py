@@ -85,7 +85,23 @@ def _index(fact_type: str) -> tuple[dict[str, seed.Concept], dict[str, seed.Conc
     return exact, alias
 
 
+def _bind_order(local_text: str | None) -> Binding | None:
+    """EX-S3: an ordered test is named from the lab-test master (``lab_master``): exact, alias,
+    normalised, then fuzzy. A fuzzy match is bound too - with ``how = "fuzzy"`` - so the
+    reviewer sees what it is thought to be; validation holds it as doubtful. A test the master
+    has no code for is named by its own id in the internal vocabulary."""
+    from cdi_adapter.terminology import lab_master
+
+    m = lab_master.match(local_text)
+    if m.entry is None or m.status == lab_master.NOT_MATCHED:
+        return None
+    e = m.entry
+    return Binding(seed.Concept(e.system, e.standard_code, e.name, e.aliases), m.how or "alias")
+
+
 def bind_text(fact_type: str, local_text: str | None) -> Binding | None:
+    if fact_type == "lab_order":
+        return _bind_order(local_text)
     exact, alias = _index(fact_type)
     if not exact:
         return None
@@ -164,8 +180,12 @@ def _update_fact(conn, fact_id: UUID, u: dict[str, Any]) -> None:
 def bind_document(document_id: UUID | str, *, actor: str = "system") -> dict[str, Any]:
     with session_scope() as conn:
         model = f"seed:{get_settings().terminology_package}"
+        # EX-S3: which lab-test master named this document's tests is kept with the run
+        from cdi_adapter.terminology import lab_master
+
         run_id = repo.start_run(
-            conn, document_id=document_id, stage="terminology", model_name=model
+            conn, document_id=document_id, stage="terminology", model_name=model,
+            model_version=lab_master.version(),
         )
     try:
         with session_scope() as conn:

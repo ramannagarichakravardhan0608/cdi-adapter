@@ -199,6 +199,17 @@ def _validate(conn: Connection, doc_id: str, s: Settings,
     held: list[dict[str, Any]] = []
     audit: list[str] = []
     n_auto = n_conflict = 0
+    # EX-S6: what kind of region each OCR block of the document is (a line, or the whole page)
+    kinds = conn.execute(text("SELECT id, block_type FROM ocr_block WHERE document_id = :d"),
+                         {"d": doc_id}).all()  # fmt: skip
+    block_types = {str(r[0]): str(r[1]) for r in kinds}
+    # EX-S5: the reasons written on this prescription, for the "does not fit" check
+    reasons = [str(f["local_text"]) for f in facts
+               if f["fact_type"] in ("condition", "symptom", "finding") and f["is_current"]
+               and f["review_state"] != "rejected"]  # fmt: skip
+    # EX-S1: the patient's details as read, for the checks that need two of them (age / dob)
+    details = {str(f["local_text"]): str(f.get("value_text") or "") for f in facts
+               if f["fact_type"] == "patient_detail" and f["is_current"]}  # fmt: skip
     confidences: list[tuple[str, float]] = []  # E10-S4: observed once the gate pass is done
     for f in facts:
         if f["review_state"] in HUMAN_STATES:
@@ -214,9 +225,19 @@ def _validate(conn: Connection, doc_id: str, s: Settings,
         findings = (range_findings + rules.check_unit_present(f) + rules.check_medication(f)
                     + rules.check_dates(f, enc_date)
                     + rules.check_evidence(provenance)
-                    + rules.check_quote(f, provenance)  # RD-S4: quote first
+                    + rules.check_page_level(provenance, block_types)  # EX-S6 FR6
+                    # RD-S4: quote first. A patient detail has its own (EX-S1): its name is
+                    # a label ("phone"), and the value is what must be on the page
+                    + (rules.check_patient_detail(
+                           f, provenance, details if f["fact_type"] == "patient_detail" else None,
+                           enc_date)
+                       if f["fact_type"] in ("patient_detail", "doctor_detail")
+                       else rules.check_quote(f, provenance))
                     + rules.check_untrusted(ext) + rules.check_incomplete(ext)
                     + rules.check_terminology(f)
+                    + rules.check_lab_order(f)  # EX-S3: not matched / doubtful -> a person
+                    + rules.check_preparation(f, provenance)  # EX-S4: number / applies-to
+                    + rules.check_context(f, reasons)  # EX-S5: fits none of the reasons
                     + rules.check_field_grammars(f, med_readings.get(
                         fieldgrammar.normalise(f.get("drug_text")).lower())))  # fmt: skip
 

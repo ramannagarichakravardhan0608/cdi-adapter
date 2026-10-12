@@ -11,13 +11,15 @@ from cdi_adapter.webapp.reviewer_page import reviewer_page
 def test_facts_are_grouped_into_clinical_sections_in_reading_order() -> None:
     html = reviewer_page()
     keys = re.findall(r"\['([a-z_]+)', '[^']+'\]", html.split("const SECTIONS = ")[1].split(";")[0])
-    assert keys[:7] == ["condition", "symptom", "finding", "vital_sign", "lab_result",
-                        "diagnostic_report", "medication"]  # fmt: skip
-    assert keys[-2:] == ["advice", "document"]  # advice last, then "Other"
+    # EX-S1 / EX-S2: who the page is about, and who wrote it, come first
+    assert keys[:9] == ["patient_detail", "doctor_detail", "condition", "symptom", "finding",
+                        "vital_sign", "lab_result", "diagnostic_report",
+                        "medication"]  # fmt: skip
+    assert keys[-3:] == ["advice", "follow_up", "document"]  # advice last, then "Other"
     medication_columns = ("Strength", "Dose", "Frequency", "Duration", "Route", "Instructions")
     for column in (f"'{c}'" for c in medication_columns):
         assert column in html  # a medication's own columns
-    assert "known.has(e.element_type) ? e.element_type : 'document'" in html  # never dropped
+    assert "k = known.has(c) ? c : 'document'" in html  # never dropped
     assert "cdn" not in html.lower()
 
 
@@ -44,3 +46,21 @@ def test_medications_show_the_agents_suggestion_which_the_reviewer_applies() -> 
     assert "Use suggestion" in html and "function useAgent" in html
     assert "editFact(fid, item)" in html  # opens the normal Edit form, pre-filled
     assert "/api/reviewer/items/${id}/agent" in html and "Run agent again" in html
+
+
+def test_a_medicine_has_one_button_and_the_catalogue_choice_is_inside_edit() -> None:
+    """Owner, 2026-10-10: Edit and Replace were two buttons; choosing the medicine from the
+    catalogue is now part of the Edit form."""
+    html = reviewer_page()
+    assert ">Replace</button>" not in html  # no second button on the row
+    assert "Choose the medicine from the catalogue…</button>" in html  # inside the Edit form
+    assert "const pick = e.element_type === 'medication' ?" in html  # only for a medicine
+    assert "/api/reviewer/facts/${fid}/replace`" in html  # the same save as before
+    assert "if (rp) rp.style.display = 'none'" in html  # closing Edit closes the catalogue too
+
+
+def test_the_row_has_no_details_link() -> None:
+    """Owner, 2026-10-10: "details" only opened the old Review page (no longer in the menu) and
+    showed nothing about the line it sat on."""
+    html = reviewer_page()
+    assert ">details</a>" not in html and 'href="/review"' not in html

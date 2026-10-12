@@ -227,6 +227,23 @@ def check_evidence(provenance: list[dict[str, Any]]) -> list[Finding]:
     return [Finding("blocker", "evidence-missing", "no OCR block or extracted text supports it")]
 
 
+def check_page_level(provenance: list[dict[str, Any]],
+                     block_types: dict[str, str] | None) -> list[Finding]:
+    """EX-S6 FR6: a value whose only proof is the whole page is never auto-accepted. The
+    handwriting reader gives text but no geometry, so every line it reads carries the page's
+    box (``block_type = 'page'``): that says the value is somewhere on the page, not where. A
+    blocker, so the value goes to a person. A value with at least one line-level region is not
+    touched; one with no proof at all is ``check_evidence``'s finding."""
+    cited = [str(b) for p in provenance for b in (p.get("ocr_block_ids") or [])]
+    if not cited or block_types is None:
+        return []
+    kinds = [block_types.get(b) for b in cited]
+    if all(k == "page" for k in kinds):
+        return [Finding("blocker", "page-level-evidence",
+                        "its only proof is the whole page, not a region of it")]  # fmt: skip
+    return []
+
+
 def _cited(provenance: list[dict[str, Any]]) -> str:
     return " | ".join(str(p.get("extracted_text") or "") for p in provenance).strip(" |")
 
@@ -275,6 +292,22 @@ def check_quote(fact: dict[str, Any], provenance: list[dict[str, Any]]) -> list[
     return [Finding("blocker", "quote-not-found", said)]
 
 
+def check_patient_detail(fact: dict[str, Any], provenance: list[dict[str, Any]],
+                         details: dict[str, str] | None = None,
+                         on: date | None = None) -> list[Finding]:  # fmt: skip
+    """EX-S1: the format rules for one patient detail - phone and ABHA lengths, a plausible age,
+    a real date of birth, the digits of a number in the line it cites, and the age checked
+    against the date of birth. Each failure is a blocker: the value goes to a person. A detail
+    that passes says nothing here; the confidence gate decides its status as for any fact."""
+    from cdi_adapter.extract import doctor, patient
+
+    if fact.get("fact_type") not in (patient.FACT_TYPE, doctor.FACT_TYPE):
+        return []  # EX-S2: a doctor's detail is held to the same rules
+    found = patient.check(str(fact.get("local_text") or ""), fact.get("value_text"),
+                          _cited(provenance), details, on)  # fmt: skip
+    return [Finding("blocker", code, said) for code, said in found]
+
+
 def check_untrusted(extraction: dict[str, Any] | None) -> list[Finding]:
     """RD-S4: the page held text that reads like an instruction to a model. Nothing extracted
     from it is trusted without a person: a blocker on every value of the document."""
@@ -301,6 +334,53 @@ def check_incomplete(extraction: dict[str, Any] | None) -> list[Finding]:
             "the answer was cut off by the length limit; it may be missing values",
         )
     ]
+
+
+def check_preparation(fact: dict[str, Any], provenance: list[dict[str, Any]]) -> list[Finding]:
+    """EX-S4: a lab preparation goes to a person when its number is not cleanly a number
+    ("1Z hrs"), is not a possible one, is not in the line it cites, or when it is not clear
+    which test it applies to. Wrong preparation can spoil a patient's result: unsure is held."""
+    from cdi_adapter.extract import preparation
+
+    if fact.get("fact_type") != preparation.FACT_TYPE:
+        return []
+    found = preparation.check(fact.get("local_text"), fact.get("value_text"), _cited(provenance))
+    return [Finding("blocker", code, said) for code, said in found]
+
+
+def check_context(fact: dict[str, Any], reasons: list[str]) -> list[Finding]:
+    """EX-S5: context as a check, and only a check. An ordered test that goes with NONE of the
+    reasons written on the same prescription - every one of them known - is flagged for a
+    person: a misread test or a misread diagnosis looks exactly like this. The test is not
+    changed. No reason written, or a test or reason the approved list does not know: nothing."""
+    if fact.get("fact_type") != "lab_order":
+        return []
+    from cdi_adapter.extract import context
+
+    if context.fit(fact.get("local_text"), reasons) is False:
+        said = (f"{context.DOES_NOT_FIT}: {fact.get('local_text')!r} goes with none of the "
+                f"written reasons ({', '.join(repr(r) for r in reasons[:4])})")  # fmt: skip
+        return [Finding("blocker", "context-does-not-fit", said)]
+    return []
+
+
+def check_lab_order(fact: dict[str, Any]) -> list[Finding]:
+    """EX-S3: an ordered test that the lab-test master does not name ("not matched"), or names
+    only by likeness ("doubtful"), goes to review. A person who has since chosen a name for it
+    (a code saved on the fact that is not the doubtful one) has answered the question."""
+    if fact.get("fact_type") != "lab_order":
+        return []
+    from cdi_adapter.terminology import lab_master
+
+    seen = lab_master.describe(fact.get("local_text"), fact.get("code"))
+    if seen["match"] == lab_master.NOT_MATCHED:
+        return [Finding("blocker", "test-not-matched",
+                        f"{fact.get('local_text')!r} is not in the lab-test list")]  # fmt: skip
+    if seen["match"] == lab_master.DOUBTFUL:
+        name = (seen["standard"] or {}).get("name")
+        said = f"{fact.get('local_text')!r} is only like {name!r}: confirm it"
+        return [Finding("blocker", "test-match-doubtful", said)]
+    return []
 
 
 def check_terminology(fact: dict[str, Any]) -> list[Finding]:

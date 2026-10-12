@@ -147,6 +147,19 @@ class PgJobStore:
                             {"k": key}).mappings().first()  # fmt: skip
         return _job(row) if row else None
 
+    def cleared(self, job: Job) -> bool:
+        """True when this job ran to its end and none of its documents is in front of a
+        reviewer any more - the review was rejected or cleared away, or there never was one. The
+        same upload sent again is then a new run, not a repeat (owner, 2026-10-10: a document
+        tested once could not be tested again). A job still running, or one that failed, is
+        never "cleared": a retried POST still gets the first job back (E9-S3)."""
+        if job.state != "review" or not job.docs:
+            return False
+        from cdi_adapter.canon.repo import has_live_item
+
+        with session_scope() as c:
+            return not has_live_item(c, [str(d.document_id) for d in job.docs if d.document_id])
+
     def load(self, job_id: str) -> Job | None:
         if not _valid_id(job_id):
             return None
@@ -301,6 +314,7 @@ def load(job_id: str) -> Job | None:
 
 
 LISTENER_ACTOR = "listener"
+MAX_AGAIN = 200  # how many times one upload can be cleared and sent again: only an upper bound
 
 
 def channel_of(actor: str | None) -> str:
@@ -352,6 +366,15 @@ def submit(files: list[tuple[str, bytes, str | None]], *, actor: str,
     key = key or idempotency_key(files, actor=actor, patient_id=patient_id, abha=abha,
                                  given=given_key, mobile=mobile, token_no=token_no)  # fmt: skip
     first = st.by_key(key)
+    # a run whose review was cleared away does not hold the key: the upload runs again, under a
+    # key made from that run - so a repeat of THIS upload is, once more, answered with one job
+    cleared = getattr(st, "cleared", None)
+    for _ in range(MAX_AGAIN):
+        if first is None or cleared is None or not cleared(first):
+            break
+        log.info("job_upload_again", earlier=first.id, actor=actor)
+        key = "again:" + hashlib.sha256(f"{key}\x00{first.id}".encode()).hexdigest()
+        first = st.by_key(key)
     if first is not None:
         log.info("job_duplicate_upload", job=first.id, actor=actor, idempotency_key=key)
         metrics.JOB_DUPLICATES.inc()

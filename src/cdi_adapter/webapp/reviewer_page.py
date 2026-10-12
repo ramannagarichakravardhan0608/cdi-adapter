@@ -109,7 +109,8 @@ const FIELDS = {
   code: [['code_system', 'Code system'], ['code', 'Code'], ['code_display', 'Code display']],
 };
 const MED_KEYS = new Set(FIELDS.medication.concat(FIELDS.medication_more).map(f => f[0]));
-const fieldsFor = e => (e.element_type === 'medication' ? FIELDS.medication.concat(FIELDS.medication_more)
+const fieldsFor = e => ['patient_detail', 'doctor_detail'].includes(e.element_type) ? [['value_text', 'Value (as written)']]
+  : (e.element_type === 'medication' ? FIELDS.medication.concat(FIELDS.medication_more)
   : FIELDS.text.concat(['vital_sign', 'lab_result'].includes(e.element_type) ? FIELDS.measured.concat(FIELDS.measured_more) : [])
     .concat(['condition', 'symptom', 'allergy', 'finding'].includes(e.element_type) ? FIELDS.status : []))
   .concat(FIELDS.code);
@@ -121,9 +122,12 @@ const fieldInput = (e, k) => k === 'prn'
   : `<input data-k="${k}" value="${esc(valueOf(e, k))}" style="width:100%">`;
 function editFact(fid, item){
   const box = document.getElementById('ed-' + fid);
-  if (box.style.display === 'table-row'){ box.style.display = 'none'; return; }
+  const rp = document.getElementById('rp-' + fid);
+  if (box.style.display === 'table-row'){ box.style.display = 'none'; if (rp) rp.style.display = 'none'; return; }
   const e = current[fid];
-  box.querySelector('td').innerHTML = fieldsFor(e).map(([k, label]) => `<label style="display:block;margin:4px 0"><small>${esc(label)}</small><br>
+  // one button for a medicine (owner, 2026-10-10): choosing it from the catalogue is part of Edit
+  const pick = e.element_type === 'medication' ? `<p style="margin:0 0 8px"><button onclick="openReplace('${fid}','${item}')" title="Choose the medicine from the catalogue or the agent's options">Choose the medicine from the catalogue…</button> <small class=muted>or correct the fields below</small></p>` : '';
+  box.querySelector('td').innerHTML = pick + fieldsFor(e).map(([k, label]) => `<label style="display:block;margin:4px 0"><small>${esc(label)}</small><br>
       ${fieldInput(e, k)}</label>`).join('')
     + `<label style="display:block;margin:4px 0"><small>Reason (optional)</small><br><input data-note style="width:100%"></label>
       <p><button class=primary onclick="saveFact('${fid}','${item}')">Save correction</button> <button onclick="editFact('${fid}','${item}')">Cancel</button> <span data-msg></span></p>`;
@@ -142,10 +146,10 @@ async function saveFact(fid, item){
 // the item's facts grouped into clinical sections, in the order a clinician reads a record
 // (owner, 2026-09-26: "the extracted data should be grouped properly"); a section's columns suit
 // its kind of fact, and an unknown fact type is never dropped: it lands in "Other"
-const SECTIONS = [['condition', 'Diagnoses'], ['symptom', 'Symptoms & complaints'], ['finding', 'Examination findings'],
-  ['vital_sign', 'Vitals'], ['lab_result', 'Lab results'], ['diagnostic_report', 'Reports'], ['medication', 'Medications'], ['lab_order', 'Tests advised'],
+const SECTIONS = [['patient_detail', 'Patient details'], ['doctor_detail', 'Doctor details'], ['condition', 'Diagnoses'], ['symptom', 'Symptoms & complaints'], ['finding', 'Examination findings'],
+  ['vital_sign', 'Vitals'], ['lab_result', 'Lab results'], ['diagnostic_report', 'Reports'], ['medication', 'Medications'], ['lab_order', 'Investigations & tests'], ['preparation', 'Lab preparation'],
   ['procedure', 'Procedures'], ['allergy', 'Allergies'], ['immunization', 'Immunizations'], ['care_plan', 'Care plan'],
-  ['referral', 'Referrals'], ['advice', 'Advice & follow-up'], ['document', 'Other']];
+  ['referral', 'Referrals'], ['advice', 'Advice & home care'], ['follow_up', 'Follow-up instructions'], ['document', 'Other']];
 const unit = (n, u) => n == null ? '' : `${num(n)} ${u || ''}`.trim();
 const COLS = {
   medication: [['Medicine', e => (e.medication || {}).drug_text || e.fact?.local_text], ['Strength', e => unit((e.medication || {}).strength_num, (e.medication || {}).strength_unit)],
@@ -157,7 +161,17 @@ const COLS = {
   measured: [['Test', e => e.fact?.local_text], ['Value', e => e.fact?.value_text || (e.fact?.value_num != null ? num(e.fact.value_num) : '')],
     ['Unit', e => e.fact?.value_unit_ucum], ['Flag', e => e.fact?.abnormal_flag]],
   text: [['Detail', e => e.fact?.local_text]],
-  order: [['Test (as written)', e => e.fact?.local_text]],
+  // EX-S4: a preparation note - its words as written, and beside them what was understood
+  prep: [['As written', e => e.fact?.local_text], ['Type', e => (e.prep || {}).type],
+    ['Value', e => prepValue(e.prep)], ['Applies to', e => prepApplies(e.prep)], ['Why it needs a check', e => whyHeld(e)]],
+  // EX-S1: a patient detail is its name ("phone") and the value exactly as written
+  detail: [['Detail', e => { const t = String(e.fact?.local_text || ''); return t.charAt(0).toUpperCase() + t.slice(1); }],
+    ['As written', e => e.fact?.value_text], ['Why it needs a check', e => whyHeld(e)]],
+  // EX-S3: an ordered test as written, its standard name, and whether it is a test or a panel.
+  // A panel is one row - it is never expanded into its tests.
+  order: [['Test (as written)', e => e.fact?.local_text], ['Standard name', e => labName(e.lab)],
+    ['Kind', e => (e.lab || {}).kind], ['Specimen', e => (e.lab || {}).specimen],
+    ['Match', e => labMatch(e.lab)], ['Written reasons (context)', e => contextText(e.context)]],
 };
 // the catalogue's identification of the line (owner, 2026-09-26): the product, or UNKNOWN_MEDICATION
 // with the closest catalogue names; the medicine column above stays as written
@@ -178,7 +192,7 @@ function agentText(a){
   const rc = a.recalled || {}, thinks = (rc.brands || []).concat(rc.generics || []);
   if (thinks.length && a.status !== 'confirmed' && a.status !== 'suggested')
     return [a.status === 'vetoed' ? `Unsure: ${a.product ? a.product.name : ''}? (${a.reason})` : 'No confident match',
-      `agent thinks: ${thinks.join(', ')}`, rc.reason, 'see Replace'].filter(Boolean).join(' · ');
+      `agent thinks: ${thinks.join(', ')}`, rc.reason, 'see Edit'].filter(Boolean).join(' · ');
   if (a.status === 'confirmed') return `✓ ${fit || 'identified'}`;
   if (a.status === 'suggested') return [`Suggests ${a.product.name}${conf}`, fit, a.evidence ? `written "${a.evidence}"` : '', a.rationale].filter(Boolean).join(' · ');
   if (a.status === 'vetoed') return `Unsure: ${a.product ? a.product.name : ''}? (${a.reason})`;
@@ -209,18 +223,52 @@ function useAgent(fid, item){  // the Edit form, pre-filled with the agent's pro
   if (i && e.agent && e.agent.product){ i.value = e.agent.product.name;
     box.querySelector('input[data-note]').value = 'medication agent: ' + (e.agent.rationale || e.agent.evidence || ''); i.focus(); }
 }
-const colsFor = t => t === 'medication' ? COLS.medication : ['vital_sign', 'lab_result'].includes(t) ? COLS.measured
+function prepValue(p){
+  if (!p) return '';
+  if (p.range) return p.range.join('-') + ' ' + (p.unit || '');
+  return p.value == null ? '' : num(p.value) + ' ' + (p.unit || '');
+}
+function prepApplies(p){
+  if (!p) return '';
+  return p.applies_to === 'all' ? 'all tests' : p.applies_to === 'unclear' ? 'unclear - which test?' : (p.applies_to || []).join(', ');
+}
+// EX-S5: the reasons written on the same prescription, and how the page connects each to the
+// test - "same line" or "same page", never "ordered because". The check is a flag: it changes nothing.
+function contextText(c){
+  if (!c) return '';
+  const how = {same_line: 'same line', same_page: 'same page', other_page: 'another page'};
+  const said = (c.context || []).map(x => `${x.text} (${x.type}, ${how[x.relation] || x.relation})`).join('; ');
+  return (c.check ? '⚠ ' + c.check + (said ? ' · ' : '') : '') + (said || (c.check ? '' : 'no reason written'));
+}
+function labName(l){
+  if (!l || !l.standard) return '';
+  return l.standard.name + (l.urgency ? ' · ' + l.urgency : '');
+}
+// "not matched" is an answer, shown with the tests it could be; the reviewer picks one with Edit
+// (Code / Code display) or leaves it as written: "none of these"
+function labMatch(l){
+  if (!l) return '';
+  if (l.match === 'matched') return 'matched (' + (l.how || '') + ')';
+  const could = (l.candidates || []).map(c => c.name).join(', ');
+  return (l.match === 'doubtful' ? 'doubtful - confirm' : 'not matched') + (could ? ' · could be: ' + could : ' · none of the list is close');
+}
+// the rule a held value failed, in its own words (EX-S1: "is not a ten-digit phone number")
+function whyHeld(e){
+  const found = ((e.fact?.review_note || {}).findings || []).filter(x => x.severity === 'blocker');
+  return found.map(x => x.message).join('; ');
+}
+const colsFor = t => t === 'preparation' ? COLS.prep : ['patient_detail', 'doctor_detail'].includes(t) ? COLS.detail : t === 'medication' ? COLS.medication : ['vital_sign', 'lab_result'].includes(t) ? COLS.measured
   : t === 'lab_order' ? COLS.order : COLS.text;
 function factRows(e, id, cols){
   const n = cols.length + 3;
   return `<tr>${cols.map(([, f]) => `<td>${esc(f(e) ?? '')}</td>`).join('')}
     <td>${esc(e.fact?.code)}${e.fact?.code_display ? `<br><small class=muted>${esc(e.fact.code_display)}</small>` : ''}</td>
     <td><span class="pill ${e.state==='held'?'warn':e.state==='rejected'?'bad':'ok'}">${esc(e.state)}</span></td>
-    <td style="white-space:nowrap">${e.state==='held' ? `<button class=ok onclick="decide('${e.fact.id}','accept','${id}')">Accept</button> <button class=bad onclick="decide('${e.fact.id}','reject','${id}')">Reject</button> ` : ''}${e.fact && e.state !== 'rejected' ? `<button onclick="editFact('${e.fact.id}','${id}')">Edit</button>` : ''}${e.agent && e.agent.status === 'suggested' && e.state !== 'rejected' ? ` <button class=primary onclick="useAgent('${e.fact.id}','${id}')" title="Open the edit form with the agent's product filled in">Use suggestion</button>` : ''}${e.element_type === 'medication' && e.fact && e.state !== 'rejected' ? ` <button onclick="openReplace('${e.fact.id}','${id}')" title="Choose the medicine from the catalogue or the agent's options">Replace</button>` : ''}${e.state==='held' ? ' <a href="/review">details</a>' : ''}</td></tr>
+    <td style="white-space:nowrap">${e.state==='held' ? `<button class=ok onclick="decide('${e.fact.id}','accept','${id}')">Accept</button> <button class=bad onclick="decide('${e.fact.id}','reject','${id}')">Reject</button> ` : ''}${e.fact && e.state !== 'rejected' ? `<button onclick="editFact('${e.fact.id}','${id}')">Edit</button>` : ''}${e.agent && e.agent.status === 'suggested' && e.state !== 'rejected' ? ` <button class=primary onclick="useAgent('${e.fact.id}','${id}')" title="Open the edit form with the agent's product filled in">Use suggestion</button>` : ''}</td></tr>
     ${e.fact ? `<tr id="ed-${e.fact.id}" style="display:none"><td colspan=${n} style="background:var(--brand-weak)"></td></tr>` : ''}
     ${replaceRow(e, id, n)}`;
 }
-// Replace (owner, 2026-09-28): the products the catalogue and the medication agent offer for a
+// Replace, opened from Edit (owner, 2026-09-28; one button since 2026-10-10): the products the catalogue and the medication agent offer for a
 // medicine line, plus a catalogue search; the reviewer picks one and it replaces the medicine
 // through the same correction as Edit (dose, frequency and the rest of the line are kept)
 function replaceRow(e, item, n){
@@ -238,7 +286,6 @@ async function openReplace(fid, item, q){
   const box = document.getElementById('rp-' + fid);
   if (!box) return;
   if (q === undefined && box.style.display === 'table-row'){ box.style.display = 'none'; return; }
-  const ed = document.getElementById('ed-' + fid); if (ed) ed.style.display = 'none';
   box.style.display = 'table-row';
   const cell = box.querySelector('td');
   if (q === undefined) cell.innerHTML = '<small class=muted>Loading the catalogue and agent options…</small>';
@@ -273,7 +320,9 @@ async function openItem(id){
   current = {};
   d.elements.forEach(e => { if (e.fact) current[e.fact.id] = e; });
   const known = new Set(SECTIONS.map(s => s[0])), groups = {};
-  d.elements.forEach(e => { const k = known.has(e.element_type) ? e.element_type : 'document'; (groups[k] = groups[k] || []).push(e); });
+  // a medicine is only ever shown under Medications, whatever section the server names
+  d.elements.forEach(e => { const c = e.element_type === 'medication' ? 'medication' : e.category || e.element_type,
+    k = known.has(c) ? c : 'document'; (groups[k] = groups[k] || []).push(e); });
   const shown = SECTIONS.filter(([k]) => groups[k]);
   const held = d.elements.filter(e => e.state === 'held').length;
   const chips = shown.map(([k, label]) => `<span class=pill style="margin-right:4px">${esc(label)} ${groups[k].length}</span>`).join('');
@@ -284,7 +333,7 @@ async function openItem(id){
   $('#item').innerHTML = `${groupTabs(id)}<div class=rv-split><div>
     <h2 style="margin:0 0 2px">${esc(d.item.patient_name)} <span class=muted style="font-weight:400">${esc(d.item.mpi_id || '')}</span><span style="font-size:14px;font-weight:400">${c360(d.item.mpi_id)}</span></h2>
     <p class=muted style="margin:0 0 8px">${esc(d.item.filename)} · ${esc(d.item.doc_type)} · ${d.elements.length} facts${held ? ` · <span class="pill warn">${held} held</span>` : ''}</p>
-    <div>${chips}</div>${groups.medication ? `<p class=muted style="margin:10px 0 0">Medication agent: <span id=agentst>${esc(agentRun(d.agent_run))}</span> <button onclick="rerunAgent('${id}')" title="Re-read the medicines with the diagnoses and the catalogue">Run agent again</button></p>` : ''}${sections || '<p class=muted>No facts.</p>'}
+    ${doctorLine(d.doctor)}<div>${chips}</div>${groups.medication ? `<p class=muted style="margin:10px 0 0">Medication agent: <span id=agentst>${esc(agentRun(d.agent_run))}</span> <button onclick="rerunAgent('${id}')" title="Re-read the medicines with the diagnoses and the catalogue">Run agent again</button></p>` : ''}${sections || '<p class=muted>No facts.</p>'}
     <p style="margin-top:18px"><button class=primary onclick="approve('${id}')">Approve &amp; promote</button> <button onclick="rejectItem('${id}')">Reject item</button> <span id=msg></span></p><pre id=out style="white-space:pre-wrap"></pre>
     </div>${docViewer(d.item)}</div>`;
   showPage();
@@ -293,6 +342,25 @@ async function openItem(id){
 // the uploaded document beside its facts (owner, 2026-09-26): the rendered pages the facts were read
 // from, page by page, plus the file exactly as uploaded
 let viewer = {id: null, pages: 1, page: 1, zoom: 1};
+// the prescribing doctor as the page's letterhead gives it: read-only, nothing is filled in
+function doctorLine(doc){
+  const link = doctorLink(doc && doc.link), marks = doctorMarks(doc && doc.link);
+  if (!doc || !doc.name) return `<p class=muted data-doctor style="margin:0 0 8px">Doctor: not read from this page${link}${marks}</p>`;
+  return `<p data-doctor style="margin:0 0 8px"><b>Doctor:</b> ${esc(doc.name)}${[doc.qualification, doc.registration].filter(Boolean).map(x => ` <span class=muted>· ${esc(x)}</span>`).join('')}${link}${marks}</p>`;
+}
+// EX-S2: how the doctor was identified - linked by registration number or name, or unknown, with
+// the doctors it could be when a link was refused. Never a guess: an unsure match is not a link.
+function doctorLink(l){
+  if (!l) return '';
+  if (l.practitioner_id) return ` <span class="pill ok" data-doctor-link>linked to ${esc(l.practitioner_name || 'the doctor list')} by ${l.method === 'registration_number' ? 'registration number' : 'name'}</span>`;
+  const names = (l.candidates || []).map(c => `${esc(c.name)} (${esc(c.registration_no)})`).join(', ');
+  return ` <span class="pill warn" data-doctor-link>doctor unknown</span>` + (l.why ? ` <small class=muted>${esc(l.why)}${names ? ' — could be: ' + names : ''}</small>` : '');
+}
+function doctorMarks(l){
+  if (!l) return '';
+  const said = v => v === true ? 'yes' : v === false ? 'no' : 'not stated';
+  return ` <small class=muted>· stamp: ${said(l.stamp_present)} · signature: ${said(l.signature_present)}</small>`;
+}
 function docViewer(item){
   viewer = {id: item.source_document_id, pages: Math.max(1, item.page_count || 1), page: 1, zoom: 1};
   if (!viewer.id) return '<aside class=rv-doc><div class="view muted">No document is attached to this item.</div></aside>';

@@ -156,8 +156,8 @@ def test_ac1_a_held_instruction_shows_as_needing_a_check_and_is_counted(no_datab
     assert result._review({"preparation": held})["needs_check_count"] == 1
 
 
-def test_ac1_which_test_an_instruction_belongs_to_is_still_not_worked_out() -> None:
-    assert "lab_tests[].preparation_refs" in result.ABSENT
+def test_ac1_which_test_an_instruction_belongs_to_is_worked_out_since_ex_s4() -> None:
+    assert "lab_tests[].preparation_refs" not in result.ABSENT
     assert "Not extracted yet" in SCRIPT and "d.absent" in SCRIPT
 
 

@@ -44,8 +44,13 @@ def test_advised_tests_are_coded(written, code):
 
 
 def test_an_unknown_test_keeps_its_text_uncoded():
-    assert bind_text("lab_order", "TFT") is None  # no verified thyroid-panel code: never forced
-    assert bind_text("lab_order", "Dengue NS1") is None
+    # EX-S3: a test the master knows but has no verified code for is named in our own
+    # vocabulary - its own id, never a LOINC code that was not checked
+    for written in ("TFT", "Dengue NS1"):
+        named = bind_text("lab_order", written)
+        assert named is not None and named.concept.system == "https://careflow.clinic/lab-test"
+        assert named.concept.code.startswith("LT")
+    assert bind_text("lab_order", "XQZ profile") is None  # not in the list: never forced
     # an advised panel never binds a lab RESULT: results keep their own table
     assert bind_text("lab_result", "CBC") is None
 
@@ -124,4 +129,4 @@ def test_the_record_carries_an_advised_test_as_written_with_its_standard_name():
 def test_the_reviewer_shows_a_tests_advised_section():
     from cdi_adapter.webapp.reviewer_page import SCRIPT
 
-    assert "['lab_order', 'Tests advised']" in SCRIPT
+    assert "['lab_order', 'Investigations & tests']" in SCRIPT

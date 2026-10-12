@@ -39,7 +39,11 @@ MEDICATION_RULES = (
     "the form word alone. Keep its strength, dose, dose-slot pattern, route and duration exactly "
     "as written, and leave any of them empty when the line does not state it - never fill in a "
     "typical value such as 1-0-1 or PO. Instructions that are not a drug (gargles, steam "
-    "inhalation, fluids / ORS, rest, diet, follow-up) are advice, not medications."
+    "inhalation, fluids / ORS, rest, diet, follow-up) are advice, not medications. drug_name "
+    "holds the name only: how much is taken (1 tab, 1 cap), when and for how many days go in "
+    "dose, frequency, duration and instructions. A medicine line is listed ONLY under "
+    "medications - never repeat it under advice. advice has one item per written instruction, "
+    "and the follow-up / review line is one of them."
 )
 
 # the tests a prescription advises (owner request 2026-09-28): read into investigations_advised
@@ -50,10 +54,41 @@ TESTS_ADVISED_RULES = (
     "result is a result, not advised. Never list a test the page does not name."
 )
 
+# EX-S1: the patient's details, as written, and only the patient's
+PATIENT_RULES = (
+    " patient: copy name, age_text, sex, dob, phone, address, mrn (hospital / MR / UHID / bill "
+    "number) and abha exactly as written beside the patient's name. A detail that is not "
+    "written is null: never work out sex or age from a name, and never give the doctor's or "
+    "the clinic's phone or address as the patient's. Copy a number digit for digit; if a digit "
+    "cannot be read, leave the number out."
+)
+
+# EX-S2: the doctor, the clinic, and whether the page is stamped and signed
+PRESCRIBER_RULES = (
+    " prescriber_details: the doctor's name, registration_no, qualification and department, and "
+    "the clinic's name, address and phone, exactly as the letterhead prints them; null for what "
+    "is not there. Copy the registration number digit for digit. stamp_present is true only "
+    "when a rubber stamp or seal is on the page, signature_present only when it is signed by "
+    "hand; put the words inside the stamp in stamp_text, not in the other fields. Never name a "
+    "doctor from the handwriting."
+)
+
+# EX-S4: preparation for a test, only as written
+PREPARATION_RULES = (
+    " investigation_preparation: what the patient must do before a test, ONLY when it is "
+    "written on the page (fasting 12 hrs, empty stomach, morning sample, 2 hrs after meal, "
+    "stop biotin, bring previous reports) - copy the words into text exactly. If no "
+    "preparation is written, give an empty list: never add a usual fasting time or any "
+    "standard preparation for a test."
+)
+
 GUIDANCE = {
     "prescription": "List EVERY medication line - usually 5-15 drugs - do not stop early. "
     + MEDICATION_RULES
-    + TESTS_ADVISED_RULES,
+    + TESTS_ADVISED_RULES
+    + PATIENT_RULES
+    + PRESCRIBER_RULES
+    + PREPARATION_RULES,
     "lab_report": "List EVERY test row with its result, unit and reference range.",
     "vitals_sheet": "List every vital sign that has a number. Record allergies if written.",
     "radiology": "Copy EVERY finding line into findings_list; put the impression separately.",

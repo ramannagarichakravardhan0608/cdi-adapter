@@ -34,7 +34,11 @@ from cdi_adapter import metrics, repo
 from cdi_adapter.config import get_settings
 from cdi_adapter.dates import parse_date
 from cdi_adapter.db import session_scope
+from cdi_adapter.extract.doctor import FACT_TYPE as DOCTOR_DETAIL
+from cdi_adapter.extract.doctor import stamp_of, with_doctor, with_stamp
 from cdi_adapter.extract.facts import ENCOUNTER_DATE_KEYS, FactDraft, facts_from_payload
+from cdi_adapter.extract.patient import FACT_TYPE as PATIENT_DETAIL
+from cdi_adapter.extract.patient import proof_blocks
 from cdi_adapter.extract.prompt import (
     SCHEMA_FOR_DOC_TYPE,
     build_extraction_prompt,
@@ -45,6 +49,7 @@ from cdi_adapter.ml.client import JsonRequest, MLClient, client_for, get_client,
 from cdi_adapter.modelops import router
 from cdi_adapter.modelops.router import Route
 from cdi_adapter.mpi import service as mpi
+from cdi_adapter.recognition import practitioner
 from cdi_adapter.storage import ObjectStore, get_store
 
 log = get_logger(__name__)
@@ -153,10 +158,23 @@ def write_extraction(
 
     by_id = {str(b["id"]): b for b in blocks}
     drafts = facts_from_payload(doc_type, payload)
+    if doc_type == "prescription":
+        # EX-S2: who wrote it - linked to the doctor list by registration number or a safe name
+        # match, otherwise "unknown". Saved with how it was decided; never fails the document.
+        doctor: dict[str, Any] = (payload["_doctor"]
+                                  if isinstance(payload.get("_doctor"), dict) else {})  # fmt: skip
+        practitioner.link_document(
+            conn, document_id, name=doctor.get("name"),
+            lines=[str(b["text"] or "") for b in blocks],
+            registration=doctor.get("registration number"), **stamp_of(payload))
     for d in drafts:
         ev_blocks = [by_id[block_id_map[e]] for e in d.evidence
                      if e in block_id_map and block_id_map[e] in by_id]  # fmt: skip
-        if not ev_blocks:
+        if d.fact_type in (PATIENT_DETAIL, DOCTOR_DETAIL):
+            # EX-S1: the line THIS value is on (the model cites one list for the whole patient
+            # block); a number is only on a line that has its digits. No line: no proof.
+            ev_blocks = proof_blocks(d.local_text, d.value_text or "", blocks, ev_blocks)
+        elif not ev_blocks:
             ev_blocks = _locate(d, blocks)
         page_id = ev_blocks[0]["page_id"] if ev_blocks else None
         same_page = [b for b in ev_blocks if b["page_id"] == page_id]
@@ -203,6 +221,7 @@ class _Ctx:
     ocr_runs: list[Any]
     run_id: Any
     block_map: dict[str, str] = field(default_factory=dict)
+    image: bytes | None = None  # page 1 as sent to the model; the stamp is looked for in it
 
 
 def _start(document_id: UUID | str, vlm: MLClient) -> _Ctx | dict[str, Any]:
@@ -228,6 +247,7 @@ def _request(ctx: _Ctx, store: ObjectStore | None) -> JsonRequest:
     """The page-1 image + ``[bN]`` prompt + schema + token budget (S4)."""
     prompt, ctx.block_map = build_extraction_prompt(ctx.doc_type, ctx.blocks)
     image = (store or get_store()).get_bytes(ctx.pages[0]["storage_key"]) if ctx.pages else None
+    ctx.image = image
     return JsonRequest(image, prompt, SCHEMA_FOR_DOC_TYPE[ctx.doc_type],
                        max_tokens_for(ctx.doc_type))  # fmt: skip
 
@@ -258,12 +278,16 @@ def annotate(payload: dict[str, Any], doc_type: str, blocks: list[dict[str, Any]
     absent = {f: why for f in fields if f != "confidence" and payload.get(f) in empty}
     if absent:
         payload["_absent"] = absent
+    if doc_type == "prescription":  # EX-S2: the doctor's details, with the letterhead's lines
+        payload = with_doctor(payload, [str(b.get("text") or "") for b in blocks])
     return payload
 
 
 def _complete(ctx: _Ctx, payload: dict[str, Any], vlm: MLClient, *,
               patient_id: UUID | str | None, expected_patient: dict[str, Any] | None,
               actor: str) -> dict[str, Any]:  # fmt: skip
+    if ctx.doc_type == "prescription":  # EX-S2 AC4: the stamp, found in the picture itself
+        payload = with_stamp(payload, ctx.image, ctx.blocks)
     payload = annotate(payload, ctx.doc_type, ctx.blocks)
     model_stack = {"classifier": (ctx.cls or {}).get("method"),
                    "ocr": ctx.blocks[0]["engine"] if ctx.blocks else None,

@@ -1,0 +1,78 @@
+{
+  "about": "How lab-test preparation is written on a prescription (backlog EX-S4). Plain data: a clinician can read it, correct it and approve it. A phrase is words as written; {n} stands for a number, {hours} for hrs / hours / h, {meal} for meal / food / breakfast / lunch / dinner, {word} for any one word. Nothing here adds a preparation that is not written: a phrase only says what KIND of instruction a written line is.",
+  "version": "preparation-phrases.2026-10-12.1",
+  "review_status": "unreviewed - written by the engineer; a clinician must supply the real phrases and approve the types",
+  "types": ["fasting", "timing", "diet", "hold_medicine", "collection", "bring_documents", "other"],
+  "phrases": {
+    "fasting": [
+      "fasting for {n} {hours}", "fasting {n} {hours}", "fasting of {n} {hours}", "{n} {hours} fasting",
+      "{n} {hours} of fasting", "{n} {hours} fast", "fast for {n} {hours}", "after {n} {hours} fasting",
+      "after {n} {hours} of fasting", "overnight fasting", "overnight fast", "after overnight fast",
+      "empty stomach", "nil by mouth", "nil orally", "npo", "come fasting", "fasting sample",
+      "fasting state", "in fasting", "fasting required"
+    ],
+    "collection": [
+      "first morning urine", "early morning urine", "first morning sample", "midstream", "mid stream",
+      "mid-stream", "clean catch", "24 {hours} collection", "24 {hours} urine collection"
+    ],
+    "timing": [
+      "{n} {hours} after {meal}", "{n} {hours} after a {meal}", "{n} {hours} after the {meal}",
+      "{n} {hours} post {meal}", "post prandial", "post-prandial", "postprandial", "pp sample",
+      "morning sample", "early morning sample", "early morning", "in the morning", "before {n} am",
+      "at {n} am"
+    ],
+    "hold_medicine": [
+      "stop biotin", "hold {word} before test", "withhold {word} before test", "stop {word} before test",
+      "do not take {word} before test", "before taking thyroid tablet", "before thyroid tablet",
+      "before taking medicine", "before taking medicines", "skip morning dose"
+    ],
+    "diet": [
+      "avoid fatty food", "avoid oily food", "no alcohol", "avoid alcohol", "light dinner",
+      "no tea or coffee", "avoid tea coffee", "normal diet before test"
+    ],
+    "bring_documents": [
+      "bring previous reports", "bring old reports", "bring all reports", "bring previous report",
+      "bring prescription", "bring old prescriptions"
+    ]
+  },
+  "applies_to_all": [
+    "all tests", "all the tests", "all investigations", "all the investigations", "all samples",
+    "all the above", "all above tests", "for all", "all blood tests"
+  ],
+  "not_preparation": [
+    "was fasting", "is fasting", "has been fasting", "had been fasting", "fasting since",
+    "fasting during", "during fasting", "religious fasting", "ramadan", "ramzan", "roza", "vrat",
+    "navratri", "intermittent fasting", "fasting sugar", "fasting glucose", "fasting blood",
+    "fasting lipid", "fasting insulin", "fasting plasma", "history of", "h/o", "c/o", "complains of",
+    "to be taken", "take tab", "take tablet", "take tablets", "take cap", "take medicine",
+    "take medicines", "take the medicine", "take the tablet", "taken on", "take on"
+  ],
+  "plausible": {"fasting": [1, 24], "timing": [1, 24]},
+  "examples": [
+    {"text": "fasting 12 hrs", "type": "fasting", "value": 12, "unit": "hours"},
+    {"text": "Fasting for 8 hours", "type": "fasting", "value": 8, "unit": "hours"},
+    {"text": "10 hrs fasting", "type": "fasting", "value": 10, "unit": "hours"},
+    {"text": "overnight fasting", "type": "fasting", "value": null, "unit": null},
+    {"text": "empty stomach", "type": "fasting", "value": null, "unit": null},
+    {"text": "fasting sample", "type": "fasting", "value": null, "unit": null},
+    {"text": "fasting 10-12 hrs", "type": "fasting", "value": null, "unit": "hours", "range": [10, 12]},
+    {"text": "2 hrs after meal", "type": "timing", "value": 2, "unit": "hours"},
+    {"text": "2 hours after breakfast", "type": "timing", "value": 2, "unit": "hours"},
+    {"text": "post prandial", "type": "timing", "value": null, "unit": null},
+    {"text": "morning sample", "type": "timing", "value": null, "unit": null},
+    {"text": "first morning urine", "type": "collection", "value": null, "unit": null},
+    {"text": "midstream clean catch", "type": "collection", "value": null, "unit": null},
+    {"text": "stop biotin", "type": "hold_medicine", "value": null, "unit": null},
+    {"text": "before taking thyroid tablet", "type": "hold_medicine", "value": null, "unit": null},
+    {"text": "bring previous reports", "type": "bring_documents", "value": null, "unit": null},
+    {"text": "avoid alcohol", "type": "diet", "value": null, "unit": null},
+    {"text": "fasting 1Z hrs", "type": "fasting", "value": null, "unit": "hours", "problem": "number-unclear"},
+    {"text": "fasting 72 hrs", "type": "fasting", "value": 72, "unit": "hours", "problem": "number-implausible"},
+    {"text": "Rest for 3 days", "type": null},
+    {"text": "Fasting blood sugar 140 mg/dl", "type": null},
+    {"text": "Patient was fasting during Ramadan", "type": null},
+    {"text": "Tab. Thyronorm 50 on empty stomach", "type": null},
+    {"text": "Review after 5 days", "type": null},
+    {"text": "Drink plenty of fluids", "type": null}
+  ]
+}

@@ -1,0 +1,149 @@
+# EX-S3 answer key: 50 made-up prescriptions' ordered tests, keyed by hand.
+# expected = the lab-test master's internal id; empty = should NOT be given a name.
+prescription,as_written,expected
+rx-01,CBC,LT0001
+rx-01,Lipid profile,LT0004
+rx-01,HbA1c,LT0009
+rx-02,FBS,LT0010
+rx-02,PPBS,LT0011
+rx-02,S. Creatinine,LT0013
+rx-03,Hb%,LT0020
+rx-03,TLC,LT0021
+rx-03,ESR,LT0042
+rx-04,LFT,LT0002
+rx-04,KFT,LT0003
+rx-04,Urine R/M,LT0005
+rx-05,T3 T4 TSH,LT0049
+rx-05,Vit D3,LT0040
+rx-06,Sr. TSH,LT0035
+rx-06,FT4,LT0036
+rx-06,Lipid Profile (fasting),LT0004
+rx-07,Complete Haemogram,LT0001
+rx-07,Blood urea,LT0015
+rx-07,S. Electrolytes,LT0006
+rx-08,HbA1C,LT0009
+rx-08,Urine ACR,LT0076
+rx-08,ECG,LT0044
+rx-09,CBC with ESR,LT0001
+rx-09,CRP,LT0043
+rx-09,Widal,LT0090
+rx-10,MP,LT0087
+rx-10,Dengue NS1 Ag,LT0088
+rx-10,Fever profile,LT0092
+rx-11,Blood for fever profile,LT0092
+rx-11,Urine C/S,LT0008
+rx-12,X-ray chest PA,LT0048
+rx-12,Sputum for AFB,LT0083
+rx-12,Mantoux,LT0086
+rx-13,USG whole abdomen,LT0045
+rx-13,LFT,LT0002
+rx-13,S. Amylase,LT0070
+rx-13,S. Lipase,LT0071
+rx-14,2D Echo,LT0047
+rx-14,TMT,LT0126
+rx-14,Lipid profile,LT0004
+rx-14,Trop I,LT0098
+rx-15,NT pro BNP,LT0102
+rx-15,ECG,LT0044
+rx-15,RFT,LT0003
+rx-16,S. Uric acid,LT0038
+rx-16,RA factor,LT0106
+rx-16,CRP,LT0043
+rx-16,ESR,LT0042
+rx-17,S. Calcium,LT0039
+rx-17,Vitamin D,LT0040
+rx-17,Vit B12,LT0041
+rx-18,Iron profile,LT0052
+rx-18,S. Ferritin,LT0055
+rx-18,Peripheral smear,LT0061
+rx-19,PT/INR,LT0057
+rx-19,Platelet count,LT0022
+rx-19,D-dimer,LT0060
+rx-20,HBsAg,LT0093
+rx-20,Anti HCV,LT0094
+rx-20,HIV I & II,LT0095
+rx-21,Viral markers,LT0097
+rx-21,Blood group,LT0007
+rx-21,CBC,LT0001
+rx-22,OGTT,LT0065
+rx-22,TSH,LT0035
+rx-22,Hb,LT0020
+rx-22,UPT,LT0079
+rx-23,Stool R/E,LT0080
+rx-23,CBC,LT0001
+rx-24,Blood C/S,LT0082
+rx-24,Urine routine,LT0005
+rx-24,CBC,LT0001
+rx-25,RBS,LT0012
+rx-25,S. Creat,LT0013
+rx-25,Na+,LT0025
+rx-25,K+,LT0026
+rx-26,S. Bilirubin,LT0028
+rx-26,SGPT,LT0030
+rx-26,SGOT,LT0031
+rx-27,Total T3,LT0037
+rx-27,Free T4,LT0036
+rx-27,TSH level,LT0035
+rx-28,PSA,LT0110
+rx-28,USG abdomen & pelvis,LT0045
+rx-28,Urine R/E,LT0005
+rx-29,MRI brain,LT0125
+rx-29,Serum B12,LT0041
+rx-30,CECT abdomen,LT0124
+rx-30,S. Amylase,LT0070
+rx-31,PFT,LT0127
+rx-31,Chest X-ray,LT0048
+rx-31,CBC,LT0001
+rx-32,HbA1c,LT0009
+rx-32,FBS,LT0010
+rx-32,PPBS,LT0011
+rx-32,S. Lipase,LT0071
+rx-33,S. Fructosamine,LT0066
+rx-33,Lipid profile,LT0004
+rx-34,GGT,LT0069
+rx-34,LFT,LT0002
+rx-35,IL-6,LT0105
+rx-35,D-Dimer test,LT0060
+rx-35,CBC,LT0001
+rx-35,LFT,LT0002
+rx-36,Thyroid function test,LT0049
+rx-36,S. Prolactin,LT0112
+rx-37,ABG,LT0120
+rx-37,S. Electrolytes,LT0006
+rx-38,DEXA scan,LT0129
+rx-38,S. Calcium,LT0039
+rx-38,Vit D,LT0040
+rx-39,Haemoglobin,LT0020
+rx-39,Blood sugar (F),LT0010
+rx-39,Blood sugar (PP),LT0011
+rx-40,Sugar F/PP,
+rx-40,Urine sugar,
+rx-41,Lipid prof.,LT0004
+rx-41,Liver functon test,LT0002
+rx-42,C.B.C,LT0001
+rx-42,E.S.R,LT0042
+rx-42,M.P,LT0087
+rx-43,TSML,
+rx-43,PTA,
+rx-43,HbA1c,LT0009
+rx-44,CBP,LT0001
+rx-44,CUE,LT0005
+rx-44,RBS,LT0012
+rx-45,Sr creatinine,LT0013
+rx-45,Bl. urea,LT0015
+rx-45,Sr electrolytes,LT0006
+rx-46,FLP,LT0004
+rx-46,FBS,LT0010
+rx-46,TSH,LT0035
+rx-47,XQZ profile,
+rx-47,Review after 5 days,
+rx-47,CBC,LT0001
+rx-48,Complete blood count,LT0001
+rx-48,Kidney function test,LT0003
+rx-48,Liver function tests,LT0002
+rx-49,Urine for microalbumin,
+rx-49,HbA1c,LT0009
+rx-49,Fundus,LT0133
+rx-50,CBC urgent,LT0001
+rx-50,Trop-I stat,LT0098
+rx-50,ECG,LT0044

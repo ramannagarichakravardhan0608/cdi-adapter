@@ -98,6 +98,23 @@ def add_action(conn: Connection, item_id, actor: str, action: str,
     )  # fmt: skip
 
 
+LIVE = ("workbasket", "claimed", "approved")
+
+
+def has_live_item(conn: Connection, document_ids: list[str]) -> bool:
+    """True when one of these documents is waiting for a reviewer, with one, or approved.
+    False when its review was rejected or cleared away (or it never had one): the document is
+    then not in front of anyone, and the same file sent again is read again (owner,
+    2026-10-10)."""
+    ids = [str(d) for d in document_ids if d]
+    if not ids:
+        return False
+    return bool(conn.execute(
+        text("SELECT 1 FROM rv_item WHERE CAST(source_document_id AS text) = ANY(:d) "
+             "AND status = ANY(:s) LIMIT 1"), {"d": ids, "s": list(LIVE)}
+    ).first())  # fmt: skip
+
+
 def get_item(conn: Connection, item_id: UUID | str) -> dict[str, Any] | None:
     row = conn.execute(
         text("SELECT i.*, d.filename, d.page_count, d.mime_type, p.mpi_id, p.name AS patient_name "
