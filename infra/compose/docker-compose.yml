@@ -35,7 +35,9 @@ services:
     healthcheck: {test: ["CMD-SHELL", "pg_isready -U cdi -d cdi"], interval: 5s, timeout: 3s, retries: 20}
 
   redis:
-    image: redis:7-alpine
+    # ENT-S1 / Licence Register: 7.2 is the last BSD-3 series (7.4 and later are RSALv2 / SSPLv1);
+    # the floating tag 7 would move past it. No upgrade without a compliance review.
+    image: redis:7.2-alpine
     # Load requirepass from a file. Healthcheck authenticates without putting it in argv.
     entrypoint: ["/bin/sh", "-c", "cp /run/secrets/redis_conf /tmp/redis.conf && chown redis:redis /tmp/redis.conf && chmod 600 /tmp/redis.conf && exec /usr/local/bin/docker-entrypoint.sh redis-server /tmp/redis.conf --appendonly yes"]
     secrets: [redis_conf]

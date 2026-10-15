@@ -1,0 +1,129 @@
+{
+ "passed": true,
+ "failures": [],
+ "limits": [
+  {
+   "group": "patient",
+   "metric": "precision_accepted",
+   "min": 0.975,
+   "slice": "overall",
+   "value": 0.975609756097561,
+   "passed": true,
+   "baseline": 0.975609756097561,
+   "drop": 0.0
+  },
+  {
+   "group": "patient",
+   "metric": "coverage",
+   "min": 0.93,
+   "slice": "overall",
+   "value": 0.9318181818181818,
+   "passed": true,
+   "baseline": 0.9318181818181818,
+   "drop": 0.0
+  },
+  {
+   "group": "doctor",
+   "metric": "precision_accepted",
+   "min": 1.0,
+   "slice": "overall",
+   "value": 1.0,
+   "passed": true,
+   "baseline": 1.0,
+   "drop": 0.0
+  },
+  {
+   "group": "doctor",
+   "metric": "coverage",
+   "min": 1.0,
+   "slice": "overall",
+   "value": 1.0,
+   "passed": true,
+   "baseline": 1.0,
+   "drop": 0.0
+  },
+  {
+   "group": "tests",
+   "metric": "precision_accepted",
+   "min": 0.95,
+   "slice": "overall",
+   "value": 0.95,
+   "passed": true,
+   "baseline": 0.95,
+   "drop": 0.0
+  },
+  {
+   "group": "tests",
+   "metric": "coverage",
+   "min": 1.0,
+   "slice": "overall",
+   "value": 1.0,
+   "passed": true,
+   "baseline": 1.0,
+   "drop": 0.0
+  },
+  {
+   "group": "tests",
+   "metric": "f1",
+   "min": 0.974,
+   "slice": "overall",
+   "value": 0.9743589743589743,
+   "passed": true,
+   "baseline": 0.9743589743589743,
+   "drop": 0.0
+  },
+  {
+   "group": "preparation",
+   "metric": "precision_accepted",
+   "min": 0.857,
+   "slice": "overall",
+   "value": 0.8571428571428571,
+   "passed": true,
+   "baseline": 0.8571428571428571,
+   "drop": 0.0
+  },
+  {
+   "group": "preparation",
+   "metric": "coverage",
+   "min": 0.875,
+   "slice": "overall",
+   "value": 0.875,
+   "passed": true,
+   "baseline": 0.875,
+   "drop": 0.0
+  },
+  {
+   "group": "context",
+   "metric": "prep_to_test.error_rate",
+   "max": 0.125,
+   "slice": "overall",
+   "value": 0.125,
+   "passed": true,
+   "baseline": 0.125,
+   "drop": 0.0
+  },
+  {
+   "group": "context",
+   "metric": "test_to_reason.error_rate",
+   "max": 0.059,
+   "slice": "overall",
+   "value": 0.058823529411764705,
+   "passed": true,
+   "baseline": 0.058823529411764705,
+   "drop": 0.0
+  },
+  {
+   "group": "all",
+   "metric": "standard_name_accuracy",
+   "min": 0.947,
+   "slice": "overall",
+   "value": 0.9473684210526315,
+   "passed": true,
+   "baseline": 0.9473684210526315,
+   "drop": 0.0
+  }
+ ],
+ "claims": [],
+ "thresholds_agreed": false,
+ "compared_with_a_baseline": true
+}

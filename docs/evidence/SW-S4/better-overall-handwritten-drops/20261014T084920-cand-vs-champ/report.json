@@ -1,0 +1,2355 @@
+{
+ "schema_version": "contest.v1",
+ "started": "2026-10-14T08:49:20+00:00",
+ "role": "extraction",
+ "by": null,
+ "set": {
+  "name": "synthetic-10",
+  "version": "2fdd0ce868d3b38c",
+  "sealed": false,
+  "cases": 10
+ },
+ "guard": [],
+ "rules": {
+  "path": "rules-0.json",
+  "digest": "e0f13523cbfd9384",
+  "agreed": {
+   "owner": "made-up owner",
+   "clinician": "made-up clinician",
+   "date": "2026-10-14"
+  },
+  "margin": 0.01,
+  "slice_metrics": [
+   {
+    "group": "all",
+    "metric": "field_accuracy"
+   },
+   {
+    "group": "patient",
+    "metric": "precision_accepted"
+   }
+  ],
+  "precision": {
+   "groups": [
+    "patient",
+    "doctor"
+   ],
+   "slice": "overall",
+   "target": null
+  }
+ },
+ "models": {
+  "champion": {
+   "id": "champ",
+   "model_id": "Org/Champion-7B",
+   "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "prompt_version": null,
+   "licence": "Apache-2.0",
+   "machine": "1x L4",
+   "settings": {
+    "ocr": "rapidocr",
+    "two_readers": false
+   },
+   "cases_without_a_result": []
+  },
+  "candidate": {
+   "id": "cand",
+   "model_id": "Org/Candidate-7B",
+   "revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "prompt_version": null,
+   "licence": "Apache-2.0",
+   "machine": "1x L4",
+   "settings": {
+    "ocr": "rapidocr",
+    "two_readers": false
+   },
+   "cases_without_a_result": []
+  }
+ },
+ "slices": [
+  {
+   "name": "overall",
+   "cases": 10,
+   "rows": [
+    {
+     "group": "patient",
+     "metric": "precision_accepted",
+     "champion": 0.5348837209302325,
+     "candidate": 0.7209302325581395,
+     "delta": 0.18604651162790697,
+     "outcome": "win"
+    },
+    {
+     "group": "patient",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.4114369274489819,
+     "candidate": 0.5979294785749035,
+     "delta": 0.1864925511259216,
+     "outcome": "win"
+    },
+    {
+     "group": "patient",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "patient",
+     "metric": "field_accuracy",
+     "champion": 0.5348837209302325,
+     "candidate": 0.7209302325581395,
+     "delta": 0.18604651162790697,
+     "outcome": "win"
+    },
+    {
+     "group": "patient",
+     "metric": "f1",
+     "champion": 0.5348837209302325,
+     "candidate": 0.7209302325581395,
+     "delta": 0.18604651162790697,
+     "outcome": "win"
+    },
+    {
+     "group": "patient",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "precision_accepted",
+     "champion": 1.0,
+     "candidate": 0.972972972972973,
+     "delta": -0.027027027027026973,
+     "outcome": "loss"
+    },
+    {
+     "group": "doctor",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.9318485040998185,
+     "candidate": 0.8875304246311863,
+     "delta": -0.0443180794686322,
+     "outcome": "loss"
+    },
+    {
+     "group": "doctor",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "field_accuracy",
+     "champion": 1.0,
+     "candidate": 0.972972972972973,
+     "delta": -0.027027027027026973,
+     "outcome": "loss"
+    },
+    {
+     "group": "doctor",
+     "metric": "f1",
+     "champion": 1.0,
+     "candidate": 0.972972972972973,
+     "delta": -0.027027027027026973,
+     "outcome": "loss"
+    },
+    {
+     "group": "doctor",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "precision_accepted",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.8753330008603603,
+     "candidate": 0.8753330008603603,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "field_accuracy",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "f1",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "precision_accepted",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.7212015217352108,
+     "candidate": 0.7212015217352108,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "field_accuracy",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "f1",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "all",
+     "metric": "precision_accepted",
+     "champion": 0.8113207547169812,
+     "candidate": 0.8773584905660378,
+     "delta": 0.06603773584905659,
+     "outcome": "win"
+    },
+    {
+     "group": "all",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.741356307172328,
+     "candidate": 0.8153650118990254,
+     "delta": 0.0740087047266974,
+     "outcome": "win"
+    },
+    {
+     "group": "all",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "all",
+     "metric": "field_accuracy",
+     "champion": 0.8113207547169812,
+     "candidate": 0.8773584905660378,
+     "delta": 0.06603773584905659,
+     "outcome": "win"
+    },
+    {
+     "group": "all",
+     "metric": "f1",
+     "champion": 0.8113207547169812,
+     "candidate": 0.8773584905660378,
+     "delta": 0.06603773584905659,
+     "outcome": "win"
+    },
+    {
+     "group": "all",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "all",
+     "metric": "strict_whole_prescription_rate",
+     "champion": 0.0,
+     "candidate": 0.6,
+     "delta": 0.6,
+     "outcome": "win"
+    },
+    {
+     "group": "context",
+     "metric": "prep_to_test.error_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "context",
+     "metric": "test_to_reason.error_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    }
+   ],
+   "tally": {
+    "win": 2,
+    "tie": 0,
+    "loss": 0,
+    "unmeasured": 0
+   }
+  },
+  {
+   "name": "doctor=known",
+   "cases": 6,
+   "rows": [
+    {
+     "group": "patient",
+     "metric": "precision_accepted",
+     "champion": 0.5384615384615384,
+     "candidate": 0.7692307692307693,
+     "delta": 0.23076923076923084,
+     "outcome": "win"
+    },
+    {
+     "group": "patient",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.38173332435171725,
+     "candidate": 0.6120260945397329,
+     "delta": 0.23029277018801564,
+     "outcome": "win"
+    },
+    {
+     "group": "patient",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "patient",
+     "metric": "field_accuracy",
+     "champion": 0.5384615384615384,
+     "candidate": 0.7692307692307693,
+     "delta": 0.23076923076923084,
+     "outcome": "win"
+    },
+    {
+     "group": "patient",
+     "metric": "f1",
+     "champion": 0.5384615384615384,
+     "candidate": 0.7692307692307693,
+     "delta": 0.23076923076923084,
+     "outcome": "win"
+    },
+    {
+     "group": "patient",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "precision_accepted",
+     "champion": 1.0,
+     "candidate": 0.9545454545454546,
+     "delta": -0.045454545454545414,
+     "outcome": "loss"
+    },
+    {
+     "group": "doctor",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.8904710490659667,
+     "candidate": 0.8197247295043042,
+     "delta": -0.07074631956166255,
+     "outcome": "loss"
+    },
+    {
+     "group": "doctor",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "field_accuracy",
+     "champion": 1.0,
+     "candidate": 0.9545454545454546,
+     "delta": -0.045454545454545414,
+     "outcome": "loss"
+    },
+    {
+     "group": "doctor",
+     "metric": "f1",
+     "champion": 1.0,
+     "candidate": 0.9545454545454546,
+     "delta": -0.045454545454545414,
+     "outcome": "loss"
+    },
+    {
+     "group": "doctor",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "precision_accepted",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.8159920848767768,
+     "candidate": 0.8159920848767768,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "field_accuracy",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "f1",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "precision_accepted",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.6488429508079716,
+     "candidate": 0.6488429508079716,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "field_accuracy",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "f1",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "all",
+     "metric": "precision_accepted",
+     "champion": 0.8153846153846154,
+     "candidate": 0.8923076923076924,
+     "delta": 0.07692307692307698,
+     "outcome": "win"
+    },
+    {
+     "group": "all",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.7241967149086236,
+     "candidate": 0.8127025840903161,
+     "delta": 0.08850586918169256,
+     "outcome": "win"
+    },
+    {
+     "group": "all",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "all",
+     "metric": "field_accuracy",
+     "champion": 0.8153846153846154,
+     "candidate": 0.8923076923076924,
+     "delta": 0.07692307692307698,
+     "outcome": "win"
+    },
+    {
+     "group": "all",
+     "metric": "f1",
+     "champion": 0.8153846153846154,
+     "candidate": 0.8923076923076924,
+     "delta": 0.07692307692307698,
+     "outcome": "win"
+    },
+    {
+     "group": "all",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "all",
+     "metric": "strict_whole_prescription_rate",
+     "champion": 0.0,
+     "candidate": 0.6666666666666666,
+     "delta": 0.6666666666666666,
+     "outcome": "win"
+    },
+    {
+     "group": "context",
+     "metric": "prep_to_test.error_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "context",
+     "metric": "test_to_reason.error_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    }
+   ],
+   "tally": {
+    "win": 2,
+    "tie": 0,
+    "loss": 0,
+    "unmeasured": 0
+   }
+  },
+  {
+   "name": "doctor=unknown",
+   "cases": 4,
+   "rows": [
+    {
+     "group": "patient",
+     "metric": "precision_accepted",
+     "champion": 0.5294117647058824,
+     "candidate": 0.6470588235294118,
+     "delta": 0.11764705882352944,
+     "outcome": "win"
+    },
+    {
+     "group": "patient",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.34036634868634846,
+     "candidate": 0.4486289441399742,
+     "delta": 0.10826259545362571,
+     "outcome": "win"
+    },
+    {
+     "group": "patient",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "patient",
+     "metric": "field_accuracy",
+     "champion": 0.5294117647058824,
+     "candidate": 0.6470588235294118,
+     "delta": 0.11764705882352944,
+     "outcome": "win"
+    },
+    {
+     "group": "patient",
+     "metric": "f1",
+     "champion": 0.5294117647058824,
+     "candidate": 0.6470588235294118,
+     "delta": 0.11764705882352944,
+     "outcome": "win"
+    },
+    {
+     "group": "patient",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "precision_accepted",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.8471692545334145,
+     "candidate": 0.8471692545334145,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "field_accuracy",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "f1",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "precision_accepted",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.7212015217352108,
+     "candidate": 0.7212015217352108,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "field_accuracy",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "f1",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "precision_accepted",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.4249871175779984,
+     "candidate": 0.4249871175779984,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "field_accuracy",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "f1",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "all",
+     "metric": "precision_accepted",
+     "champion": 0.8048780487804879,
+     "candidate": 0.8536585365853658,
+     "delta": 0.04878048780487798,
+     "outcome": "win"
+    },
+    {
+     "group": "all",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.6856030237604217,
+     "candidate": 0.7411301927049607,
+     "delta": 0.05552716894453902,
+     "outcome": "win"
+    },
+    {
+     "group": "all",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "all",
+     "metric": "field_accuracy",
+     "champion": 0.8048780487804879,
+     "candidate": 0.8536585365853658,
+     "delta": 0.04878048780487798,
+     "outcome": "win"
+    },
+    {
+     "group": "all",
+     "metric": "f1",
+     "champion": 0.8048780487804877,
+     "candidate": 0.8536585365853658,
+     "delta": 0.04878048780487809,
+     "outcome": "win"
+    },
+    {
+     "group": "all",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "all",
+     "metric": "strict_whole_prescription_rate",
+     "champion": 0.0,
+     "candidate": 0.5,
+     "delta": 0.5,
+     "outcome": "win"
+    },
+    {
+     "group": "context",
+     "metric": "prep_to_test.error_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "context",
+     "metric": "test_to_reason.error_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    }
+   ],
+   "tally": {
+    "win": 2,
+    "tie": 0,
+    "loss": 0,
+    "unmeasured": 0
+   }
+  },
+  {
+   "name": "script=handwritten",
+   "cases": 4,
+   "rows": [
+    {
+     "group": "patient",
+     "metric": "precision_accepted",
+     "champion": 0.5294117647058824,
+     "candidate": 0.29411764705882354,
+     "delta": -0.23529411764705882,
+     "outcome": "loss"
+    },
+    {
+     "group": "patient",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.34036634868634846,
+     "candidate": 0.1511919021993658,
+     "delta": -0.18917444648698267,
+     "outcome": "loss"
+    },
+    {
+     "group": "patient",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "patient",
+     "metric": "field_accuracy",
+     "champion": 0.5294117647058824,
+     "candidate": 0.29411764705882354,
+     "delta": -0.23529411764705882,
+     "outcome": "loss"
+    },
+    {
+     "group": "patient",
+     "metric": "f1",
+     "champion": 0.5294117647058824,
+     "candidate": 0.29411764705882354,
+     "delta": -0.23529411764705882,
+     "outcome": "loss"
+    },
+    {
+     "group": "patient",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "precision_accepted",
+     "champion": 1.0,
+     "candidate": 0.9333333333333333,
+     "delta": -0.06666666666666665,
+     "outcome": "loss"
+    },
+    {
+     "group": "doctor",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.8471692545334145,
+     "candidate": 0.7492277618837578,
+     "delta": -0.09794149264965668,
+     "outcome": "loss"
+    },
+    {
+     "group": "doctor",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "field_accuracy",
+     "champion": 1.0,
+     "candidate": 0.9333333333333333,
+     "delta": -0.06666666666666665,
+     "outcome": "loss"
+    },
+    {
+     "group": "doctor",
+     "metric": "f1",
+     "champion": 1.0,
+     "candidate": 0.9333333333333333,
+     "delta": -0.06666666666666665,
+     "outcome": "loss"
+    },
+    {
+     "group": "doctor",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "precision_accepted",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.7472427908584185,
+     "candidate": 0.7472427908584185,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "field_accuracy",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "f1",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "precision_accepted",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.5964785398205344,
+     "candidate": 0.5964785398205344,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "field_accuracy",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "f1",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "all",
+     "metric": "precision_accepted",
+     "champion": 0.8181818181818182,
+     "candidate": 0.7045454545454546,
+     "delta": -0.11363636363636365,
+     "outcome": "loss"
+    },
+    {
+     "group": "all",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.7050972084770947,
+     "candidate": 0.5822375956767254,
+     "delta": -0.12285961280036928,
+     "outcome": "loss"
+    },
+    {
+     "group": "all",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "all",
+     "metric": "field_accuracy",
+     "champion": 0.8181818181818182,
+     "candidate": 0.7045454545454546,
+     "delta": -0.11363636363636365,
+     "outcome": "loss"
+    },
+    {
+     "group": "all",
+     "metric": "f1",
+     "champion": 0.8181818181818182,
+     "candidate": 0.7045454545454546,
+     "delta": -0.11363636363636365,
+     "outcome": "loss"
+    },
+    {
+     "group": "all",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "all",
+     "metric": "strict_whole_prescription_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "context",
+     "metric": "prep_to_test.error_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "context",
+     "metric": "test_to_reason.error_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    }
+   ],
+   "tally": {
+    "win": 0,
+    "tie": 0,
+    "loss": 2,
+    "unmeasured": 0
+   }
+  },
+  {
+   "name": "script=printed",
+   "cases": 6,
+   "rows": [
+    {
+     "group": "patient",
+     "metric": "precision_accepted",
+     "champion": 0.5384615384615384,
+     "candidate": 1.0,
+     "delta": 0.46153846153846156,
+     "outcome": "win"
+    },
+    {
+     "group": "patient",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.38173332435171725,
+     "candidate": 0.9057332040921722,
+     "delta": 0.5239998797404549,
+     "outcome": "win"
+    },
+    {
+     "group": "patient",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "patient",
+     "metric": "field_accuracy",
+     "champion": 0.5384615384615384,
+     "candidate": 1.0,
+     "delta": 0.46153846153846156,
+     "outcome": "win"
+    },
+    {
+     "group": "patient",
+     "metric": "f1",
+     "champion": 0.5384615384615384,
+     "candidate": 1.0,
+     "delta": 0.46153846153846156,
+     "outcome": "win"
+    },
+    {
+     "group": "patient",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "precision_accepted",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.8904710490659667,
+     "candidate": 0.8904710490659667,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "field_accuracy",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "f1",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "precision_accepted",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.8025667544018051,
+     "candidate": 0.8025667544018051,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "field_accuracy",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "f1",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "precision_accepted",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.5257600518749918,
+     "candidate": 0.5257600518749918,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "field_accuracy",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "f1",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "all",
+     "metric": "precision_accepted",
+     "champion": 0.8064516129032258,
+     "candidate": 1.0,
+     "delta": 0.19354838709677424,
+     "outcome": "win"
+    },
+    {
+     "group": "all",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.7118318743152233,
+     "candidate": 0.958179705831103,
+     "delta": 0.2463478315158797,
+     "outcome": "win"
+    },
+    {
+     "group": "all",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "all",
+     "metric": "field_accuracy",
+     "champion": 0.8064516129032258,
+     "candidate": 1.0,
+     "delta": 0.19354838709677424,
+     "outcome": "win"
+    },
+    {
+     "group": "all",
+     "metric": "f1",
+     "champion": 0.8064516129032258,
+     "candidate": 1.0,
+     "delta": 0.19354838709677424,
+     "outcome": "win"
+    },
+    {
+     "group": "all",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "all",
+     "metric": "strict_whole_prescription_rate",
+     "champion": 0.0,
+     "candidate": 1.0,
+     "delta": 1.0,
+     "outcome": "win"
+    },
+    {
+     "group": "context",
+     "metric": "prep_to_test.error_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "context",
+     "metric": "test_to_reason.error_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    }
+   ],
+   "tally": {
+    "win": 2,
+    "tie": 0,
+    "loss": 0,
+    "unmeasured": 0
+   }
+  },
+  {
+   "name": "suite=adversarial",
+   "cases": 1,
+   "rows": [
+    {
+     "group": "patient",
+     "metric": "precision_accepted",
+     "champion": 0.3333333333333333,
+     "candidate": 0.0,
+     "delta": -0.3333333333333333,
+     "outcome": "loss"
+    },
+    {
+     "group": "patient",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.07825661547924025,
+     "candidate": 0.0,
+     "delta": -0.07825661547924025,
+     "outcome": "loss"
+    },
+    {
+     "group": "patient",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "patient",
+     "metric": "field_accuracy",
+     "champion": 0.3333333333333333,
+     "candidate": 0.0,
+     "delta": -0.3333333333333333,
+     "outcome": "loss"
+    },
+    {
+     "group": "patient",
+     "metric": "f1",
+     "champion": 0.3333333333333333,
+     "candidate": 0.0,
+     "delta": -0.3333333333333333,
+     "outcome": "loss"
+    },
+    {
+     "group": "patient",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "precision_accepted",
+     "champion": 1.0,
+     "candidate": 0.75,
+     "delta": -0.25,
+     "outcome": "loss"
+    },
+    {
+     "group": "doctor",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.5964785398205344,
+     "candidate": 0.35613990556206576,
+     "delta": -0.2403386342584687,
+     "outcome": "loss"
+    },
+    {
+     "group": "doctor",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "field_accuracy",
+     "champion": 1.0,
+     "candidate": 0.75,
+     "delta": -0.25,
+     "outcome": "loss"
+    },
+    {
+     "group": "doctor",
+     "metric": "f1",
+     "champion": 1.0,
+     "candidate": 0.75,
+     "delta": -0.25,
+     "outcome": "loss"
+    },
+    {
+     "group": "doctor",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "precision_accepted",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.4249871175779984,
+     "candidate": 0.4249871175779984,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "field_accuracy",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "f1",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "precision_accepted",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.2698308834937703,
+     "candidate": 0.2698308834937703,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "field_accuracy",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "f1",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "all",
+     "metric": "precision_accepted",
+     "champion": 0.8,
+     "candidate": 0.6,
+     "delta": -0.20000000000000007,
+     "outcome": "loss"
+    },
+    {
+     "group": "all",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.5407687136381664,
+     "candidate": 0.35161957197890165,
+     "delta": -0.18914914165926472,
+     "outcome": "loss"
+    },
+    {
+     "group": "all",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "all",
+     "metric": "field_accuracy",
+     "champion": 0.8,
+     "candidate": 0.6,
+     "delta": -0.20000000000000007,
+     "outcome": "loss"
+    },
+    {
+     "group": "all",
+     "metric": "f1",
+     "champion": 0.8000000000000002,
+     "candidate": 0.6,
+     "delta": -0.20000000000000018,
+     "outcome": "loss"
+    },
+    {
+     "group": "all",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "all",
+     "metric": "strict_whole_prescription_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "context",
+     "metric": "prep_to_test.error_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "context",
+     "metric": "test_to_reason.error_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    }
+   ],
+   "tally": {
+    "win": 0,
+    "tie": 0,
+    "loss": 2,
+    "unmeasured": 0
+   }
+  },
+  {
+   "name": "suite=capability",
+   "cases": 5,
+   "rows": [
+    {
+     "group": "patient",
+     "metric": "precision_accepted",
+     "champion": 0.5833333333333334,
+     "candidate": 0.75,
+     "delta": 0.16666666666666663,
+     "outcome": "win"
+    },
+    {
+     "group": "patient",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.41772954950233765,
+     "candidate": 0.584524237799965,
+     "delta": 0.16679468829762734,
+     "outcome": "win"
+    },
+    {
+     "group": "patient",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "patient",
+     "metric": "field_accuracy",
+     "champion": 0.5833333333333334,
+     "candidate": 0.75,
+     "delta": 0.16666666666666663,
+     "outcome": "win"
+    },
+    {
+     "group": "patient",
+     "metric": "f1",
+     "champion": 0.5833333333333334,
+     "candidate": 0.75,
+     "delta": 0.16666666666666663,
+     "outcome": "win"
+    },
+    {
+     "group": "patient",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "precision_accepted",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.8753330008603603,
+     "candidate": 0.8753330008603603,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "field_accuracy",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "f1",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "precision_accepted",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.7870282011880192,
+     "candidate": 0.7870282011880192,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "field_accuracy",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "f1",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "precision_accepted",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.5964785398205344,
+     "candidate": 0.5964785398205344,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "field_accuracy",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "f1",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "all",
+     "metric": "precision_accepted",
+     "champion": 0.8245614035087719,
+     "candidate": 0.8947368421052632,
+     "delta": 0.07017543859649122,
+     "outcome": "win"
+    },
+    {
+     "group": "all",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.7275548977536411,
+     "candidate": 0.8091066877922218,
+     "delta": 0.08155179003858071,
+     "outcome": "win"
+    },
+    {
+     "group": "all",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "all",
+     "metric": "field_accuracy",
+     "champion": 0.8245614035087719,
+     "candidate": 0.8947368421052632,
+     "delta": 0.07017543859649122,
+     "outcome": "win"
+    },
+    {
+     "group": "all",
+     "metric": "f1",
+     "champion": 0.8245614035087719,
+     "candidate": 0.8947368421052632,
+     "delta": 0.07017543859649122,
+     "outcome": "win"
+    },
+    {
+     "group": "all",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "all",
+     "metric": "strict_whole_prescription_rate",
+     "champion": 0.0,
+     "candidate": 0.6,
+     "delta": 0.6,
+     "outcome": "win"
+    },
+    {
+     "group": "context",
+     "metric": "prep_to_test.error_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "context",
+     "metric": "test_to_reason.error_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    }
+   ],
+   "tally": {
+    "win": 2,
+    "tie": 0,
+    "loss": 0,
+    "unmeasured": 0
+   }
+  },
+  {
+   "name": "suite=regression",
+   "cases": 4,
+   "rows": [
+    {
+     "group": "patient",
+     "metric": "precision_accepted",
+     "champion": 0.5,
+     "candidate": 0.8125,
+     "delta": 0.3125,
+     "outcome": "win"
+    },
+    {
+     "group": "patient",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.3098286228913545,
+     "candidate": 0.612110563305903,
+     "delta": 0.3022819404145485,
+     "outcome": "win"
+    },
+    {
+     "group": "patient",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "patient",
+     "metric": "field_accuracy",
+     "champion": 0.5,
+     "candidate": 0.8125,
+     "delta": 0.3125,
+     "outcome": "win"
+    },
+    {
+     "group": "patient",
+     "metric": "f1",
+     "champion": 0.5,
+     "candidate": 0.8125,
+     "delta": 0.3125,
+     "outcome": "win"
+    },
+    {
+     "group": "patient",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "precision_accepted",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.8380210133769103,
+     "candidate": 0.8380210133769103,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "field_accuracy",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "f1",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "doctor",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "precision_accepted",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.7212015217352108,
+     "candidate": 0.7212015217352108,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "field_accuracy",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "f1",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "tests",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "precision_accepted",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.4249871175779984,
+     "candidate": 0.4249871175779984,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "field_accuracy",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "f1",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "preparation",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "all",
+     "metric": "precision_accepted",
+     "champion": 0.7948717948717948,
+     "candidate": 0.9230769230769231,
+     "delta": 0.1282051282051283,
+     "outcome": "win"
+    },
+    {
+     "group": "all",
+     "metric": "precision_accepted_lower_95",
+     "champion": 0.6711197116708324,
+     "candidate": 0.8224099257413208,
+     "delta": 0.15129021407048837,
+     "outcome": "win"
+    },
+    {
+     "group": "all",
+     "metric": "coverage",
+     "champion": 1.0,
+     "candidate": 1.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "all",
+     "metric": "field_accuracy",
+     "champion": 0.7948717948717948,
+     "candidate": 0.9230769230769231,
+     "delta": 0.1282051282051283,
+     "outcome": "win"
+    },
+    {
+     "group": "all",
+     "metric": "f1",
+     "champion": 0.7948717948717948,
+     "candidate": 0.9230769230769231,
+     "delta": 0.1282051282051283,
+     "outcome": "win"
+    },
+    {
+     "group": "all",
+     "metric": "invented_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "all",
+     "metric": "strict_whole_prescription_rate",
+     "champion": 0.0,
+     "candidate": 0.75,
+     "delta": 0.75,
+     "outcome": "win"
+    },
+    {
+     "group": "context",
+     "metric": "prep_to_test.error_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    },
+    {
+     "group": "context",
+     "metric": "test_to_reason.error_rate",
+     "champion": 0.0,
+     "candidate": 0.0,
+     "delta": 0.0,
+     "outcome": "tie"
+    }
+   ],
+   "tally": {
+    "win": 2,
+    "tie": 0,
+    "loss": 0,
+    "unmeasured": 0
+   }
+  }
+ ],
+ "speed": {
+  "champion": {
+   "documents_timed": 10,
+   "seconds_per_document": 20.0,
+   "seconds_p95": 20.0,
+   "gpu_memory_gib": 18.0,
+   "rent_per_prescription": 0.5,
+   "currency": "INR"
+  },
+  "candidate": {
+   "documents_timed": 10,
+   "seconds_per_document": 22.0,
+   "seconds_p95": 22.0,
+   "gpu_memory_gib": 19.0,
+   "rent_per_prescription": 0.55,
+   "currency": "INR"
+  }
+ },
+ "precision": [
+  {
+   "group": "patient",
+   "slice": "overall",
+   "target": null,
+   "champion": {
+    "n": 43,
+    "correct": 23,
+    "observed": 0.5348837209302325,
+    "lower_95": 0.4114369274489819
+   },
+   "candidate": {
+    "n": 43,
+    "correct": 31,
+    "observed": 0.7209302325581395,
+    "lower_95": 0.5979294785749035
+   },
+   "finding": "holds",
+   "why": ""
+  },
+  {
+   "group": "doctor",
+   "slice": "overall",
+   "target": null,
+   "champion": {
+    "n": 37,
+    "correct": 37,
+    "observed": 1.0,
+    "lower_95": 0.9318485040998185
+   },
+   "candidate": {
+    "n": 37,
+    "correct": 36,
+    "observed": 0.972972972972973,
+    "lower_95": 0.8875304246311863
+   },
+   "finding": "lower",
+   "why": "0.9730 (lower bound 0.8875) against the champion's 1.0000 (0.9318)"
+  }
+ ],
+ "verdict": {
+  "decision": "keep champion",
+  "keep_champion_because": [
+   "slice script=handwritten: patient.precision_accepted dropped from 0.5294 to 0.2941, more than the margin 0.01",
+   "slice script=handwritten: all.field_accuracy dropped from 0.8182 to 0.7045, more than the margin 0.01",
+   "slice suite=adversarial: patient.precision_accepted dropped from 0.3333 to 0.0000, more than the margin 0.01",
+   "slice suite=adversarial: all.field_accuracy dropped from 0.8000 to 0.6000, more than the margin 0.01",
+   "precision of accepted doctor values [overall]: 0.9730 (lower bound 0.8875) against the champion's 1.0000 (0.9318)"
+  ],
+  "need_more_data_because": [],
+  "better_overall": true,
+  "binding": false,
+  "notes": [
+   "the answer key is not sealed: a rehearsal, not a decision"
+  ]
+ },
+ "contest_id": "20261014T084920-cand-vs-champ",
+ "saved_in": "docs/evidence/SW-S4/better-overall-handwritten-drops/20261014T084920-cand-vs-champ"
+}

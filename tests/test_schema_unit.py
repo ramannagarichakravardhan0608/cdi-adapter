@@ -107,7 +107,7 @@ def test_migration_0001_downgrade_drops_every_table():
     assert set(m.VIEWS) == set(re.findall(r"CREATE OR REPLACE VIEW (\w+)", VIEWS))
 
 
-def test_migration_chain_is_linear_0001_to_0038():
+def test_migration_chain_is_linear_0001_to_0041():
     cfg = Config(str(ROOT / "alembic.ini"))
     cfg.set_main_option("script_location", str(ROOT / "db" / "alembic"))
     script = ScriptDirectory.from_config(cfg)
@@ -122,9 +122,15 @@ def test_migration_chain_is_linear_0001_to_0038():
     # 0036: the 'patient_detail' fact type (EX-S1)
     # 0037: the doctor list, the document's link to a doctor, 'doctor_detail' (EX-S2)
     # 0038: the 'preparation' fact type (EX-S4)
-    assert script.get_heads() == ["0038"]
+    # 0039: lab tests, preparation and test context as tables; views with evidence (OUT-S1)
+    # 0040: single sign-on accounts (no password), who / from where in the audit trail (ENT-S2)
+    # 0041: shadow answers kept apart, and the champion switch in the rollout log (SW-S5)
+    assert script.get_heads() == ["0041"]
     chain = [r.revision for r in script.walk_revisions("base", "heads")]
     assert chain == [
+        "0041",
+        "0040",
+        "0039",
         "0038",
         "0037",
         "0036",

@@ -187,6 +187,8 @@ class ScriptedClient(mc.MLClient):
 def test_vlm_json_valid_first_time():
     c = ScriptedClient([json.dumps(MINIMAL_VALID["lab_report.v3"])])
     out = c.vlm_json(None, "p", "lab_report.v3", retries=1)
+    # OUT-S1: the model's own words are kept beside the answer, not in it
+    assert out.raw == json.dumps(MINIMAL_VALID["lab_report.v3"])  # type: ignore[attr-defined]
     assert out == MINIMAL_VALID["lab_report.v3"] and len(c.prompts) == 1
     assert not mc.is_partial(out)
 

@@ -16,10 +16,9 @@ from sqlalchemy import Connection, text
 
 from cdi_adapter.fhir import resources as R
 from cdi_adapter.mpi.service import get_patient
-from cdi_adapter.terminology.seed import CONDITIONS
+from cdi_adapter.terminology.canonical import icd10_for
 
 _NS = uuid.UUID("0b7f3d2e-9a61-4c1f-8d55-3e2a1c9b7f60")  # canonical bundle id namespace
-_ICD10 = {c.code: c.icd10 for c in CONDITIONS if c.icd10}
 
 
 def _ref(*parts: Any) -> str:
@@ -78,7 +77,7 @@ def build_bundle(conn: Connection, rv_item_id: UUID | str) -> dict[str, Any]:
         add("condition", ref, R.condition({"local_text": r["display"], "code": r["code"],
                                            "code_system": r["code_system"],
                                            "code_display": r["display"],
-                                           "icd10": _ICD10.get(r["code"] or ""),
+                                           "icd10": icd10_for(r["code"]),
                                            "asserted_time": r["recorded_at"]},
                                           ref, p_ref, e_ref))  # fmt: skip
     for r in _rows(conn, "cn_medication", item_id):

@@ -1,0 +1,48 @@
+{
+ "schema_version": "answer.v1",
+ "case_id": "syn-08",
+ "slices": {
+  "script": "printed",
+  "doctor": "unknown",
+  "doctor_group": "clinic-c",
+  "suite": "regression"
+ },
+ "patient": {
+  "name": "Hari Dummyani",
+  "age_text": "51 Y",
+  "sex": "male",
+  "dob": null,
+  "phone": "9876543217",
+  "address": null
+ },
+ "doctor": {
+  "name": "Dr. Kavya Specimen",
+  "registration_no": "70004",
+  "qualification": "MBBS",
+  "department": "General"
+ },
+ "tests": [
+  {
+   "as_written": "CBC",
+   "standard_code": "58410-2",
+   "reasons": [
+    "Fever"
+   ]
+  }
+ ],
+ "preparation": [],
+ "labelling": {
+  "labellers": [
+   "labeller-b (made up)"
+  ]
+ },
+ "identity": {
+  "method": "synthetic",
+  "tool": null,
+  "checked_by": "made-up checker (synthetic set)",
+  "checked_on": "2026-10-13",
+  "readable_identity": false,
+  "note": "a made-up person and clinic; there is no picture"
+ },
+ "note": null
+}

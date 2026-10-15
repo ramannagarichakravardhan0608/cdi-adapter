@@ -155,6 +155,11 @@ def validate_document(document_id: UUID | str, *, actor: str = "system") -> dict
     try:
         with session_scope() as conn:
             counts = _validate(conn, doc_id, s, run_id)
+            # OUT-S1: the rows another system reads follow the facts - names and codes were
+            # bound, and the "does not fit" check made, after the extraction wrote them
+            from cdi_adapter.persist import normalized
+
+            normalized.refresh(conn, doc_id)
             repo.set_document_status(conn, doc_id, "validated")
             repo.finish_run(conn, run_id, metrics=counts)
             repo.write_audit(conn, actor=actor, action="update", entity="source_document",

@@ -39,6 +39,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -55,16 +56,27 @@ ACCEPTED, NEEDS_CHECK = "accepted", "needs_check"
 
 # contract fields whose extractor or table is not built yet (OUT-S1, EX-S1/S2/S4/S5): reported as
 # absent rather than guessed. Keeping the list here means the screen and the file agree on it.
-ABSENT: tuple[str, ...] = (
-    "engines",
-)  # fmt: skip
+ABSENT: tuple[str, ...] = ()  # SW-S1 filled the last one: "engines" is in every result now
+
+# SW-S1 AC4: what each stage of the pipeline is, in the result's words
+STAGE_ROLES = {"ingest": "page maker (PDF renderer, or Pillow for a picture)",
+               "ocr": "text reader", "classify": "document classifier",
+               "extract": "vision-language model", "terminology": "test and code lists",
+               "validate": "checks", "project": "FHIR projection"}  # fmt: skip
+# what the extraction also records with every value (OUT-S1): which wording, which lists
+STACK_ROLES = {"schema": "answer format", "prompt_version": "prompt wording",
+               "lab_master": "lab-test list", "preparation_phrases": "preparation phrases",
+               "context_rules": "test and reason rules"}  # fmt: skip
 
 
 def value(raw: Any, *, review_state: str | None, confidence: float | None,
-          evidence: dict[str, Any] | None = None,
-          reason: str | None = None) -> dict[str, Any]:  # fmt: skip
+          evidence: dict[str, Any] | None = None, reason: str | None = None,
+          corrected_from: dict[str, Any] | None = None) -> dict[str, Any]:  # fmt: skip
     """One contract value object. The **only** way a value reaches the result, so a value without
-    a status cannot be built: ``accepted`` needs a governed state *and* evidence."""
+    a status cannot be built: ``accepted`` needs a governed state *and* evidence.
+
+    ``corrected_from`` (OUT-S2 AC4): when a person corrected the value, the reading it replaced -
+    what it said, which saved value that was, and the readings of the page behind it."""
     governed = review_state in GOVERNED
     proven = bool(evidence and (evidence.get("bbox") or evidence.get("observation_ids")))
     out: dict[str, Any] = {
@@ -77,6 +89,8 @@ def value(raw: Any, *, review_state: str | None, confidence: float | None,
     if out["status"] == NEEDS_CHECK:
         out["reason"] = reason or ("not governed by the gate" if not governed
                                    else "no evidence recorded")  # fmt: skip
+    if corrected_from:
+        out["corrected_from"] = corrected_from
     return out
 
 
@@ -93,10 +107,57 @@ def _evidence(conn: Connection, fact_id: Any) -> dict[str, Any] | None:
     return {"page": rows["page_no"], "bbox": rows["bbox_union"], "observation_ids": blocks}
 
 
+# why a value that nobody has looked at yet is waiting, when no check named a problem
+_WAITING = {"pending": "not checked yet", "in_review": "waiting for a person to check it",
+            "extracted": "not checked yet"}  # fmt: skip
+
+
+def reason_of(f: dict[str, Any]) -> str | None:
+    """OUT-S2 AC3: why this value needs a check, in the words of the checks that held it (the
+    findings saved on the value when it was validated) - "the phone number has 9 digits", not
+    only "needs a check". Notes that hold nothing back (``info``) are left out. None when no
+    check named a problem: :func:`value` then says which rule kept it from being accepted."""
+    note = f.get("review_note")
+    if isinstance(note, str):
+        try:
+            note = json.loads(note)
+        except ValueError:
+            note = None
+    found = note.get("findings") if isinstance(note, dict) else None
+    said = [str(x.get("message") or x.get("code")) for x in found or []
+            if isinstance(x, dict) and x.get("severity") != "info"
+            and (x.get("message") or x.get("code"))]  # fmt: skip
+    if said:
+        return "; ".join(dict.fromkeys(said))
+    return _WAITING.get(str(f.get("review_state")))
+
+
+def _replaced(conn: Connection, f: dict[str, Any], raw: Any) -> dict[str, Any] | None:
+    """OUT-S2 AC4: the reading a person's correction replaced. The corrected value is a NEW
+    saved value pointing at the old one (``supersedes``); the old one is never changed or
+    deleted, so it can always be named: what it said, its id, and the page readings behind it."""
+    if not f.get("supersedes") or conn is None:
+        return None
+    old = conn.execute(
+        text("SELECT id, local_text, value_text, value_num, code_display FROM clinical_fact "
+             "WHERE id = :i"), {"i": f["supersedes"]},
+    ).mappings().first()  # fmt: skip
+    if old is None:
+        return None
+    # the same field of the older value as the one shown: a detail ("phone") keeps its label in
+    # ``local_text`` and its value in ``value_text``
+    labelled = raw is not None and raw == f.get("value_text") and raw != f.get("local_text")
+    was = old["value_text"] if labelled else _text_of(dict(old))
+    proof = _evidence(conn, old["id"]) or {}
+    return {"fact_id": str(old["id"]), "value": was,
+            "observation_ids": proof.get("observation_ids") or []}  # fmt: skip
+
+
 def _fact_value(conn: Connection, f: dict[str, Any], raw: Any) -> dict[str, Any]:
     return value(raw, review_state=f.get("review_state"),
                  confidence=f.get("confidence_overall"),
-                 evidence=_evidence(conn, f["id"]))  # fmt: skip
+                 evidence=_evidence(conn, f["id"]), reason=reason_of(f),
+                 corrected_from=_replaced(conn, f, raw))  # fmt: skip
 
 
 def _text_of(f: dict[str, Any]) -> Any:
@@ -136,13 +197,79 @@ def build(conn: Connection, document_id: UUID | str) -> dict[str, Any]:
         "diagnoses": _diagnoses(conn, facts),
         "preparation": _preparation(conn, facts),
         "preparation_phrases_version": _preparation_version(facts),
+        "engines": _engines(conn, doc["id"]),
         "absent": list(ABSENT),
     }
     _link_preparation(out["lab_tests"], out["preparation"])
     out["context_rules_version"] = _link_context(conn, out["lab_tests"], facts)
     out["review"] = _review(out)
-    out["status"] = _status(doc, out)
+    out["status"], out["status_reason"] = _status(doc, out, _reading(conn, doc["id"]))
     return out
+
+
+def _engines(conn: Connection, document_id: Any) -> list[dict[str, Any]]:
+    """SW-S1 AC4: the name and version of every engine and model that produced this result -
+    read from what each stage recorded when it ran (``pipeline_run``), the readers that left
+    readings (``ocr_observation``), and the versions saved with the values. Nothing is taken
+    from today's settings: a result made under an older model still says that model."""
+    if conn is None:
+        return []
+    d = {"d": str(document_id)}
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add(stage: str, role: str, name: Any, version: Any) -> None:
+        if name in (None, "") or (role, str(name)) in seen:
+            return
+        seen.add((role, str(name)))
+        out.append({"stage": stage, "role": role, "name": str(name),
+                    "version": None if version in (None, "") else str(version)})  # fmt: skip
+
+    try:
+        runs = conn.execute(
+            text("SELECT stage, model_name, model_version FROM pipeline_run "
+                 "WHERE document_id = :d AND status = 'ok' ORDER BY started_at DESC, id"), d,
+        ).mappings().all()  # fmt: skip
+        readers = conn.execute(
+            text("SELECT DISTINCT engine, engine_version FROM ocr_observation "
+                 "WHERE document_id = :d ORDER BY engine"), d,
+        ).mappings().all()  # fmt: skip
+        stack = conn.execute(
+            text("SELECT p.model_stack FROM fact_provenance p WHERE p.source_doc_id = :d "
+                 "AND p.model_stack IS NOT NULL ORDER BY p.recorded_at DESC LIMIT 1"), d,
+        ).mappings().first()  # fmt: skip
+    except Exception:  # noqa: BLE001 - a stand-in database with none of these: say nothing
+        return []
+    latest: dict[str, Any] = {}
+    for run in runs or []:
+        latest.setdefault(run["stage"], run)  # the newest good run of each stage
+    held: Any = stack["model_stack"] if stack else None
+    if isinstance(held, str):
+        try:
+            held = json.loads(held)
+        except ValueError:
+            held = None
+    held = held if isinstance(held, dict) else {}
+    for stage in STAGE_ROLES:
+        if stage in latest and stage != "ocr":
+            version = latest[stage]["model_version"]
+            if stage == "extract" and held.get("extractor") == latest[stage]["model_name"]:
+                # SW-S2: the model's exact revision, as the extraction recorded it
+                version = held.get("extractor_revision") or version
+            add(stage, STAGE_ROLES[stage], latest[stage]["model_name"], version)
+    for reader in readers or []:
+        version = str(reader["engine_version"] or "")
+        # the reader writes "name version" (rapidocr-onnxruntime 1.4.4): only the version part
+        add("ocr", STAGE_ROLES["ocr"], reader["engine"],
+            version.rsplit(" ", 1)[-1] if " " in version else version)  # fmt: skip
+    if "ocr" in latest and not readers:
+        add("ocr", STAGE_ROLES["ocr"], latest["ocr"]["model_name"], latest["ocr"]["model_version"])
+    for key, role in STACK_ROLES.items():
+        if isinstance(held, dict) and held.get(key):
+            add("extract", role, key if key != "schema" else held[key],
+                None if key == "schema" else held[key])  # fmt: skip
+    order = {s: i for i, s in enumerate(STAGE_ROLES)}
+    return sorted(out, key=lambda e: (order.get(e["stage"], 99), e["role"], e["name"]))
 
 
 # ------------------------------------------------------------------ where the result came from
@@ -290,9 +417,19 @@ def _patient(conn: Connection, doc: dict[str, Any],
 def _patient_record(conn: Connection, doc: dict[str, Any]) -> dict[str, Any]:
     if not doc["patient_id"]:
         return {}
+    # EX-S1 (FR2, FR4): a date of birth is given only when it was really written - a document
+    # printed that date, or the registry holds it. An identity made from an AGE keeps 1 January
+    # of the estimated year for matching (mpi._mint); shown here, that estimate would be a date
+    # of birth nobody wrote. The same rule as mpi.patient_summary.
     p = conn.execute(
-        text("SELECT mpi_id, name, sex, birth_date, legacy_mrn, abha_number, identity_confidence "
-             "FROM patient_identity WHERE id = :i"), {"i": doc["patient_id"]},
+        text("SELECT i.mpi_id, i.name, i.sex, i.legacy_mrn, i.abha_number, "
+             "  i.identity_confidence, "
+             "  CASE WHEN EXISTS (SELECT 1 FROM patient_identity_alias a "
+             "                    WHERE a.patient_id = i.id AND a.birth_date = i.birth_date) "
+             "         OR EXISTS (SELECT 1 FROM patient_registry r "
+             "                    WHERE r.patient_id = i.mpi_id AND r.dob = i.birth_date) "
+             "       THEN i.birth_date END AS birth_date "
+             "FROM patient_identity i WHERE i.id = :i"), {"i": doc["patient_id"]},
     ).mappings().first()  # fmt: skip
     if p is None:
         return {}
@@ -618,15 +755,56 @@ def _review(out: dict[str, Any]) -> dict[str, Any]:
             "items": [{"value": v["value"], "reason": v.get("reason")} for v in held]}  # fmt: skip
 
 
-def _status(doc: dict[str, Any], out: dict[str, Any]) -> str:
+STATUSES = ("complete", "needs_check", "incomplete", "refusal", "held_for_rescan")
+# what a model says instead of an answer when it will not read the page
+_REFUSAL = re.compile(
+    r"\b(i\s+can(?:no|['\u2019]?)t|i\s+am\s+(?:unable|not\s+able)|i['\u2019]m\s+(?:unable|"
+    r"not\s+able|sorry)|i\s+won['\u2019]?t|unable\s+to\s+(?:help|assist|comply|process|"
+    r"provide)|cannot\s+(?:help|assist|comply|process|provide))\b", re.I)  # fmt: skip
+
+
+def refused(raw_answer: Any) -> bool:
+    """The model answered in words that it will not do it, and gave no JSON at all."""
+    said = str(raw_answer or "")
+    return bool(said.strip()) and "{" not in said and bool(_REFUSAL.search(said))
+
+
+def _reading(conn: Connection, document_id: Any) -> dict[str, Any]:
+    """How the model's answer for this document ended: whole, cut short, or refused - from the
+    saved answer (``extraction``), not from memory."""
+    if conn is None:
+        return {}
+    row = conn.execute(
+        text("SELECT is_partial, payload->>'_incomplete' AS cut, payload->>'_raw_answer' AS raw, "
+             "payload->'_errors'->>0 AS error FROM extraction WHERE document_id = :d "
+             "ORDER BY created_at DESC LIMIT 1"), {"d": str(document_id)},
+    ).mappings().first()  # fmt: skip
+    return dict(row) if row else {}
+
+
+def _status(doc: dict[str, Any], out: dict[str, Any],
+            reading: dict[str, Any] | None = None) -> tuple[str, str | None]:  # fmt: skip
+    """The result's one status, and why when it is not simply complete / needs_check.
+
+    * ``held_for_rescan`` - the document could not be read at all;
+    * ``refusal``         - the model declined to read it: there is no answer to show;
+    * ``incomplete``      - the answer was cut short or did not fit the format: what could be
+                            read is here, every value of it held for a person;
+    * ``needs_check``     - at least one value waits for a person;
+    * ``complete``        - every value shown is accepted."""
+    reading = reading or {}
     if doc["status"] == "error":
-        return "held_for_rescan"
-    return "complete" if out["review"]["needs_check_count"] == 0 else "needs_check"
+        return "held_for_rescan", "the document could not be read"
+    if refused(reading.get("raw")):
+        return "refusal", "the model declined to read this document"
+    if reading.get("cut") in ("true", True) or reading.get("is_partial"):
+        return "incomplete", reading.get("error") or "the model's answer was not complete"
+    return ("complete" if out["review"]["needs_check_count"] == 0 else "needs_check"), None
 
 
 JOB_SCHEMA_VERSION = "result-job.v1"
 _NOT_READ = ("quality_hold", "error", "skipped", "mismatch")  # job statuses with nothing to show
-_WORST = ("complete", "needs_check", "held_for_rescan")
+_WORST = STATUSES
 
 
 def build_job(conn: Connection, job_id: str) -> dict[str, Any]:
@@ -807,8 +985,21 @@ def refresh_files(document_ids: Any) -> list[dict[str, Any]]:
 
 def validate(document: dict[str, Any]) -> None:
     """Check a built result against ``schemas/contract/result.v1.json``. Raises
-    ``ValidationError``."""
+    ``ValidationError``. The format is strict (OUT-S2 AC5): a field it does not name is refused,
+    wherever in the document it is."""
     from jsonschema import Draft202012Validator
 
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
-    Draft202012Validator(schema).validate(document)
+    Draft202012Validator(schema, format_checker=Draft202012Validator.FORMAT_CHECKER).validate(
+        document)  # fmt: skip
+
+
+def problems(document: dict[str, Any]) -> list[str]:
+    """Every way a document does not fit the format, as readable lines; empty when it fits."""
+    from jsonschema import Draft202012Validator
+
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    found = Draft202012Validator(
+        schema, format_checker=Draft202012Validator.FORMAT_CHECKER).iter_errors(document)
+    return sorted(f"{'/'.join(map(str, e.absolute_path)) or '<root>'}: {e.message}"
+                  for e in found)  # fmt: skip

@@ -4,6 +4,8 @@ backup --dump FILE --taken-at ISO   after snapshot.sh's pg_dump: copy new MinIO 
 backup --failed MSG --taken-at ISO  a failed snapshot (the staleness alert keeps counting)
 drill [--minio-bin B] [--pg-bin D]  restore everything into a clean environment, measure
 status                              the last backup and the last drill
+counts --save FILE                  every table's row count, the scans, the queue keys (ENT-S4)
+counts --compare FILE [--report F]  the same now, against FILE: exit 1 when one differs
 """
 
 from __future__ import annotations
@@ -38,13 +40,46 @@ def build_parser() -> argparse.ArgumentParser:
         help="also count documents the live database has that the backup lacks",
     )
     sub.add_parser("status")
+    c = sub.add_parser("counts")
+    cg = c.add_mutually_exclusive_group(required=True)
+    cg.add_argument("--save", help="write the counts taken now to this file")
+    cg.add_argument("--compare", help="compare the counts taken now with this file")
+    c.add_argument("--report", default="", help="with --compare: also write the comparison here")
     return ap
+
+
+def run_counts(args: argparse.Namespace) -> int:  # pragma: no cover - needs the servers
+    from cdi_adapter.config import get_settings
+    from cdi_adapter.db import session_scope
+    from cdi_adapter.dr import counts
+    from cdi_adapter.storage import get_store
+
+    with session_scope() as conn:
+        now = counts.take(conn, get_store(), get_settings().redis_url)
+    if args.save:
+        counts.save(Path(args.save), now)
+        print(f"counts saved: {len(now['tables'])} tables, {now['rows']} rows, "
+              f"{now['objects']} scans, {now['queue_keys']} queue keys")  # fmt: skip
+        return 0
+    found = counts.compare(counts.load(Path(args.compare)), now)
+    if args.report:
+        counts.save(Path(args.report), found)
+    for d in found["differences"]:
+        print(f"  DIFFERENT  {d['what']}: {d['before']} before, {d['after']} after")
+    for label in found["not_compared"]:
+        print(f"  not compared: {label} (could not be counted)")
+    verdict = "IDENTICAL" if found["same"] else "DIFFERENT"
+    print(f"restart check: {found['tables_compared']} tables, {found['rows_before']} rows "
+          f"before, {found['rows_after']} after -> {verdict}")  # fmt: skip
+    return 0 if found["same"] else 1
 
 
 def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - needs the servers
     from cdi_adapter.config import get_settings
 
     args = build_parser().parse_args(argv)
+    if args.cmd == "counts":
+        return run_counts(args)
     s = get_settings()
     backup_dir, report_dir = Path(s.backup_dir), Path(s.dr_report_dir)
     if args.cmd == "backup":

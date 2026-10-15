@@ -10,6 +10,10 @@
     promote                         the canary becomes the primary (gated by compare)
     rollback                        ONE COMMAND: drop the canary, or return to the previous primary
     status                          live state, gateway health, recent history
+    switch VERSION --url URL        SW-S5: a contest winner becomes the champion in one step;
+                                    documents already running finish on the old model (drain)
+    drain VERSION                   wait until no document is still being read by VERSION
+    shadow-report                   SW-S5: the shadow candidate's answers against the champion's
 
 Runbook: ``docs/model-rollout.md``.
 """
@@ -83,6 +87,17 @@ def build_parser() -> argparse.ArgumentParser:
     b = sub.add_parser("rollback")
     b.add_argument("--reason")
     sub.add_parser("status")
+    w = sub.add_parser("switch")
+    w.add_argument("version")
+    w.add_argument("--url", required=True)
+    w.add_argument("--reason")
+    w.add_argument("--force", action="store_true", help="no binding contest won (needs --reason)")
+    w.add_argument("--wait-s", type=float, default=600.0)
+    d = sub.add_parser("drain")
+    d.add_argument("version")
+    d.add_argument("--wait-s", type=float, default=600.0)
+    sh = sub.add_parser("shadow-report")
+    sh.add_argument("--model")
     return ap
 
 
@@ -151,6 +166,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.cmd == "rollback":
             st = ops.rollback(actor=actor, reason=args.reason)
             print("rolled back:", _state_line(st))
+        elif args.cmd == "switch":
+            st, info = ops.switch(args.version, args.url, actor=actor, reason=args.reason,
+                                  force=args.force, wait_s=args.wait_s)  # fmt: skip
+            d = info["drain"]
+            print("switched:", _state_line(st))
+            print(f"  previous {info['previous']} kept ready until {info['keep_previous_until']}; "
+                  f"{d['running_at_switch']} document(s) were running on it, "
+                  f"{len(d['still_running'])} still running after {d['waited_s']} s")  # fmt: skip
+            return 0 if not d["still_running"] else 1
+        elif args.cmd == "drain":
+            d = ops.drain(args.version, wait_s=args.wait_s)
+            _print(d)
+            return 0 if not d["still_running"] else 1
+        elif args.cmd == "shadow-report":
+            from cdi_adapter.db import session_scope
+            from cdi_adapter.modelops import shadow
+
+            with session_scope() as conn:
+                _print(shadow.report(conn, args.model))
         elif args.cmd == "status":
             out = ops.status()
             if out["state"] is None:

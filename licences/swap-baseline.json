@@ -1,0 +1,1771 @@
+{
+ "about": "SW-S7: the build's components when the swap gate last passed. NOT an approval: what was already blocked stays blocked in `check`; this file only lets the swap gate see what a change ADDS or alters.",
+ "accepted_by": "SW-S7 build (Claude), first baseline",
+ "accepted_on": "2026-10-15",
+ "components": {
+  "code list: LOINC": {
+   "decision": "loinc",
+   "licence": "LOINC licence (custom terms: free, commercial use allowed, notices required)",
+   "status": "ok",
+   "verdict": "NOT IN POLICY",
+   "version": null
+  },
+  "data set: indication groups (extract/data/indication_groups.json)": {
+   "decision": null,
+   "licence": "Own work (engineer-written)",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": null
+  },
+  "data set: lab-test master (terminology/data/lab_tests.csv)": {
+   "decision": null,
+   "licence": "Own work (engineer-written, not clinician-reviewed); the LOINC codes in it are under the LOINC licence",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": null
+  },
+  "data set: medicine catalogue (1mg-derived)": {
+   "decision": "onemg",
+   "licence": "Proprietary: 1mg terms of use prohibit commercial reuse of the content and automated scraping",
+   "status": "blocked",
+   "verdict": "REVIEW",
+   "version": null
+  },
+  "data set: preparation phrases (extract/data/preparation_phrases.json)": {
+   "decision": null,
+   "licence": "Own work (engineer-written)",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": null
+  },
+  "model: Qwen/Qwen2.5-VL-7B-Instruct": {
+   "decision": null,
+   "licence": "Apache-2.0 (Hugging Face metadata; the repository has NO LICENSE file)",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "cc594898137f460bfe9f0759e9844b3ce807cfb5"
+  },
+  "model: Qwen/Qwen2.5-VL-7B-Instruct-AWQ": {
+   "decision": "qwen-awq",
+   "licence": "Qwen LICENSE AGREEMENT (commercial use allowed; licence request above 100 million monthly users)",
+   "status": "ok",
+   "verdict": "REVIEW",
+   "version": null
+  },
+  "model: en_core_web_lg": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": null
+  },
+  "model: microsoft/trocr-base-handwritten": {
+   "decision": null,
+   "licence": "MIT (model card); fine-tuned on the IAM dataset, which is non-commercial research only",
+   "status": "blocked",
+   "verdict": "REVIEW",
+   "version": "eaacaf452b06415df8f10bb6fad3a4c11e609406"
+  },
+  "model: obi/deid_roberta_i2b2": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": null
+  },
+  "other: NVIDIA driver, CUDA runtime and cuDNN": {
+   "decision": "nvidia",
+   "licence": "Proprietary: NVIDIA EULAs; the CUDA EULA's Attachment A lists the redistributable files",
+   "status": "ok",
+   "verdict": "REVIEW",
+   "version": null
+  },
+  "python package: accelerate": {
+   "decision": null,
+   "licence": "Apache | Apache Software License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.15.0"
+  },
+  "python package: agent-detector": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "2.0.0"
+  },
+  "python package: aiohappyeyeballs": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "2.7.1"
+  },
+  "python package: aiohttp": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "3.14.3"
+  },
+  "python package: aiosignal": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "1.4.0"
+  },
+  "python package: alembic": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.20.0"
+  },
+  "python package: amqp": {
+   "decision": null,
+   "licence": "BSD | BSD License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "5.4.0"
+  },
+  "python package: annotated-doc": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "0.0.5"
+  },
+  "python package: annotated-types": {
+   "decision": null,
+   "licence": "MIT | MIT License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "0.8.0"
+  },
+  "python package: anyio": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "4.15.1"
+  },
+  "python package: astor": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.8.1"
+  },
+  "python package: attrs": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "26.1.0"
+  },
+  "python package: av": {
+   "decision": null,
+   "licence": "BSD-3-Clause",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "18.1.0"
+  },
+  "python package: billiard": {
+   "decision": null,
+   "licence": "BSD | BSD License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "4.3.0"
+  },
+  "python package: blake3": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "1.0.9"
+  },
+  "python package: blis": {
+   "decision": null,
+   "licence": "BSD",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.3.3"
+  },
+  "python package: boto3": {
+   "decision": null,
+   "licence": "Apache-2.0",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.43.99"
+  },
+  "python package: botocore": {
+   "decision": null,
+   "licence": "Apache-2.0",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.43.99"
+  },
+  "python package: cachetools": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "7.2.0"
+  },
+  "python package: catalogue": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "2.0.10"
+  },
+  "python package: cbor2": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "6.1.4"
+  },
+  "python package: celery": {
+   "decision": null,
+   "licence": "BSD-3-Clause",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "5.6.3"
+  },
+  "python package: certifi": {
+   "decision": "REG-PY-2026-10-04",
+   "licence": "MPL-2.0 | Mozilla Public License 2.0 (MPL 2.0)",
+   "status": "ok",
+   "verdict": "NOT IN POLICY",
+   "version": "2026.7.22"
+  },
+  "python package: cffi": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "2.1.1"
+  },
+  "python package: charset-normalizer": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "3.5.1"
+  },
+  "python package: click": {
+   "decision": null,
+   "licence": "BSD-3-Clause",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "8.5.0"
+  },
+  "python package: click-didyoumean": {
+   "decision": null,
+   "licence": "MIT | MIT License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "0.3.1"
+  },
+  "python package: click-plugins": {
+   "decision": null,
+   "licence": "New BSD | BSD License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.1.1.2"
+  },
+  "python package: click-repl": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "0.4.0"
+  },
+  "python package: cloudpathlib": {
+   "decision": null,
+   "licence": "MIT License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "0.25.0"
+  },
+  "python package: cloudpickle": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "3.1.2"
+  },
+  "python package: compressed-tensors": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.11.0"
+  },
+  "python package: confection": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.3.3"
+  },
+  "python package: cryptography": {
+   "decision": null,
+   "licence": "Apache-2.0 OR BSD-3-Clause | Apache Software License; BSD License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "48.0.1"
+  },
+  "python package: cuda-pathfinder": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "1.8.2"
+  },
+  "python package: cupy-cuda12x": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "14.2.0"
+  },
+  "python package: cymem": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "2.0.13"
+  },
+  "python package: datasets": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "4.0.0"
+  },
+  "python package: depyf": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.19.0"
+  },
+  "python package: detect-installer": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.2.1"
+  },
+  "python package: dill": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.4.1"
+  },
+  "python package: diskcache": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "5.6.3"
+  },
+  "python package: dnspython": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "2.8.0"
+  },
+  "python package: einops": {
+   "decision": null,
+   "licence": "MIT | MIT License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "0.8.2"
+  },
+  "python package: email-validator": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "2.3.0"
+  },
+  "python package: fastapi": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "0.141.1"
+  },
+  "python package: fastapi-cli": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.0.32"
+  },
+  "python package: fastapi-cloud-cli": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.26.0"
+  },
+  "python package: fastar": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.12.0"
+  },
+  "python package: filelock": {
+   "decision": "REG-PY-2026-10-04",
+   "licence": "Unlicense | The Unlicense (Unlicense)",
+   "status": "ok",
+   "verdict": "NOT IN POLICY",
+   "version": "4.0.1"
+  },
+  "python package: flatbuffers": {
+   "decision": null,
+   "licence": "Apache 2.0 | Apache Software License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "25.12.19"
+  },
+  "python package: frozendict": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "2.4.7"
+  },
+  "python package: frozenlist": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "1.8.0"
+  },
+  "python package: fsspec": {
+   "decision": null,
+   "licence": "BSD 3-Clause License | BSD License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "2026.9.0"
+  },
+  "python package: gguf": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.19.0"
+  },
+  "python package: googleapis-common-protos": {
+   "decision": null,
+   "licence": "Apache-2.0",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.75.3"
+  },
+  "python package: greenlet": {
+   "decision": "REG-PY-2026-10-04",
+   "licence": "MIT AND PSF-2.0",
+   "status": "ok",
+   "verdict": "NOT IN POLICY",
+   "version": "3.5.6"
+  },
+  "python package: h11": {
+   "decision": null,
+   "licence": "MIT | MIT License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "0.16.0"
+  },
+  "python package: hf-xet": {
+   "decision": null,
+   "licence": "Apache-2.0 | Apache Software License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.6.0"
+  },
+  "python package: httpcore": {
+   "decision": null,
+   "licence": "BSD-3-Clause | BSD License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.0.9"
+  },
+  "python package: httpcore2": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "2.13.0"
+  },
+  "python package: httptools": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "0.8.0"
+  },
+  "python package: httpx": {
+   "decision": null,
+   "licence": "BSD-3-Clause | BSD License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "0.28.1"
+  },
+  "python package: httpx2": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "2.13.0"
+  },
+  "python package: huggingface-hub": {
+   "decision": null,
+   "licence": "Apache-2.0 | Apache Software License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.32.0"
+  },
+  "python package: idna": {
+   "decision": null,
+   "licence": "BSD License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "3.20"
+  },
+  "python package: interegular": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.3.3"
+  },
+  "python package: jinja2": {
+   "decision": null,
+   "licence": "BSD License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "3.1.6"
+  },
+  "python package: jiter": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.17.0"
+  },
+  "python package: jmespath": {
+   "decision": null,
+   "licence": "MIT | MIT License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.1.0"
+  },
+  "python package: jsonschema": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "4.26.0"
+  },
+  "python package: jsonschema-specifications": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "2025.9.1"
+  },
+  "python package: kombu": {
+   "decision": null,
+   "licence": "BSD-3-Clause",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "5.6.2"
+  },
+  "python package: lark": {
+   "decision": null,
+   "licence": "MIT | MIT License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.2.2"
+  },
+  "python package: llguidance": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.7.30"
+  },
+  "python package: llmcompressor": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.7.1.4"
+  },
+  "python package: llvmlite": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.44.0"
+  },
+  "python package: lm-format-enforcer": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.11.3"
+  },
+  "python package: loguru": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.7.3"
+  },
+  "python package: mako": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.4.1"
+  },
+  "python package: markdown-it-py": {
+   "decision": null,
+   "licence": "MIT License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "4.2.0"
+  },
+  "python package: markupsafe": {
+   "decision": null,
+   "licence": "BSD-3-Clause",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "3.0.3"
+  },
+  "python package: mdurl": {
+   "decision": null,
+   "licence": "MIT License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "0.1.2"
+  },
+  "python package: mistral-common": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "1.11.7"
+  },
+  "python package: mpmath": {
+   "decision": null,
+   "licence": "BSD | BSD License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.3.0"
+  },
+  "python package: msal": {
+   "decision": null,
+   "licence": "MIT | MIT License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": null
+  },
+  "python package: msgpack": {
+   "decision": null,
+   "licence": "Apache-2.0",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.2.2"
+  },
+  "python package: msgspec": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.21.1"
+  },
+  "python package: multidict": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "6.9.1"
+  },
+  "python package: multiprocess": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.70.16"
+  },
+  "python package: murmurhash": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.0.15"
+  },
+  "python package: networkx": {
+   "decision": null,
+   "licence": "BSD License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "3.7"
+  },
+  "python package: ninja": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "1.13.2"
+  },
+  "python package: numba": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.61.2"
+  },
+  "python package: numpy": {
+   "decision": null,
+   "licence": "Copyright (c) 2005-2024, NumPy Developers. | BSD License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "2.4.6"
+  },
+  "python package: onnxruntime": {
+   "decision": null,
+   "licence": "MIT License | MIT License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.30.0"
+  },
+  "python package: openai": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "3.17.0"
+  },
+  "python package: openai-harmony": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.0.8"
+  },
+  "python package: opencv-python": {
+   "decision": null,
+   "licence": "Apache 2.0 | Apache Software License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "5.0.0.93"
+  },
+  "python package: opencv-python-headless": {
+   "decision": null,
+   "licence": "Apache 2.0 | Apache Software License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "5.0.0.93"
+  },
+  "python package: opentelemetry-api": {
+   "decision": null,
+   "licence": "Apache-2.0",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.44.0"
+  },
+  "python package: opentelemetry-exporter-otlp-proto-common": {
+   "decision": null,
+   "licence": "Apache-2.0",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.44.0"
+  },
+  "python package: opentelemetry-exporter-otlp-proto-http": {
+   "decision": null,
+   "licence": "Apache-2.0",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.44.0"
+  },
+  "python package: opentelemetry-proto": {
+   "decision": null,
+   "licence": "Apache-2.0",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.44.0"
+  },
+  "python package: opentelemetry-sdk": {
+   "decision": null,
+   "licence": "Apache-2.0",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.44.0"
+  },
+  "python package: opentelemetry-semantic-conventions": {
+   "decision": null,
+   "licence": "Apache-2.0",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "0.65b0"
+  },
+  "python package: outlines-core": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.2.11"
+  },
+  "python package: packaging": {
+   "decision": null,
+   "licence": "Apache Software License; BSD License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "26.3"
+  },
+  "python package: pandas": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "3.0.6"
+  },
+  "python package: partial-json-parser": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.2.1.1.post7"
+  },
+  "python package: phonenumbers": {
+   "decision": null,
+   "licence": "Apache-2.0",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "9.0.39"
+  },
+  "python package: pillow": {
+   "decision": "REG-PY-2026-10-04",
+   "licence": "MIT-CMU | CMU License (MIT-CMU)",
+   "status": "ok",
+   "verdict": "NOT IN POLICY",
+   "version": "12.3.0"
+  },
+  "python package: pip": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "26.2.1"
+  },
+  "python package: preshed": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "3.0.13"
+  },
+  "python package: presidio-analyzer": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "2.2.364"
+  },
+  "python package: presidio-anonymizer": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "2.2.364"
+  },
+  "python package: prometheus-client": {
+   "decision": null,
+   "licence": "Apache-2.0 AND BSD-2-Clause",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "0.26.0"
+  },
+  "python package: prometheus-fastapi-instrumentator": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "8.1.0"
+  },
+  "python package: prompt-toolkit": {
+   "decision": null,
+   "licence": "BSD License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "3.0.53"
+  },
+  "python package: propcache": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.5.4"
+  },
+  "python package: protobuf": {
+   "decision": null,
+   "licence": "3-Clause BSD License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "7.36.2"
+  },
+  "python package: psutil": {
+   "decision": null,
+   "licence": "BSD-3-Clause",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "7.2.2"
+  },
+  "python package: psycopg": {
+   "decision": null,
+   "licence": "LGPL-3.0-only",
+   "status": "ok",
+   "verdict": "ALLOWED WITH NOTICES",
+   "version": "3.3.6"
+  },
+  "python package: psycopg-binary": {
+   "decision": null,
+   "licence": "LGPL-3.0-only",
+   "status": "ok",
+   "verdict": "ALLOWED WITH NOTICES",
+   "version": "3.3.6"
+  },
+  "python package: py-cpuinfo": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "9.0.0"
+  },
+  "python package: pyarrow": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "25.0.1"
+  },
+  "python package: pybase64": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "1.5.0"
+  },
+  "python package: pyclipper": {
+   "decision": null,
+   "licence": "MIT | OSI Approved; MIT License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.4.0"
+  },
+  "python package: pycountry": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "26.2.16"
+  },
+  "python package: pycparser": {
+   "decision": null,
+   "licence": "BSD-3-Clause | BSD License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "3.0"
+  },
+  "python package: pydantic": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "2.13.5"
+  },
+  "python package: pydantic-core": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "2.46.5"
+  },
+  "python package: pydantic-extra-types": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "2.11.1"
+  },
+  "python package: pydantic-settings": {
+   "decision": null,
+   "licence": "MIT | MIT License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "2.15.0"
+  },
+  "python package: pygments": {
+   "decision": null,
+   "licence": "BSD-2-Clause | BSD License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "2.21.0"
+  },
+  "python package: pyjwt": {
+   "decision": null,
+   "licence": "MIT | MIT License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": null
+  },
+  "python package: pynvml": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "12.0.0"
+  },
+  "python package: pypdfium2": {
+   "decision": null,
+   "licence": "BSD-3-Clause, Apache-2.0, dependency licenses",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "5.14.0"
+  },
+  "python package: python-dateutil": {
+   "decision": null,
+   "licence": "Dual License | BSD License; Apache Software License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "2.9.0.post0"
+  },
+  "python package: python-dotenv": {
+   "decision": null,
+   "licence": "BSD-3-Clause",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.2.3"
+  },
+  "python package: python-json-logger": {
+   "decision": null,
+   "licence": "BSD-2-Clause License | BSD License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "4.2.0"
+  },
+  "python package: python-multipart": {
+   "decision": null,
+   "licence": "Apache-2.0 | Apache Software License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "0.0.32"
+  },
+  "python package: pyyaml": {
+   "decision": null,
+   "licence": "MIT | MIT License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "6.0.3"
+  },
+  "python package: pyzmq": {
+   "decision": null,
+   "licence": "BSD 3-Clause License | BSD License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "27.2.0"
+  },
+  "python package: qwen-vl-utils": {
+   "decision": null,
+   "licence": "Apache-2.0 | Apache Software License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "0.0.14"
+  },
+  "python package: rapidocr-onnxruntime": {
+   "decision": null,
+   "licence": "Apache-2.0",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.4.4"
+  },
+  "python package: ray": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "2.58.0"
+  },
+  "python package: redis": {
+   "decision": null,
+   "licence": "MIT | MIT License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "6.4.0"
+  },
+  "python package: referencing": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "0.37.0"
+  },
+  "python package: regex": {
+   "decision": null,
+   "licence": "Apache-2.0 AND CNRI-Python",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "2026.9.10"
+  },
+  "python package: requests": {
+   "decision": null,
+   "licence": "Apache-2.0 | Apache Software License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "2.34.2"
+  },
+  "python package: requests-file": {
+   "decision": null,
+   "licence": "Apache 2.0",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "3.0.1"
+  },
+  "python package: rich": {
+   "decision": null,
+   "licence": "MIT | MIT License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "15.0.0"
+  },
+  "python package: rich-toolkit": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.20.5"
+  },
+  "python package: rignore": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.8.1"
+  },
+  "python package: rpds-py": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "2026.6.3"
+  },
+  "python package: s3transfer": {
+   "decision": null,
+   "licence": "Apache License 2.0 | Apache Software License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "0.19.2"
+  },
+  "python package: safetensors": {
+   "decision": null,
+   "licence": "Apache Software License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "0.8.0"
+  },
+  "python package: scipy": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "1.18.1"
+  },
+  "python package: sentencepiece": {
+   "decision": null,
+   "licence": "Apache-2.0",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "0.2.2"
+  },
+  "python package: sentry-sdk": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "2.70.0"
+  },
+  "python package: setproctitle": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "1.3.7"
+  },
+  "python package: setuptools": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "84.0.0"
+  },
+  "python package: shapely": {
+   "decision": null,
+   "licence": "BSD 3-Clause | BSD License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "2.1.2"
+  },
+  "python package: shellingham": {
+   "decision": null,
+   "licence": "ISC License | ISC License (ISCL)",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.5.4"
+  },
+  "python package: six": {
+   "decision": null,
+   "licence": "MIT | MIT License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.17.0"
+  },
+  "python package: smart-open": {
+   "decision": null,
+   "licence": "MIT License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "8.0.1"
+  },
+  "python package: sniffio": {
+   "decision": null,
+   "licence": "MIT OR Apache-2.0 | MIT License; Apache Software License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.3.1"
+  },
+  "python package: soundfile": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.14.0"
+  },
+  "python package: soxr": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "1.1.0"
+  },
+  "python package: spacy": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "3.8.16"
+  },
+  "python package: spacy-legacy": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "3.0.12"
+  },
+  "python package: spacy-loggers": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.0.5"
+  },
+  "python package: sqlalchemy": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "2.0.54"
+  },
+  "python package: srsly": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "2.5.3"
+  },
+  "python package: starlette": {
+   "decision": null,
+   "licence": "BSD-3-Clause",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.6.0"
+  },
+  "python package: structlog": {
+   "decision": null,
+   "licence": "MIT OR Apache-2.0 | Apache Software License; MIT License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "26.1.0"
+  },
+  "python package: sympy": {
+   "decision": null,
+   "licence": "BSD | BSD License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.14.0"
+  },
+  "python package: tenacity": {
+   "decision": null,
+   "licence": "Apache 2.0 | Apache Software License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "9.1.4"
+  },
+  "python package: thinc": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "8.3.13"
+  },
+  "python package: tiktoken": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.14.0"
+  },
+  "python package: tldextract": {
+   "decision": null,
+   "licence": "BSD-3-Clause",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "5.3.2"
+  },
+  "python package: tokenizers": {
+   "decision": null,
+   "licence": "Apache Software License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "0.23.2"
+  },
+  "python package: tqdm": {
+   "decision": "REG-PY-2026-10-04",
+   "licence": "MPL-2.0 AND MIT",
+   "status": "ok",
+   "verdict": "NOT IN POLICY",
+   "version": "4.70.1"
+  },
+  "python package: transformers": {
+   "decision": null,
+   "licence": "Apache 2.0 License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "5.16.1"
+  },
+  "python package: truststore": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.10.4"
+  },
+  "python package: typer": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "0.27.2"
+  },
+  "python package: typing-extensions": {
+   "decision": "REG-PY-2026-10-04",
+   "licence": "PSF-2.0",
+   "status": "ok",
+   "verdict": "NOT IN POLICY",
+   "version": "4.16.0"
+  },
+  "python package: typing-inspection": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "0.4.4"
+  },
+  "python package: tzdata": {
+   "decision": null,
+   "licence": "Apache-2.0",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "2026.4"
+  },
+  "python package: tzlocal": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "5.4.4"
+  },
+  "python package: urllib3": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "2.8.0"
+  },
+  "python package: uvicorn": {
+   "decision": null,
+   "licence": "BSD-3-Clause",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "0.53.0"
+  },
+  "python package: uvloop": {
+   "decision": null,
+   "licence": "MIT License | Apache Software License; MIT License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "0.22.1"
+  },
+  "python package: vine": {
+   "decision": null,
+   "licence": "BSD | BSD License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "5.1.0"
+  },
+  "python package: vllm": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.11.0"
+  },
+  "python package: wasabi": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.1.3"
+  },
+  "python package: watchdog": {
+   "decision": null,
+   "licence": "Apache-2.0 | Apache Software License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "6.0.0"
+  },
+  "python package: watchfiles": {
+   "decision": null,
+   "licence": "MIT | MIT License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.3.0"
+  },
+  "python package: wcwidth": {
+   "decision": null,
+   "licence": "MIT | MIT License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "0.8.4"
+  },
+  "python package: weasel": {
+   "decision": null,
+   "licence": "MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "1.0.0"
+  },
+  "python package: websockets": {
+   "decision": null,
+   "licence": "BSD-3-Clause",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "17.1"
+  },
+  "python package: wheel": {
+   "decision": null,
+   "licence": "MIT License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "0.48.0"
+  },
+  "python package: wrapt": {
+   "decision": null,
+   "licence": "BSD-2-Clause",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "2.4.1"
+  },
+  "python package: xformers": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.0.32.post1"
+  },
+  "python package: xgrammar": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.1.25"
+  },
+  "python package: xxhash": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "4.0.1"
+  },
+  "python package: yarl": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "1.25.1"
+  },
+  "server or binary: alertmanager": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.34.1"
+  },
+  "server or binary: apt:autossh": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "1.4g-1"
+  },
+  "server or binary: apt:cron": {
+   "decision": null,
+   "licence": "Paul-Vixie's-license; Paul-Vixie's-license and GPL-2+ and ISC; GPL-2+; Artistic",
+   "status": "blocked",
+   "verdict": "REVIEW",
+   "version": "3.0pl1-184ubuntu2"
+  },
+  "server or binary: apt:curl": {
+   "decision": null,
+   "licence": "curl; OLDAP-2.8; ISC; GPL-2+ with Autoconf-data exception",
+   "status": "blocked",
+   "verdict": "REVIEW",
+   "version": "8.5.0-2ubuntu10.13"
+  },
+  "server or binary: apt:git": {
+   "decision": null,
+   "licence": "GPL-2; BSD-3-clause; Zlib; LGPL-2.1+",
+   "status": "blocked",
+   "verdict": "REVIEW",
+   "version": "1:2.43.0-1ubuntu7.3"
+  },
+  "server or binary: apt:libcurl4t64": {
+   "decision": null,
+   "licence": "curl; OLDAP-2.8; ISC; GPL-2+ with Autoconf-data exception",
+   "status": "blocked",
+   "verdict": "REVIEW",
+   "version": "8.5.0-2ubuntu10.13"
+  },
+  "server or binary: apt:libgl1": {
+   "decision": null,
+   "licence": "MIT; Apache-2.0; public-domain; GPL-3+",
+   "status": "blocked",
+   "verdict": "REVIEW",
+   "version": "1.7.0-1build1"
+  },
+  "server or binary: apt:libglib2.0-0t64": {
+   "decision": null,
+   "licence": "LGPL-2.1+; old-glib-tests; AFL-2.0 or LGPL-2.1+; Janik-permissive",
+   "status": "ok",
+   "verdict": "ALLOWED WITH NOTICES",
+   "version": "2.80.0-6ubuntu3.8"
+  },
+  "server or binary: apt:openjdk-21-jre-headless": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "21.0.12+8-1~24.04"
+  },
+  "server or binary: apt:postgresql-16": {
+   "decision": null,
+   "licence": "PostgreSQL; PostgreSQL and Custom-regex and Tcl; Custom-pg_dump; BSD-3-Clause",
+   "status": "blocked",
+   "verdict": "NOT IN POLICY",
+   "version": "16.15-0ubuntu0.24.04.1"
+  },
+  "server or binary: apt:postgresql-client-16": {
+   "decision": null,
+   "licence": "PostgreSQL; PostgreSQL and Custom-regex and Tcl; Custom-pg_dump; BSD-3-Clause",
+   "status": "blocked",
+   "verdict": "NOT IN POLICY",
+   "version": "16.15-0ubuntu0.24.04.1"
+  },
+  "server or binary: apt:python3-venv": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "3.12.3-0ubuntu2.1"
+  },
+  "server or binary: apt:redis-server": {
+   "decision": null,
+   "licence": "BSD-3-clause; BSD-2-clause; MIT",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "5:7.0.15-1ubuntu0.24.04.4"
+  },
+  "server or binary: bitsandbytes": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.50.2"
+  },
+  "server or binary: caddy": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "2.11.4"
+  },
+  "server or binary: cloudflared": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "2026.9.3"
+  },
+  "server or binary: fhir-validator": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "6.10.4"
+  },
+  "server or binary: go": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "1.27.1"
+  },
+  "server or binary: grafana": {
+   "decision": "grafana",
+   "licence": "AGPL-3.0",
+   "status": "ok",
+   "verdict": "REVIEW",
+   "version": "13.2.2"
+  },
+  "server or binary: image:postgres": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "16"
+  },
+  "server or binary: image:redis": {
+   "decision": "redis",
+   "licence": "BSD-3-Clause (Redis 7.2 and earlier); RSALv2 / SSPLv1 from 7.4",
+   "status": "ok",
+   "verdict": "REVIEW",
+   "version": "7.2-alpine"
+  },
+  "server or binary: llmcompressor": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.7.1.4"
+  },
+  "server or binary: loki": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "3.7.8"
+  },
+  "server or binary: minio": {
+   "decision": "minio",
+   "licence": "AGPL-3.0",
+   "status": "ok",
+   "verdict": "REVIEW",
+   "version": "RELEASE.2025-10-15T17-29-55Z"
+  },
+  "server or binary: prometheus": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "3.14.0"
+  },
+  "server or binary: quant-transformers": {
+   "decision": null,
+   "licence": "Apache 2.0 License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "4.55.2"
+  },
+  "server or binary: tempo": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "3.0.3"
+  },
+  "server or binary: torch": {
+   "decision": null,
+   "licence": "BSD-3-Clause | BSD License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "2.8.0+cu128"
+  },
+  "server or binary: torchaudio": {
+   "decision": null,
+   "licence": "BSD License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "2.8.0+cu128"
+  },
+  "server or binary: torchvision": {
+   "decision": null,
+   "licence": "BSD",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "0.23.0+cu128"
+  },
+  "server or binary: transformers": {
+   "decision": null,
+   "licence": "Apache 2.0 License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "5.16.1"
+  },
+  "server or binary: vllm": {
+   "decision": null,
+   "licence": null,
+   "status": "blocked",
+   "verdict": "UNKNOWN",
+   "version": "0.11.0"
+  },
+  "server or binary: vllm-transformers": {
+   "decision": null,
+   "licence": "Apache 2.0 License",
+   "status": "ok",
+   "verdict": "ALLOWED",
+   "version": "4.57.6"
+  }
+ }
+}

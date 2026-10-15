@@ -46,7 +46,7 @@ def test_bootstrap_matches_the_persistence_model():
     assert "/var/lib/postgresql/16/cdi" in t  # PGDATA on the overlay (§3.3)
     assert "pg_restore" in t and "alembic upgrade head" in t
     assert "--appendonly yes" in t and "$WS/redis" in t  # Redis AOF on /workspace
-    assert "*/15 * * * *" in t and "snapshot.sh" in t  # 15-minute dump cron
+    assert "*/5 * * * *" in t and "snapshot.sh" in t  # 5-minute dump cron (ENT-S4)
     assert "git clone" in t and "MINIO_TAG" in t and "sha256sum -c" in t  # MinIO from source
     assert "--system-site-packages" in t  # torch inherited from the pod image
 
@@ -75,7 +75,8 @@ def test_compose_alt_deploy_shape():
         "mlserve",
     }
     assert c["services"]["postgres"]["image"] == "postgres:16"
-    assert c["services"]["redis"]["image"] == "redis:7-alpine"
+    # ENT-S1: pinned to the last BSD-3 series (the floating tag 7 moves on to RSALv2 / SSPLv1)
+    assert c["services"]["redis"]["image"] == "redis:7.2-alpine"
     assert c["services"]["minio"]["build"]["dockerfile"] == "infra/compose/Dockerfile.minio"
     for name in ("webapp", "worker"):
         deps = c["services"][name]["depends_on"]

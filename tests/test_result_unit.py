@@ -120,9 +120,9 @@ def test_review_counts_every_held_value_anywhere_in_the_document() -> None:
 def test_the_status_follows_the_held_count() -> None:
     clean = {"review": {"needs_check_count": 0}}
     held = {"review": {"needs_check_count": 3}}
-    assert result._status({"status": "validated"}, clean) == "complete"
-    assert result._status({"status": "validated"}, held) == "needs_check"
-    assert result._status({"status": "error"}, clean) == "held_for_rescan"
+    assert result._status({"status": "validated"}, clean)[0] == "complete"
+    assert result._status({"status": "validated"}, held)[0] == "needs_check"
+    assert result._status({"status": "error"}, clean)[0] == "held_for_rescan"
 
 
 # ------------------------------------------------------------------ the screen

@@ -2,7 +2,7 @@
 PY ?= .venv/bin/python
 COMPOSE = docker compose -f infra/compose/docker-compose.yml
 
-.PHONY: venv lock loadtest ci test test-unit lint up down nuke logs migrate migrate-live migrate-rollback schema-status api worker worker-cpu worker-gpu webapp mlserve watch samples smoke
+.PHONY: venv lock loadtest ci licences test test-unit lint up down nuke logs migrate migrate-live migrate-rollback schema-status api worker worker-cpu worker-gpu webapp mlserve watch samples smoke
 
 venv:
 	python3 -m venv .venv && $(PY) -m pip install -e ".[dev,ocr,load]"
@@ -17,6 +17,10 @@ loadtest:
 
 ci:
 	$(PY) scripts/ci.py
+
+# ENT-S1: the licence gate (exit 1 = blocked) and its report in dist/licences/
+licences:
+	$(PY) scripts/licence_audit.py check --report dist/licences
 
 test:
 	$(PY) -m pytest

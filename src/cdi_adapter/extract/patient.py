@@ -102,6 +102,83 @@ def patient_drafts(payload: dict[str, Any], default: float) -> list[Any]:
     return out
 
 
+# ------------------------------------------------------------------ Aadhaar is not stored
+
+# The story's own rule (EX-S1, open question; Open Items 10): an Aadhaar number must not be
+# stored without a legal basis, and that is counsel's decision. Until it is made - the setting
+# CDI_STORE_AADHAAR - an Aadhaar number the model read is NOT saved as a value: it is taken out
+# of the answer before anything is written, and the answer only notes that one was there.
+# What this does not do: the picture and its OCR lines still show whatever the page shows.
+AADHAAR_WITHHELD = "[Aadhaar number not stored]"
+_AADHAAR = re.compile(r"(?<!\d)[2-9]\d{3}[ -]?\d{4}[ -]?\d{4}(?!\d)")
+# UIDAI's check digit (Verhoeff): an arbitrary 12-digit number passes it one time in ten
+_D = [[0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [1, 2, 3, 4, 0, 6, 7, 8, 9, 5],
+      [2, 3, 4, 0, 1, 7, 8, 9, 5, 6], [3, 4, 0, 1, 2, 8, 9, 5, 6, 7],
+      [4, 0, 1, 2, 3, 9, 5, 6, 7, 8], [5, 9, 8, 7, 6, 0, 4, 3, 2, 1],
+      [6, 5, 9, 8, 7, 1, 0, 4, 3, 2], [7, 6, 5, 9, 8, 2, 1, 0, 4, 3],
+      [8, 7, 6, 5, 9, 3, 2, 1, 0, 4], [9, 8, 7, 6, 5, 4, 3, 2, 1, 0]]  # fmt: skip
+_P = [[0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [1, 5, 7, 6, 2, 8, 3, 0, 9, 4],
+      [5, 8, 0, 3, 7, 9, 6, 1, 4, 2], [8, 9, 1, 6, 0, 4, 3, 5, 2, 7],
+      [9, 4, 5, 3, 1, 2, 6, 8, 7, 0], [4, 2, 8, 6, 5, 7, 3, 9, 0, 1],
+      [2, 7, 9, 3, 8, 0, 6, 4, 1, 5], [7, 0, 4, 6, 9, 1, 3, 2, 5, 8]]  # fmt: skip
+
+
+def is_aadhaar(value: Any) -> bool:
+    """Twelve digits, the first 2-9, with a valid check digit - the form of an Aadhaar number."""
+    number = digits(value)
+    if len(number) != 12 or number[0] not in "23456789":
+        return False
+    c = 0
+    for i, d in enumerate(reversed(number)):
+        c = _D[c][_P[i % 8][int(d)]]
+    return c == 0
+
+
+def _is_phone_with_country_code(value: str) -> bool:
+    number = digits(value)
+    return len(number) == 12 and number.startswith("91") and _phone_ok(number[2:])
+
+
+def withhold_aadhaar(payload: dict[str, Any], *, store: bool | None = None) -> dict[str, Any]:
+    """Take every Aadhaar number out of the patient's details before the answer is saved.
+    A value that IS one becomes null (the detail is then simply not there); one written inside
+    a longer text (an address line) is replaced by a fixed phrase. ``_withheld`` records which
+    detail held one - never the number. The model's raw words are cleaned the same way.
+
+    A ten-digit phone written with 91 in front is left alone: it is a phone number."""
+    if store is None:
+        from cdi_adapter.config import get_settings
+
+        store = get_settings().store_aadhaar
+    block = payload.get("patient")
+    if store or not isinstance(block, dict):
+        return payload
+    withheld = []
+    phone_keys = ("phone", *ALIASES["phone"])
+    for key, value in list(block.items()):
+        if not isinstance(value, str) or key in ("evidence", "confidence"):
+            continue
+        found = [m.group(0) for m in _AADHAAR.finditer(value) if is_aadhaar(m.group(0))]
+        if not found or (key in phone_keys and _is_phone_with_country_code(value)):
+            continue
+        cleaned = value
+        for number in found:
+            cleaned = cleaned.replace(number, AADHAAR_WITHHELD)
+        rest = cleaned.replace(AADHAAR_WITHHELD, "").strip(" :.-")
+        # only the number (perhaps with its label, "Aadhaar: ...") -> the detail is not there
+        block[key] = None if len(rest) < 12 and not digits(rest) else cleaned
+        why = "an Aadhaar number is not stored without a legal basis"
+        withheld.append({"field": f"patient.{key}", "kind": "aadhaar", "why": why})
+    if not withheld:
+        return payload
+    payload["_withheld"] = [*(payload.get("_withheld") or []), *withheld]
+    raw = payload.get("_raw_answer")
+    if isinstance(raw, str):
+        payload["_raw_answer"] = _AADHAAR.sub(
+            lambda m: AADHAAR_WITHHELD if is_aadhaar(m.group(0)) else m.group(0), raw)
+    return payload
+
+
 # ------------------------------------------------------------------ proof
 
 
@@ -238,5 +315,6 @@ def check(label: str, value: str | None, cited: str, others: dict[str, str] | No
     return found
 
 
-__all__ = ["FACT_TYPE", "FIELDS", "age_years", "as_written", "check", "digits",
-           "patient_drafts", "proof_blocks", "supports"]  # fmt: skip
+__all__ = ["AADHAAR_WITHHELD", "FACT_TYPE", "FIELDS", "age_years", "as_written", "check",
+           "digits", "is_aadhaar", "patient_drafts", "proof_blocks", "supports",
+           "withhold_aadhaar"]  # fmt: skip

@@ -1,0 +1,18 @@
+{
+ "schema_version": "contest-rules.v1",
+ "about": "SW-S4: the rules a candidate model is judged by against the champion. Written down and agreed by the product owner and a clinician BEFORE the first contest (story NFR3), never changed after a run to suit its result. Nothing here was set by guess: every number is empty until it is agreed, and the contest refuses to start while the margin, the guarded metrics or the precision claim are missing.",
+ "agreed": {"owner": null, "clinician": null, "date": null},
+ "role": "extraction",
+ "margin": null,
+ "margin_note": "The largest drop allowed in any slice, as a fraction (0.01 = 1 point). The Accuracy Plan's forgetting guard assumes 1.0 point; the owner decides.",
+ "slice_metrics": [],
+ "slice_metrics_note": "The metrics guarded in EVERY slice, the first one deciding 'better overall'. Proposed, to agree: all.field_accuracy, then precision_accepted of patient, doctor, tests, preparation, and context prep_to_test.error_rate.",
+ "tie_band": 0.0,
+ "min_cases_per_slice": null,
+ "precision": {"groups": [], "slice": "overall", "target": null,
+               "note": "Groups whose lower bound of accepted-value precision must not fall below the champion's; target 0.99 is the story's own, to confirm."},
+ "speed": {"max_seconds_per_document": null, "max_ratio": null},
+ "cost": {"per_hour": null, "currency": null, "max_per_prescription": null, "max_ratio": null,
+          "note": "per_hour is the rent of the one machine both models run on."},
+ "gpu_memory_gib_max": null
+}

@@ -1,0 +1,186 @@
+{
+ "drill": "SW-S6 component swap drill",
+ "golden_set": "ARCHITECTURE \u00a78.2 (Anjali Das)",
+ "at": "2026-10-14T12:38:26+00:00",
+ "swap_points": [
+  {
+   "swap_point": "pdf_renderer",
+   "default": "pypdfium2",
+   "alternative": "(none)",
+   "status": "matched",
+   "note": "one renderer by decision 2026-10-04 (no PyMuPDF); a second renderer is out of scope (story). Rendered twice: the same pages.",
+   "pages": {
+    "lab_report_01": 1,
+    "prescription_00": 1,
+    "vitals_sheet_02": 1
+   },
+   "registered": [
+    "pypdfium2"
+   ]
+  },
+  {
+   "swap_point": "object_store",
+   "default": "s3",
+   "alternative": "fs",
+   "status": "not run: ConnectionError: no S3 store answers at http://127.0.0.1:9000 - the filesystem store alone was checked: every byte read back as saved",
+   "alternative_ok": true,
+   "objects": 6
+  },
+  {
+   "swap_point": "terminology",
+   "default": "internal canonical vocabulary (no licence)",
+   "alternative": "SNOMED CT + ICD-10 (licensed)",
+   "status": "differences explained",
+   "terms": 18,
+   "explained": [
+    {
+     "term": "condition: Type 2 diabetes mellitus",
+     "field": "code",
+     "default": "condition:type-2-diabetes-mellitus",
+     "alternative": "44054006",
+     "why": "the same: a SNOMED CT code with the licence, the internal id without it"
+    },
+    {
+     "term": "condition: Type 2 diabetes mellitus",
+     "field": "code_system",
+     "default": "https://careflow.clinic/term",
+     "alternative": "http://snomed.info/sct",
+     "why": "SNOMED CT is used only where it is licensed; without the licence the term is named by the internal vocabulary's own id (story NFR1, AC3)"
+    },
+    {
+     "term": "condition: Type 2 diabetes mellitus",
+     "field": "icd10",
+     "default": null,
+     "alternative": "E11",
+     "why": "ICD-10 is given only where it is licensed"
+    },
+    {
+     "term": "condition: Hypertension",
+     "field": "code",
+     "default": "condition:essential-hypertension",
+     "alternative": "59621000",
+     "why": "the same: a SNOMED CT code with the licence, the internal id without it"
+    },
+    {
+     "term": "condition: Hypertension",
+     "field": "code_system",
+     "default": "https://careflow.clinic/term",
+     "alternative": "http://snomed.info/sct",
+     "why": "SNOMED CT is used only where it is licensed; without the licence the term is named by the internal vocabulary's own id (story NFR1, AC3)"
+    },
+    {
+     "term": "condition: Hypertension",
+     "field": "icd10",
+     "default": null,
+     "alternative": "I10",
+     "why": "ICD-10 is given only where it is licensed"
+    },
+    {
+     "term": "medication: Tab Metformin 500 mg",
+     "field": "code",
+     "default": "medicine:metformin",
+     "alternative": "372567009",
+     "why": "the same: a SNOMED CT code with the licence, the internal id without it"
+    },
+    {
+     "term": "medication: Tab Metformin 500 mg",
+     "field": "code_system",
+     "default": "https://careflow.clinic/term",
+     "alternative": "http://snomed.info/sct",
+     "why": "SNOMED CT is used only where it is licensed; without the licence the term is named by the internal vocabulary's own id (story NFR1, AC3)"
+    },
+    {
+     "term": "medication: Tab Amlodipine 5 mg",
+     "field": "code",
+     "default": "medicine:amlodipine",
+     "alternative": "386864001",
+     "why": "the same: a SNOMED CT code with the licence, the internal id without it"
+    },
+    {
+     "term": "medication: Tab Amlodipine 5 mg",
+     "field": "code_system",
+     "default": "https://careflow.clinic/term",
+     "alternative": "http://snomed.info/sct",
+     "why": "SNOMED CT is used only where it is licensed; without the licence the term is named by the internal vocabulary's own id (story NFR1, AC3)"
+    },
+    {
+     "term": "medication: Tab Atorvastatin 10 mg",
+     "field": "code",
+     "default": "medicine:atorvastatin",
+     "alternative": "373444002",
+     "why": "the same: a SNOMED CT code with the licence, the internal id without it"
+    },
+    {
+     "term": "medication: Tab Atorvastatin 10 mg",
+     "field": "code_system",
+     "default": "https://careflow.clinic/term",
+     "alternative": "http://snomed.info/sct",
+     "why": "SNOMED CT is used only where it is licensed; without the licence the term is named by the internal vocabulary's own id (story NFR1, AC3)"
+    },
+    {
+     "term": "allergy: Penicillin",
+     "field": "code",
+     "default": "allergen:penicillin",
+     "alternative": "373270004",
+     "why": "the same: a SNOMED CT code with the licence, the internal id without it"
+    },
+    {
+     "term": "allergy: Penicillin",
+     "field": "code_system",
+     "default": "https://careflow.clinic/term",
+     "alternative": "http://snomed.info/sct",
+     "why": "SNOMED CT is used only where it is licensed; without the licence the term is named by the internal vocabulary's own id (story NFR1, AC3)"
+    }
+   ],
+   "unexplained": [],
+   "external_codes_without_licence": [],
+   "default_terms": {
+    "condition: Type 2 diabetes mellitus": "Type 2 diabetes mellitus",
+    "condition: Hypertension": "Essential hypertension",
+    "medication: Tab Metformin 500 mg": "Metformin",
+    "medication: Tab Amlodipine 5 mg": "Amlodipine",
+    "medication: Tab Atorvastatin 10 mg": "Atorvastatin",
+    "allergy: Penicillin": "Penicillin",
+    "lab_result: HbA1c": "Hemoglobin A1c/Hemoglobin.total in Blood",
+    "lab_result: Fasting Blood Glucose": "Fasting glucose [Mass/volume] in Serum or Plasma",
+    "lab_result: Serum Creatinine": "Creatinine [Mass/volume] in Serum or Plasma",
+    "lab_result: Total Cholesterol": "Cholesterol [Mass/volume] in Serum or Plasma",
+    "lab_result: LDL Cholesterol": "Cholesterol in LDL [Mass/volume] in Serum or Plasma",
+    "vital_sign: Pulse": "Heart rate",
+    "vital_sign: Respiratory rate": "Respiratory rate",
+    "vital_sign: Temperature": "Body temperature",
+    "vital_sign: SpO2": "Oxygen saturation in Arterial blood by Pulse oximetry",
+    "vital_sign: Weight": "Body weight",
+    "vital_sign: Height": "Body height",
+    "vital_sign: BP": "Blood pressure panel with all children optional"
+   }
+  },
+  {
+   "swap_point": "job_queue",
+   "default": "redis 7.2",
+   "alternative": "valkey",
+   "status": "not run: no Redis and Valkey servers named (--redis-url, --valkey-url); the drill needs the real servers"
+  },
+  {
+   "swap_point": "drive_connector",
+   "default": "local folder",
+   "alternative": "OneDrive / SharePoint / Google Drive",
+   "status": "not run: needs a real account of each drive; the contract test runs in CI (tests/test_ls_s1_acceptance_unit.py)"
+  },
+  {
+   "swap_point": "sign_in",
+   "default": "local accounts",
+   "alternative": "OpenID Connect",
+   "status": "not run: needs a real identity provider; the contract test runs in CI (tests/test_ent_s2_acceptance_unit.py)"
+  }
+ ],
+ "failed": [],
+ "not_run": [
+  "object_store",
+  "job_queue",
+  "drive_connector",
+  "sign_in"
+ ],
+ "passed": true,
+ "complete": false
+}

@@ -10,6 +10,27 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 . "$HERE/lib.sh"
 
 bash "$HERE/bootstrap_pod.sh"
+# ENT-S4 AC1: the database is back from the dump and nothing writes to it yet - the one moment
+# its row counts can be compared with what prepare_stop.sh recorded before the stop. A
+# difference is said loudly and kept in the log; the services are started all the same,
+# because a clinic without the screen is worse than a clinic told to check a count.
+if [ -f "$WS/backup/counts.before.json" ]; then
+  if ( cd "$REPO" && "$REPO/.venv/bin/python" -m cdi_adapter.dr counts \
+         --compare "$WS/backup/counts.before.json" --report "$WS/logs/restart_check.json" ); then
+    mv "$WS/backup/counts.before.json" "$WS/backup/counts.checked.json"
+  else
+    echo "RESTART CHECK FAILED: row counts differ from before the stop (see $WS/logs/restart_check.json, docs/RUNBOOK.md)"
+  fi
+else
+  echo "restart check: no counts recorded before the stop (prepare_stop.sh was not run) - nothing to compare"
+fi
+# SW-S7: the swap gate. Nothing the last accepted build did not have - a package, a server, a
+# model - is started unless its licence passes (or a decision is recorded). A blocked gate stops
+# the deploy here, before a model is loaded; the champion's own licence and checksum are checked
+# again by the model server when it starts (models/registry.json).
+( cd "$REPO" && "$REPO/.venv/bin/python" scripts/licence_audit.py swap-gate ) \
+  || { echo "SWAP GATE BLOCKED: this build adds a component whose licence is not cleared" \
+            "(python scripts/licence_audit.py swap-gate)"; exit 1; }
 bash "$HERE/start_mlserve.sh"
 
 set -a; [ -f "$REPO/.env" ] && . "$REPO/.env"; set +a
@@ -21,6 +42,14 @@ bash "$HERE/start_apptier.sh"
 curl -fsS "http://127.0.0.1:$PORT/login" | grep -q "Agentic EMR generation" \
   || { echo "the balancer on :$PORT is not serving; see $WS/logs/balancer.log"; exit 1; }
 echo "LIVE URL: $(live_url "$PORT")"
+# ENT-S4 AC1: every part, by name. The model server may still be loading its weights.
+for _ in $(seq 60); do
+  HEALTH=$(curl -fsS "http://127.0.0.1:$PORT/healthz" 2>/dev/null || curl -sS "http://127.0.0.1:$PORT/healthz" 2>/dev/null || true)
+  case "$HEALTH" in *'"status":"ok"'*) break ;; esac
+  sleep 5
+done
+echo "HEALTH: ${HEALTH:-no answer}"
+case "$HEALTH" in *'"status":"ok"'*) ;; *) echo "WARNING: not every part is healthy yet (docs/RUNBOOK.md)" ;; esac
 # E11-S1: nobody can sign in until the first account exists
 USERS=$( cd "$REPO" && "$REPO/.venv/bin/python" -c \
   "from cdi_adapter.db import session_scope; from sqlalchemy import text

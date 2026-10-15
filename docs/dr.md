@@ -8,7 +8,7 @@ week, the targets it is measured against, and what to do when it happens.
 
 | | Target | Why |
 |---|---|---|
-| **RPO** (data lost) | **20 minutes** | backups every 15 minutes, plus the time to dump and copy |
+| **RPO** (data lost) | **20 minutes** | backups every 5 minutes since ENT-S4 (the target itself was not changed), plus the time to dump and copy |
 | **RTO** (time to a proven-working data tier) | **30 minutes** | a clean rebuild from the backups: empty servers, restore, integrity check, golden path |
 
 The weekly drill measures both, and they are proposed targets for the owner to confirm. With the
@@ -17,7 +17,7 @@ over. These targets are for when the standby is lost too.
 
 ## What is backed up
 
-Every 15 minutes, `infra/runpod/snapshot.sh` (cron) does this in the backup folder
+Every 5 minutes, `infra/runpod/snapshot.sh` (cron) does this in the backup folder
 (`CDI_BACKUP_DIR`, default `/workspace/backup`):
 
 1. `pg_dump -Fc` writes `cdi.<time>.dump`. It is checked with `pg_restore --list` before it counts,

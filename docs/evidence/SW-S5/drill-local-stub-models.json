@@ -1,0 +1,79 @@
+{
+ "drill": "SW-S5 swap drill",
+ "at": "2026-10-14T11:12:48+00:00",
+ "champion": "sw5a-460e78",
+ "candidate": "sw5b-460e78",
+ "steps": [
+  {
+   "step": "shadow",
+   "documents": 3,
+   "shadow_rows": 3
+  },
+  {
+   "step": "switch",
+   "to": "sw5b-460e78",
+   "seconds": 7.382,
+   "previous_kept_until": "2026-11-13"
+  },
+  {
+   "step": "rollback",
+   "to": "sw5a-460e78",
+   "seconds": 5.506
+  }
+ ],
+ "checks": [
+  {
+   "check": "shadow mode could start (candidate registered with its licence text)",
+   "ok": true
+  },
+  {
+   "check": "shadow: every real result is the champion's",
+   "ok": true
+  },
+  {
+   "check": "shadow: the candidate's answer saved apart, once per document",
+   "ok": true,
+   "shadow_rows": 3
+  },
+  {
+   "check": "switch: 5 documents were being read by the old champion",
+   "ok": true,
+   "running": 5
+  },
+  {
+   "check": "switch: waited for every one still running on the old champion (drain)",
+   "ok": true,
+   "drain": {
+    "version": "sw5a-460e78",
+    "running_at_switch": 5,
+    "waited_s": 3.281,
+    "still_running": []
+   }
+  },
+  {
+   "check": "switch: no document lost",
+   "ok": true,
+   "failed": {}
+  },
+  {
+   "check": "switch: no document duplicated",
+   "ok": true
+  },
+  {
+   "check": "switch: each result names the model that made it",
+   "ok": true
+  },
+  {
+   "check": "switch: the next document goes to the new champion",
+   "ok": true
+  },
+  {
+   "check": "rollback: new documents use the previous model again within minutes",
+   "ok": true,
+   "seconds": 5.506,
+   "other_workers_within_s": 2.0
+  }
+ ],
+ "passed": true,
+ "where": "integration test: stub models on loopback gateways, PostgreSQL 16; not a GPU drill"
+}

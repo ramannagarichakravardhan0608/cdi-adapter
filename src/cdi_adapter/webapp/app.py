@@ -153,6 +153,17 @@ app = FastAPI(
     redoc_url=None,
     openapi_url=None,
 )
+
+
+@app.middleware("http")
+async def _audit_views_and_downloads(request: Request, call_next: Any) -> Any:
+    """ENT-S2: after the answer is made, write who viewed or downloaded what (auth.AUDITED)."""
+    response = await call_next(request)
+    if (request.method, getattr(request.scope.get("route"), "path", "")) in auth.AUDITED:
+        await run_in_threadpool(auth.audit_access, request, response.status_code)
+    return response
+
+
 app.include_router(auth.router)
 app.include_router(review.router)
 app.include_router(review_page.router)
@@ -189,9 +200,46 @@ def healthz() -> JSONResponse:
             checks["mlserve"] = HttpMLClient(timeout=3).healthz().get("status") == "ok"
         except Exception:  # noqa: BLE001
             checks["mlserve"] = False
+    # ENT-S4: every part by name - the queue where jobs go through one, and the OCR host where
+    # one is configured (without it the page is read in-process, and there is nothing to ask)
+    if s.job_execution == "queue":
+        checks["queue"] = _queue_up(s.redis_url)
+    if s.ocr_host_url:
+        checks["ocr_host"] = _http_up(s.ocr_host_url.rstrip("/") + "/healthz")
     ok = all(checks.values())
     return JSONResponse({"status": "ok" if ok else "degraded", **checks},
                         status_code=200 if ok else 503)  # fmt: skip
+
+
+def _queue_up(redis_url: str) -> bool:
+    try:
+        import redis
+
+        return bool(redis.Redis.from_url(redis_url, socket_timeout=1).ping())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _http_up(url: str) -> bool:
+    try:
+        import httpx
+
+        return httpx.get(url, timeout=3.0).status_code == 200
+    except Exception:  # noqa: BLE001
+        return False
+
+
+@app.get("/api/components")
+def components_view() -> dict[str, Any]:
+    """SW-S1 FR4: every swap point - its setting, the choice made and its version, the choices
+    there are, and what is wrong with the setting if anything is. Names and versions only: no
+    address, no credential."""
+    from cdi_adapter import components
+    from cdi_adapter.modelops import catalog
+
+    listed = components.describe()
+    found = [c["problem"] for c in listed if c["problem"]] + catalog.problems()
+    return {"swap_points": listed, "models": catalog.describe(), "problems": found}
 
 
 @app.get("/readyz")
@@ -232,6 +280,7 @@ async def create_job(request: Request, files: list[UploadFile] = File(...),
                      token_no: str | None = Form(None)) -> dict[str, Any]:  # fmt: skip
     if not files or len(files) > MAX_FILES:
         raise HTTPException(422, f"upload 1 to {MAX_FILES} files")
+    await run_in_threadpool(_within_upload_rate, auth.actor(request).username)  # ENT-S2 FR7
     payload = [(f.filename or "upload", await f.read(), f.content_type) for f in files]
     if any(not raw for _, raw, _ in payload):
         raise HTTPException(422, "empty file")
@@ -262,6 +311,63 @@ async def create_job(request: Request, files: list[UploadFile] = File(...),
         raise HTTPException(503, "the upload could not be stored and was NOT accepted; "
                                  "send it again") from exc  # fmt: skip
     return {"job_id": job.id, "trace_id": job.trace_id}
+
+
+TOO_MANY_UPLOADS = "Too many uploads in a minute. Wait a moment and send it again."
+
+
+def uploads_last_minute(username: str) -> int:
+    with session_scope() as c:
+        return int(c.execute(
+            text("SELECT count(*) FROM web_job WHERE created_by = :u "
+                 "AND created_at > now() - interval '1 minute'"), {"u": username},
+        ).scalar_one())  # fmt: skip
+
+
+def _within_upload_rate(username: str) -> None:
+    """ENT-S2 FR7: at most ``CDI_UPLOAD_MAX_PER_MINUTE`` uploads from one person in a minute,
+    counted in the job table so every web instance sees the same number. 429 when over, before
+    a byte of the files is read. When the count cannot be had the upload goes on: this limit
+    protects the service, it is not what decides who may upload."""
+    limit = get_settings().upload_max_per_minute
+    if limit <= 0:
+        return
+    try:
+        sent = uploads_last_minute(username)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("upload_rate_unknown", error=f"{type(exc).__name__}: {exc}")
+        return
+    if sent >= limit:
+        log.warning("upload_rate_limited", user=username, sent=sent, limit=limit)
+        raise HTTPException(429, TOO_MANY_UPLOADS, headers={"Retry-After": "60"})
+
+
+def default_secrets(settings: Any = None) -> list[str]:
+    """ENT-S2 FR9: the credentials that are still a well-known development default."""
+    from urllib.parse import urlsplit
+
+    from cdi_adapter.secretstore import DEV_PASSWORDS
+
+    s = settings or get_settings()
+    found = [name for name in ("s3_access_key", "s3_secret_key")
+             if getattr(s, name) in DEV_PASSWORDS]  # fmt: skip
+    for name in ("database_url", "redis_url"):
+        if (urlsplit(getattr(s, name)).password or "") in DEV_PASSWORDS:
+            found.append(name)
+    return found
+
+
+def refuse_default_secrets(settings: Any = None) -> None:
+    """Stop the web app from starting on development credentials - when the deployment asks
+    for that (``CDI_REFUSE_DEFAULT_SECRETS``), and always with single sign-on switched on."""
+    s = settings or get_settings()
+    if not (s.refuse_default_secrets or s.auth_provider == "oidc"):
+        return
+    found = default_secrets(s)
+    if found:
+        raise SystemExit("refusing to start: development default credential in "
+                         + ", ".join(f"CDI_{n.upper()}" for n in found)
+                         + ". Set real secrets (the secrets store, docs/secrets.md).")  # fmt: skip
 
 
 def _job(job_id: str):
@@ -741,6 +847,7 @@ def start_metrics(port: int | None = None) -> None:
     metrics.register_once("minio_nodes", metrics.MinioNodesCollector())
     metrics.register_once("minio_drives", metrics.MinioDrivesCollector())
     metrics.register_once("dr", metrics.DrCollector())  # E10-S11
+    metrics.register_once("disk", metrics.DiskCollector())  # ENT-S4
     port = get_settings().metrics_port if port is None else port
     if port:
         start_http_server(port, addr="127.0.0.1")
@@ -753,6 +860,14 @@ def main() -> None:
     tracing.setup_from_settings(tracing.WEBAPP)
     start_metrics()
     s = get_settings()
+    refuse_default_secrets(s)  # ENT-S2 FR9
+    from cdi_adapter import components
+
+    components.check(s, "webapp")  # SW-S1 AC3: a wrong setting stops the start, by name
+    from cdi_adapter.modelops import catalog
+
+    catalog.check(s)  # SW-S2 AC1 / AC3: a champion that cannot be used stops the start
+    catalog.apply(s)  # the champions are the models this service records and asks for
     if s.job_execution == "inprocess":  # this instance runs jobs: start its lease heartbeat and
         from cdi_adapter.webapp.jobs import get_runner  # sweep now, not on the first upload
 

@@ -56,6 +56,77 @@ jobs:
       - name: Prove token rejection and schema-valid completion
         run: python -m pytest tests/test_grammar_unit.py -q
 
+  # ENT-S1: the licence report and the licence gate. Reads the build files (pyproject.toml, the
+  # pod lock files, versions.env, the compose file, the model ids in config.py) against
+  # licences/*.json; nothing is installed, so it sees the DEPLOYED set, not this runner's.
+  # Red until every component has an entry, a known licence and - where the policy asks for
+  # one - a recorded decision. The report is kept with the run either way.
+  swap-gate:
+    # SW-S7: what a change ADDS to the build (a package, a server, a model) must be allowed or
+    # carry a recorded decision; unknown is blocked. Compared with licences/swap-baseline.json.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Swap gate (SBOM before and after)
+        run: python scripts/licence_audit.py swap-gate
+
+  licence-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Licence report and gate
+        run: python scripts/licence_audit.py check --report licence-report
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: licence-report
+          path: licence-report/
+
+  # ENT-S3: the accuracy gate. Today it scores the ten MADE-UP prescriptions of
+  # evaluation/synthetic-10 against their stored outputs - a check that the scorer, the proof
+  # and the gate still give the same numbers after a change. It does NOT measure the product:
+  # that needs the real answer-key set and a host that reads its pictures (the last step,
+  # switched on by the repository variable CDI_EVAL_HOST once both exist).
+  accuracy-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e .
+      - name: The scorer and the gate on the synthetic set
+        run: >
+          python -m cdi_adapter.accuracy score evaluation/synthetic-10
+          --thresholds evaluation/synthetic-10/thresholds.json
+          --baseline evaluation/synthetic-10/baseline.json
+          --out accuracy-report --change "${{ github.sha }}"
+      - name: The real answer-key set against the evaluation host
+        if: ${{ vars.CDI_EVAL_HOST != '' && vars.CDI_EVAL_SET != '' }}
+        env:
+          CDI_LOAD_PASSWORD: ${{ secrets.CDI_EVAL_PASSWORD }}
+        run: |
+          python -m cdi_adapter.accuracy collect "${{ vars.CDI_EVAL_SET }}" --host "${{ vars.CDI_EVAL_HOST }}" --user "${{ vars.CDI_EVAL_USER }}"
+          python -m cdi_adapter.accuracy score "${{ vars.CDI_EVAL_SET }}" --thresholds evaluation/thresholds.json --out accuracy-report/real --history evaluation/history.jsonl --change "${{ github.sha }}"
+      - name: Keep the scorecard
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: accuracy-report
+          path: accuracy-report/
+
   # E1-S2: the same Postgres + source-built MinIO service containers as the fallback.
   integration-gate:
     needs: [unit-gate, grammar-gate]

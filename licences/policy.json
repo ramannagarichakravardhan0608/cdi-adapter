@@ -1,0 +1,20 @@
+{
+  "about": "ENT-S1 licence policy for a product sold BOTH hosted and installed. NOT LEGAL ADVICE: counsel confirms each reading. The names are licence FAMILIES as scripts/licence_audit.py recognises them in a licence field.",
+  "written": "2026-10-13, from the backlog story ENT-S1 (FR7) and the Licence Register sheet dated 2026-10-04",
+  "allowed": ["MIT", "BSD", "APACHE", "ISC", "POSTGRESQL", "OFL", "OWN"],
+  "allowed_with_notices": ["LGPL"],
+  "review": ["GPL", "AGPL", "SSPL", "RSAL", "NON-COMMERCIAL", "PROPRIETARY"],
+  "rules": {
+    "ALLOWED": "MIT, BSD, Apache-2.0, ISC, PostgreSQL, OFL (fonts only), and our own work. Ship the licence text and any NOTICE.",
+    "ALLOWED WITH NOTICES": "LGPL, used unmodified and replaceable: ship its licence text and notices; never fold modified LGPL code into our own files.",
+    "NOT IN POLICY": "A licence the policy does not name (MPL, PSF, HPND, Unlicense, custom terms, ...). Blocked until a decision is recorded with what, who and when.",
+    "REVIEW": "GPL, AGPL, SSPL, RSAL, non-commercial, research-only, proprietary or gated licences. Blocked until a decision is recorded. AGPL tools are never bundled: a separate process only, after counsel's review. Banned in the default install: AGPL or GPL linked into our code, SSPL, non-commercial, research-only, custom gated licences.",
+    "UNKNOWN": "No licence evidence. Never guessed. Blocked until the licence is read from the source and recorded."
+  },
+  "installed_version": [
+    "ship the NOTICE file and every third-party licence text",
+    "make a source offer wherever a copyleft component is shipped",
+    "redistribute NVIDIA libraries only as the EULA's redistributable list allows (licences/nvidia_redistributable.json)",
+    "for every Qwen model under the Qwen LICENSE AGREEMENT: the agreement, the notice line, and 'Built with Qwen' where we train or improve a distributed model"
+  ]
+}

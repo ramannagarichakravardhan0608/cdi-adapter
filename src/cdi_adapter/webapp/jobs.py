@@ -52,6 +52,8 @@ log = get_logger(__name__)
 
 STEPS = ("ingest", "ocr", "classify", "extract", "terminology", "validate")
 UNFINISHED = ("pending", "running")
+# OUT-S3: a document in one of these states has been read to its end
+READ_STATUSES = ("validated", "projected")
 # E9-S2: Phase 1, the CPU stages of one document (the handwriting VLM pass is part of "classify":
 # it runs before that step is recorded). PHASE2 is the GPU stage and what follows it.
 PHASE1 = ("ingest", "ocr", "classify")
@@ -117,6 +119,10 @@ class Stages:
     # and a dropped file). After the document is done; a file that could not be written never
     # fails the document.
     result_file: Callable[[str], Any] = lambda document_id: None
+    # OUT-S3: the result a document ALREADY has - read before, and in front of a reviewer or
+    # approved - as ``{"doc_type", "patient_id", "facts", "accepted", "in_review"}``; None when
+    # it has none (never read, still being read, or its review was cleared away).
+    existing: Callable[[str], dict[str, Any] | None] = lambda document_id: None
 
     @classmethod
     def real(cls) -> Stages:
@@ -169,10 +175,27 @@ class Stages:
 
             return result.refresh_files([document_id])
 
+        def existing(document_id: str) -> dict[str, Any] | None:
+            from cdi_adapter.canon.repo import has_live_item
+
+            with session_scope() as c:
+                row = c.execute(
+                    text("SELECT d.patient_id, (SELECT k.doc_type FROM classification k "
+                         "WHERE k.document_id = d.id ORDER BY k.created_at DESC LIMIT 1) "
+                         "AS doc_type FROM source_document d WHERE d.id = :d "
+                         "AND d.status = ANY(:done)"),
+                    {"d": document_id, "done": list(READ_STATUSES)},
+                ).mappings().first()  # fmt: skip
+                if row is None or not has_live_item(c, [document_id]):
+                    return None
+            return {"doc_type": row["doc_type"],
+                    "patient_id": str(row["patient_id"]) if row["patient_id"] else None,
+                    **counts(document_id)}  # fmt: skip
+
         return cls(ingest_bytes, ocr_document, classify_document, extract_document,
                    bind_document, validate_document, counts, merge, enqueue,
                    extract_batch=extract_documents, shape=shape, agent=agent,
-                   result_file=result_file)  # fmt: skip
+                   result_file=result_file, existing=existing)  # fmt: skip
 
 
 def handwritten_lines(read: Any, settings: Any) -> bool:
@@ -204,6 +227,8 @@ class DocState:
     error: str | None = None
     # UP-S2: why this page was held, in plain words, with what was measured (None = nothing to say)
     quality: dict[str, Any] | None = None
+    # OUT-S3: these bytes were read before and their result stands; nothing was read again
+    reused: bool = False
 
 
 @dataclass
@@ -546,6 +571,8 @@ class JobRunner:
                 res = s.ingest(raw, filename, mime, patient_id=job.patient_id, **source)
             d.document_id = str(res.document_id)
             d.steps_done.append("ingest")
+            if self._reuse(job, d, res):  # OUT-S3: these bytes already have their result
+                return
             d.step = "ocr"
             self._save(job)
             with metrics.stage("ocr", d.document_id):
@@ -727,6 +754,10 @@ class JobRunner:
             log.error("job_doc_failed", job=job.id, filename=d.filename, error=d.error)
         self._save(job)
         if d.status == "done":
+            # ENT-S4 AC3: the result is saved - how long after its upload, and was it late
+            if metrics.result_saved(time.time() - job.started_at):
+                log.warning("result_late", job=job.id, document_id=d.document_id,
+                            seconds=round(time.time() - job.started_at, 1))  # fmt: skip
             try:  # OUT-S2: the result as a file; never fails the document
                 s.result_file(str(d.document_id))
             except Exception as exc:  # noqa: BLE001
@@ -736,6 +767,42 @@ class JobRunner:
                 s.agent(str(d.document_id))
             except Exception as exc:  # noqa: BLE001
                 log.warning("agent_not_queued", document_id=str(d.document_id), error=str(exc))
+
+    def _reuse(self, job: Job, d: DocState, res: Any) -> bool:
+        """OUT-S3: the same picture sent again - under another file name, by another person, in
+        another upload - is the SAME document (its bytes' fingerprint), and when that document
+        already has its result in front of a reviewer it is not read a second time: this page
+        is answered with the result that exists. Reading it again would replace the values a
+        reviewer is looking at, and their corrections with them.
+
+        Not reused - it is read as usual - when the document has no result yet, when its review
+        was cleared away (owner, 2026-10-10: then it is read again), or when this upload names a
+        patient other than the one the document is filed under (the identity check must run)."""
+        if not getattr(res, "deduplicated", False):
+            return False
+        try:
+            have = self.stages.existing(str(d.document_id))
+        except Exception as exc:  # noqa: BLE001 - cannot tell: read it, as before this rule
+            log.warning("job_doc_reuse_unknown", job=job.id, document_id=d.document_id,
+                        error=f"{type(exc).__name__}: {exc}")  # fmt: skip
+            return False
+        if not have:
+            return False
+        theirs = have.get("patient_id")
+        if job.patient_id and theirs and str(job.patient_id) != str(theirs):
+            return False
+        with job.lock:
+            if job.patient_id is None and theirs:
+                job.patient_id = str(theirs)
+        d.doc_type = have.get("doc_type")
+        d.facts, d.accepted = int(have.get("facts") or 0), int(have.get("accepted") or 0)
+        d.in_review = int(have.get("in_review") or 0)
+        d.steps_done = list(STEPS)
+        d.status, d.step, d.reused = "done", None, True
+        metrics.DOC_REUSED.inc()
+        log.info("job_doc_reused", job=job.id, document_id=d.document_id, filename=d.filename)
+        self._save(job)
+        return True
 
     def _resume(self, job: Job) -> list[int]:
         """The documents to run from the start: all of them for a new job. A resumed stored job

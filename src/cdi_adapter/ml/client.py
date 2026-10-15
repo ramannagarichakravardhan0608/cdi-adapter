@@ -458,6 +458,33 @@ def repair_payload(payload: dict[str, Any], name: str) -> dict[str, Any]:
     return out
 
 
+RAW_ANSWER = "_raw_answer"
+
+
+class Answer(dict[str, Any]):
+    """The answer read from the model, with the model's own words beside it (``raw``). It is
+    the same dict as before - equal to it, valid against the same schema - so nothing that
+    reads an answer changes."""
+
+    raw: str | None = None
+
+
+def with_raw(payload: dict[str, Any], text: Any) -> dict[str, Any]:
+    """OUT-S1 FR5: keep the model's own words - exactly as they came, before any repair."""
+    answer = Answer(payload)
+    answer.raw = None if text is None else str(text)
+    return answer
+
+
+def keep_raw(payload: dict[str, Any], answer: dict[str, Any]) -> dict[str, Any]:
+    """Put the raw answer into what is saved (``extraction.payload._raw_answer``). A key that
+    starts with ``_`` is a note on the answer and is never read as a value."""
+    raw = getattr(answer, "raw", None)
+    if raw is not None:
+        payload[RAW_ANSWER] = raw
+    return payload
+
+
 def is_partial(payload: dict[str, Any]) -> bool:
     return bool(payload.get("_partial"))
 
@@ -562,7 +589,7 @@ class MLClient:
                 cut["_errors"] = [f"the answer was cut off by the length limit ({max_tokens} "
                                   "tokens)"]  # fmt: skip
                 log.warning("vlm_json_incomplete", schema=schema, max_tokens=max_tokens)
-                return cut
+                return with_raw(cut, text)
             if isinstance(text, GeneratedText) and text.grammar_locked:
                 # The gateway constrained every token. Never repair or retry an invalid
                 # constrained response: fail the document and expose the serving defect.
@@ -571,7 +598,7 @@ class MLClient:
                 raw = strict_json(text)
                 if validate_schema(raw, schema):
                     raise ValueError("grammar-locked gateway returned schema-invalid JSON")
-                return raw
+                return with_raw(raw, text)
             try:
                 repaired = repair_payload(extract_json(text), schema)
             except ValueError as exc:
@@ -579,7 +606,7 @@ class MLClient:
             else:
                 errors = validate_schema(repaired, schema)
                 if not errors:
-                    return repaired
+                    return with_raw(repaired, text)
                 best = repaired
             ask = (
                 f"{prompt}\n\nYour previous answer was invalid ({'; '.join(errors[:5])}). "
@@ -590,7 +617,7 @@ class MLClient:
         partial["_partial"] = True
         partial["_errors"] = errors[:20]
         log.warning("vlm_json_partial", schema=schema, errors=errors[:5])
-        return partial
+        return with_raw(partial, text)
 
 
 def split_urls(urls: str) -> list[str]:

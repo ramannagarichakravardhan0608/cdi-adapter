@@ -1,0 +1,65 @@
+{
+ "schema_version": "answer.v1",
+ "case_id": "syn-04",
+ "slices": {
+  "script": "handwritten",
+  "doctor": "unknown",
+  "doctor_group": "clinic-c",
+  "suite": "regression"
+ },
+ "patient": {
+  "name": "Dev Mockerjee",
+  "age_text": "39 Y",
+  "sex": "male",
+  "dob": null,
+  "phone": "9876543213",
+  "address": null
+ },
+ "doctor": {
+  "name": "Dr. Kavya Specimen",
+  "registration_no": "70004",
+  "qualification": "MBBS",
+  "department": "General"
+ },
+ "tests": [
+  {
+   "as_written": "CBC",
+   "standard_code": "58410-2",
+   "reasons": [
+    "Fever"
+   ]
+  },
+  {
+   "as_written": "FBS",
+   "standard_code": "1558-6",
+   "reasons": [
+    "Type 2 diabetes mellitus"
+   ]
+  }
+ ],
+ "preparation": [
+  {
+   "text": "fasting 12 hrs",
+   "type": "fasting",
+   "amount": 12,
+   "unit": "h",
+   "applies_to": [
+    "FBS"
+   ]
+  }
+ ],
+ "labelling": {
+  "labellers": [
+   "labeller-a (made up)"
+  ]
+ },
+ "identity": {
+  "method": "synthetic",
+  "tool": null,
+  "checked_by": "made-up checker (synthetic set)",
+  "checked_on": "2026-10-13",
+  "readable_identity": false,
+  "note": "a made-up person and clinic; there is no picture"
+ },
+ "note": null
+}

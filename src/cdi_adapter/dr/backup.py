@@ -57,25 +57,25 @@ def backup_objects(store: Any, dest: Path) -> dict[str, int]:
     """Copy every object of ``store``'s bucket not yet in the backup; verify each copy."""
     manifest = read_manifest(dest)
     added = 0
-    for page in store.client.get_paginator("list_objects_v2").paginate(Bucket=store.bucket):
-        for o in page.get("Contents", []):
-            key = o["Key"]
-            have = manifest.get(key)
-            target = object_path(dest, key)
-            if have and have["size"] == o["Size"] and target.exists():
-                continue
-            body = store.get_bytes(key)
-            head = store.client.head_object(Bucket=store.bucket, Key=key)
-            _atomic_write(target, body)
-            sha = hashlib.sha256(body).hexdigest()
-            if hashlib.sha256(target.read_bytes()).hexdigest() != sha:
-                raise RuntimeError(f"backup copy of {key} does not read back identical")
-            manifest[key] = {
-                "sha256": sha,
-                "size": len(body),
-                "content_type": head.get("ContentType") or "application/octet-stream",
-            }
-            added += 1
+    from cdi_adapter import storage  # SW-S1: the store is asked through its interface
+
+    for key, size in storage.listing(store):
+        have = manifest.get(key)
+        target = object_path(dest, key)
+        if have and have["size"] == size and target.exists():
+            continue
+        body = store.get_bytes(key)
+        kind = storage.content_type_of(store, key)
+        _atomic_write(target, body)
+        sha = hashlib.sha256(body).hexdigest()
+        if hashlib.sha256(target.read_bytes()).hexdigest() != sha:
+            raise RuntimeError(f"backup copy of {key} does not read back identical")
+        manifest[key] = {
+            "sha256": sha,
+            "size": len(body),
+            "content_type": kind or "application/octet-stream",
+        }
+        added += 1
     _atomic_write(dest / MANIFEST, json.dumps(manifest, indent=1, sort_keys=True).encode())
     return {"objects": len(manifest), "added": added}
 

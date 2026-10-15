@@ -260,6 +260,10 @@ def decide(conn: Connection, fact_id: UUID | str, d: ReviewDecision,
     from cdi_adapter.training.calibration import record_decision
 
     record_decision(conn, result_id)
+    # OUT-S1: a person's correction or rejection shows in the rows other systems read
+    from cdi_adapter.persist import normalized
+
+    normalized.refresh_for_fact(conn, fact)
     repo.write_audit(conn, actor=reviewer, action="update", entity="clinical_fact",
                      entity_id=fact["id"],
                      detail={"action": d.action, "result_fact": str(result_id),

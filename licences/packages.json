@@ -1,0 +1,1442 @@
+{
+ "0": {
+  "version": "0",
+  "licence": "0",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "2"
+ },
+ "1": {
+  "version": "0",
+  "licence": "2",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "2"
+ },
+ "accelerate": {
+  "version": "1.15.0",
+  "licence": "Apache | Apache Software License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "alembic": {
+  "version": "1.20.0",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "amqp": {
+  "version": "5.4.0",
+  "licence": "BSD | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "annotated-doc": {
+  "version": "0.0.5",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "annotated-types": {
+  "version": "0.8.0",
+  "licence": "MIT | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "anyio": {
+  "version": "4.11.0",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "argon2-cffi": {
+  "version": "25.1.0",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "argon2-cffi-bindings": {
+  "version": "25.1.0",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "arrow": {
+  "version": "1.3.0",
+  "licence": "Apache Software License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "ast-serialize": {
+  "version": "0.12.0",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "asttokens": {
+  "version": "3.0.0",
+  "licence": "Apache 2.0",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "async-lru": {
+  "version": "2.0.5",
+  "licence": "MIT License | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "attrs": {
+  "version": "25.4.0",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "av": {
+  "version": "19.0.1",
+  "licence": "BSD-3-Clause",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "babel": {
+  "version": "2.17.0",
+  "licence": "BSD-3-Clause | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "beautifulsoup4": {
+  "version": "4.14.2",
+  "licence": "MIT License | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "billiard": {
+  "version": "4.3.0",
+  "licence": "BSD | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "bleach": {
+  "version": "6.2.0",
+  "licence": "Apache Software License | Apache Software License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "blinker": {
+  "version": "1.7.0",
+  "licence": "MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "blis": {
+  "version": "1.3.3",
+  "licence": "BSD",
+  "source": "installed metadata, Windows AMD64, 2026-10-13"
+ },
+ "boto3": {
+  "version": "1.43.108",
+  "licence": "Apache-2.0",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "botocore": {
+  "version": "1.43.108",
+  "licence": "Apache-2.0",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "catalogue": {
+  "version": "2.0.10",
+  "licence": "MIT",
+  "source": "installed metadata, Windows AMD64, 2026-10-13"
+ },
+ "cdi-adapter": {
+  "version": "0.1.0",
+  "licence": "(none in metadata)",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "4 UNKNOWN - read it"
+ },
+ "celery": {
+  "version": "5.6.3",
+  "licence": "BSD-3-Clause",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "certifi": {
+  "version": "2025.10.5",
+  "licence": "MPL-2.0 | Mozilla Public License 2.0 (MPL 2.0)",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "2 WEAK COPYLEFT (file level)"
+ },
+ "cffi": {
+  "version": "2.0.0",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "charset-normalizer": {
+  "version": "3.4.3",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "click": {
+  "version": "8.5.0",
+  "licence": "BSD-3-Clause",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "click-didyoumean": {
+  "version": "0.3.1",
+  "licence": "MIT | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "click-plugins": {
+  "version": "1.1.1.2",
+  "licence": "New BSD | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "click-repl": {
+  "version": "0.4.0",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "cloudpathlib": {
+  "version": "0.25.0",
+  "licence": "MIT License",
+  "source": "installed metadata, Windows AMD64, 2026-10-13"
+ },
+ "colorama": {
+  "version": "0.4.6",
+  "licence": "BSD License",
+  "source": "SBOM (repo venv) sheet, read 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "comm": {
+  "version": "0.2.3",
+  "licence": "BSD 3-Clause License | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "confection": {
+  "version": "0.1.5",
+  "licence": "MIT",
+  "source": "installed metadata, Windows AMD64, 2026-10-13"
+ },
+ "coverage": {
+  "version": "7.16.2",
+  "licence": "Apache-2.0",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "cryptography": {
+  "version": "41.0.7",
+  "licence": "Apache-2.0 OR BSD-3-Clause | Apache Software License; BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "cymem": {
+  "version": "2.0.13",
+  "licence": "MIT",
+  "source": "installed metadata, Windows AMD64, 2026-10-13"
+ },
+ "debugpy": {
+  "version": "1.8.17",
+  "licence": "MIT | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "decorator": {
+  "version": "5.2.1",
+  "licence": "BSD-2-Clause | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "defusedxml": {
+  "version": "0.7.1",
+  "licence": "PSFL | Python Software Foundation License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "distlib": {
+  "version": "0.4.0",
+  "licence": "PSF-2.0 | Python Software Foundation License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "distro": {
+  "version": "1.9.0",
+  "licence": "Apache License, Version 2.0 | Apache Software License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "einops": {
+  "version": "0.8.2",
+  "licence": "MIT | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "executing": {
+  "version": "2.2.1",
+  "licence": "MIT | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "fastapi": {
+  "version": "0.142.2",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "fastjsonschema": {
+  "version": "2.21.2",
+  "licence": "BSD | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "filelock": {
+  "version": "3.20.0",
+  "licence": "Unlicense | The Unlicense (Unlicense)",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "flatbuffers": {
+  "version": "25.12.19",
+  "licence": "Apache 2.0 | Apache Software License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "fqdn": {
+  "version": "1.5.1",
+  "licence": "MPL 2.0 | Mozilla Public License 2.0 (MPL 2.0)",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "2 WEAK COPYLEFT (file level)"
+ },
+ "fsspec": {
+  "version": "2024.6.1",
+  "licence": "BSD 3-Clause License | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "googleapis-common-protos": {
+  "version": "1.75.3",
+  "licence": "Apache-2.0",
+  "source": "installed metadata, Windows AMD64, 2026-10-13"
+ },
+ "greenlet": {
+  "version": "3.5.5",
+  "licence": "MIT AND PSF-2.0",
+  "source": "SBOM (repo venv) sheet, read 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "h11": {
+  "version": "0.16.0",
+  "licence": "MIT | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "hf-xet": {
+  "version": "1.6.0",
+  "licence": "Apache-2.0 | Apache Software License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "httpcore": {
+  "version": "1.0.9",
+  "licence": "BSD-3-Clause | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "httplib2": {
+  "version": "0.20.4",
+  "licence": "MIT | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "httptools": {
+  "version": "0.8.0",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "httpx": {
+  "version": "0.28.1",
+  "licence": "BSD-3-Clause | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "huggingface-hub": {
+  "version": "1.33.0",
+  "licence": "Apache-2.0 | Apache Software License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "idna": {
+  "version": "3.10",
+  "licence": "BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "iniconfig": {
+  "version": "2.3.0",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "ipykernel": {
+  "version": "6.30.1",
+  "licence": "BSD 3-Clause License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "ipython": {
+  "version": "9.6.0",
+  "licence": "BSD-3-Clause | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "ipython-pygments-lexers": {
+  "version": "1.1.1",
+  "licence": "BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "ipywidgets": {
+  "version": "8.1.7",
+  "licence": "BSD 3-Clause License | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "isoduration": {
+  "version": "20.11.0",
+  "licence": "ISC License (ISCL)",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "jedi": {
+  "version": "0.19.2",
+  "licence": "MIT | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "jinja2": {
+  "version": "3.1.6",
+  "licence": "BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "jmespath": {
+  "version": "1.1.0",
+  "licence": "MIT | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "json5": {
+  "version": "0.12.1",
+  "licence": "Files: Everything except for the benchmarks/*.json files. | Apache Software License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "jsonpointer": {
+  "version": "3.0.0",
+  "licence": "Modified BSD License | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "jsonschema": {
+  "version": "4.25.1",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "jsonschema-specifications": {
+  "version": "2025.9.1",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "jupyter-archive": {
+  "version": "3.4.0",
+  "licence": "Copyright (c) 2011-2020, Hadrien Mary, Frederic Collonval | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "jupyter-client": {
+  "version": "8.6.3",
+  "licence": "BSD 3-Clause License | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "jupyter-core": {
+  "version": "5.8.1",
+  "licence": "BSD-3-Clause",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "jupyter-events": {
+  "version": "0.12.0",
+  "licence": "BSD 3-Clause License | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "jupyter-lsp": {
+  "version": "2.3.0",
+  "licence": "BSD-3-Clause | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "jupyter-server": {
+  "version": "2.17.0",
+  "licence": "BSD 3-Clause License | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "jupyter-server-terminals": {
+  "version": "0.5.3",
+  "licence": "BSD 3-Clause License | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "jupyterlab": {
+  "version": "4.4.9",
+  "licence": "Copyright (c) 2015-2025 Project Jupyter Contributors | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "jupyterlab-pygments": {
+  "version": "0.3.0",
+  "licence": "Copyright (c) 2015 Project Jupyter Contributors | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "jupyterlab-server": {
+  "version": "2.27.3",
+  "licence": "Copyright (c) 2015-2017, Project Jupyter Contributors | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "jupyterlab-widgets": {
+  "version": "3.0.15",
+  "licence": "Copyright (c) 2015 Project Jupyter Contributors | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "kombu": {
+  "version": "5.6.2",
+  "licence": "BSD-3-Clause",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "lark": {
+  "version": "1.3.0",
+  "licence": "MIT | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "librt": {
+  "version": "0.16.0",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "locust": {
+  "version": "2.46.6",
+  "licence": "MIT",
+  "source": "installed metadata, Windows AMD64, 2026-10-13"
+ },
+ "mako": {
+  "version": "1.4.3",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "markdown-it-py": {
+  "version": "4.2.0",
+  "licence": "MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "markupsafe": {
+  "version": "3.0.3",
+  "licence": "BSD-3-Clause",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "matplotlib-inline": {
+  "version": "0.1.7",
+  "licence": "BSD 3-Clause License | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "mdurl": {
+  "version": "0.1.2",
+  "licence": "MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "mistune": {
+  "version": "3.1.4",
+  "licence": "BSD-3-Clause | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "mpmath": {
+  "version": "1.3.0",
+  "licence": "BSD | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "msal": {
+  "version": "1.39.0",
+  "licence": "MIT | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "msgpack": {
+  "version": "1.2.2",
+  "licence": "Apache-2.0",
+  "source": "installed metadata, Windows AMD64, 2026-10-13"
+ },
+ "murmurhash": {
+  "version": "1.0.15",
+  "licence": "MIT",
+  "source": "installed metadata, Windows AMD64, 2026-10-13"
+ },
+ "mypy": {
+  "version": "2.4.0",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "mypy-extensions": {
+  "version": "1.1.0",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "nbclient": {
+  "version": "0.10.2",
+  "licence": "BSD 3-Clause License | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "nbconvert": {
+  "version": "7.16.6",
+  "licence": "BSD 3-Clause License | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "nbformat": {
+  "version": "5.10.4",
+  "licence": "BSD 3-Clause License | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "nest-asyncio": {
+  "version": "1.6.0",
+  "licence": "BSD | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "networkx": {
+  "version": "3.3",
+  "licence": "BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "notebook": {
+  "version": "7.4.2",
+  "licence": "BSD 3-Clause License | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "notebook-shim": {
+  "version": "0.2.4",
+  "licence": "BSD 3-Clause License | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "numpy": {
+  "version": "2.1.2",
+  "licence": "Copyright (c) 2005-2024, NumPy Developers. | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "nvidia-cublas-cu12": {
+  "version": "12.8.4.1",
+  "licence": "NVIDIA Proprietary Software | Other/Proprietary License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "5 PROPRIETARY (NVIDIA)"
+ },
+ "nvidia-cuda-cupti-cu12": {
+  "version": "12.8.90",
+  "licence": "NVIDIA Proprietary Software | Other/Proprietary License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "5 PROPRIETARY (NVIDIA)"
+ },
+ "nvidia-cuda-nvrtc-cu12": {
+  "version": "12.8.93",
+  "licence": "NVIDIA Proprietary Software | Other/Proprietary License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "5 PROPRIETARY (NVIDIA)"
+ },
+ "nvidia-cuda-runtime-cu12": {
+  "version": "12.8.90",
+  "licence": "NVIDIA Proprietary Software | Other/Proprietary License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "5 PROPRIETARY (NVIDIA)"
+ },
+ "nvidia-cudnn-cu12": {
+  "version": "9.10.2.21",
+  "licence": "LicenseRef-NVIDIA-Proprietary | Other/Proprietary License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "5 PROPRIETARY (NVIDIA)"
+ },
+ "nvidia-cufft-cu12": {
+  "version": "11.3.3.83",
+  "licence": "NVIDIA Proprietary Software | Other/Proprietary License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "5 PROPRIETARY (NVIDIA)"
+ },
+ "nvidia-cufile-cu12": {
+  "version": "1.13.1.3",
+  "licence": "NVIDIA Proprietary Software | Other/Proprietary License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "5 PROPRIETARY (NVIDIA)"
+ },
+ "nvidia-curand-cu12": {
+  "version": "10.3.9.90",
+  "licence": "NVIDIA Proprietary Software | Other/Proprietary License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "5 PROPRIETARY (NVIDIA)"
+ },
+ "nvidia-cusolver-cu12": {
+  "version": "11.7.3.90",
+  "licence": "NVIDIA Proprietary Software | Other/Proprietary License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "5 PROPRIETARY (NVIDIA)"
+ },
+ "nvidia-cusparse-cu12": {
+  "version": "12.5.8.93",
+  "licence": "NVIDIA Proprietary Software | Other/Proprietary License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "5 PROPRIETARY (NVIDIA)"
+ },
+ "nvidia-cusparselt-cu12": {
+  "version": "0.7.1",
+  "licence": "NVIDIA Proprietary Software",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "5 PROPRIETARY (NVIDIA)"
+ },
+ "nvidia-nccl-cu12": {
+  "version": "2.27.3",
+  "licence": "BSD-3-Clause | Other/Proprietary License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "5 PROPRIETARY (NVIDIA)"
+ },
+ "nvidia-nvjitlink-cu12": {
+  "version": "12.8.93",
+  "licence": "NVIDIA Proprietary Software | Other/Proprietary License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "5 PROPRIETARY (NVIDIA)"
+ },
+ "nvidia-nvtx-cu12": {
+  "version": "12.8.90",
+  "licence": "Apache 2.0 | Other/Proprietary License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "5 PROPRIETARY (NVIDIA)"
+ },
+ "onnxruntime": {
+  "version": "1.30.0",
+  "licence": "MIT License | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "opencv-python": {
+  "version": "5.0.0.93",
+  "licence": "Apache 2.0 | Apache Software License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "opencv-python-headless": {
+  "version": "5.0.0.93",
+  "licence": "Apache 2.0 | Apache Software License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "opentelemetry-api": {
+  "version": "1.45.0",
+  "licence": "Apache-2.0",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "opentelemetry-exporter-otlp-proto-common": {
+  "version": "1.44.0",
+  "licence": "Apache-2.0",
+  "source": "installed metadata, Windows AMD64, 2026-10-13"
+ },
+ "opentelemetry-exporter-otlp-proto-http": {
+  "version": "1.44.0",
+  "licence": "Apache-2.0",
+  "source": "installed metadata, Windows AMD64, 2026-10-13"
+ },
+ "opentelemetry-proto": {
+  "version": "1.44.0",
+  "licence": "Apache-2.0",
+  "source": "installed metadata, Windows AMD64, 2026-10-13"
+ },
+ "opentelemetry-sdk": {
+  "version": "1.44.0",
+  "licence": "Apache-2.0",
+  "source": "installed metadata, Windows AMD64, 2026-10-13"
+ },
+ "opentelemetry-semantic-conventions": {
+  "version": "0.65b0",
+  "licence": "Apache-2.0",
+  "source": "installed metadata, Windows AMD64, 2026-10-13"
+ },
+ "packaging": {
+  "version": "25.0",
+  "licence": "Apache Software License; BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "pandocfilters": {
+  "version": "1.5.1",
+  "licence": "BSD-3-Clause | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "parso": {
+  "version": "0.8.5",
+  "licence": "MIT | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "pathspec": {
+  "version": "1.1.1",
+  "licence": "Mozilla Public License 2.0 (MPL 2.0)",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "2 WEAK COPYLEFT (file level)"
+ },
+ "pexpect": {
+  "version": "4.9.0",
+  "licence": "ISC license | ISC License (ISCL)",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "phonenumbers": {
+  "version": "9.0.39",
+  "licence": "Apache-2.0",
+  "source": "installed metadata, Windows AMD64, 2026-10-13"
+ },
+ "pillow": {
+  "version": "11.0.0",
+  "licence": "MIT-CMU | CMU License (MIT-CMU)",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "pip": {
+  "version": "25.2",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "platformdirs": {
+  "version": "4.5.0",
+  "licence": "MIT | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "pluggy": {
+  "version": "1.6.0",
+  "licence": "MIT | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "preshed": {
+  "version": "3.0.13",
+  "licence": "MIT",
+  "source": "installed metadata, Windows AMD64, 2026-10-13"
+ },
+ "presidio-analyzer": {
+  "version": "2.2.364",
+  "licence": "MIT",
+  "source": "installed metadata, Windows AMD64, 2026-10-13"
+ },
+ "presidio-anonymizer": {
+  "version": "2.2.364",
+  "licence": "MIT",
+  "source": "installed metadata, Windows AMD64, 2026-10-13"
+ },
+ "prometheus-client": {
+  "version": "0.23.1",
+  "licence": "Apache-2.0 AND BSD-2-Clause",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "prompt-toolkit": {
+  "version": "3.0.52",
+  "licence": "BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "protobuf": {
+  "version": "7.36.2",
+  "licence": "3-Clause BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "psutil": {
+  "version": "7.1.0",
+  "licence": "BSD-3-Clause",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "psycopg": {
+  "version": "3.3.6",
+  "licence": "LGPL-3.0-only",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "2 WEAK COPYLEFT (LGPL)"
+ },
+ "psycopg-binary": {
+  "version": "3.3.6",
+  "licence": "LGPL-3.0-only",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "2 WEAK COPYLEFT (LGPL)"
+ },
+ "ptyprocess": {
+  "version": "0.7.0",
+  "licence": "ISC License (ISCL)",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "pure-eval": {
+  "version": "0.2.3",
+  "licence": "MIT | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "pyclipper": {
+  "version": "1.4.0",
+  "licence": "MIT | OSI Approved; MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "pycparser": {
+  "version": "2.23",
+  "licence": "BSD-3-Clause | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "pydantic": {
+  "version": "2.13.5",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "pydantic-core": {
+  "version": "2.46.5",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "pydantic-settings": {
+  "version": "2.15.0",
+  "licence": "MIT | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "pygments": {
+  "version": "2.19.2",
+  "licence": "BSD-2-Clause | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "pyjwt": {
+  "version": "2.7.0",
+  "licence": "MIT | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "pymupdf": {
+  "version": "1.28.2",
+  "licence": "Dual Licensed - GNU AFFERO GPL 3.0 or Artifex Commercial License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "1 STRONG COPYLEFT (network)"
+ },
+ "pyparsing": {
+  "version": "3.1.1",
+  "licence": "MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "pypdfium2": {
+  "version": "5.14.0",
+  "licence": "BSD-3-Clause, Apache-2.0, dependency licenses",
+  "source": "installed metadata, Windows AMD64, 2026-10-13"
+ },
+ "pytest": {
+  "version": "9.1.1",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "pytest-cov": {
+  "version": "7.1.0",
+  "licence": "MIT | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "python-dateutil": {
+  "version": "2.9.0.post0",
+  "licence": "Dual License | BSD License; Apache Software License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "python-dotenv": {
+  "version": "1.2.4",
+  "licence": "BSD-3-Clause",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "python-json-logger": {
+  "version": "4.0.0",
+  "licence": "BSD-2-Clause License | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "python-multipart": {
+  "version": "0.0.32",
+  "licence": "Apache-2.0 | Apache Software License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "pyyaml": {
+  "version": "6.0.3",
+  "licence": "MIT | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "pyzmq": {
+  "version": "27.1.0",
+  "licence": "BSD 3-Clause License | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "qwen-vl-utils": {
+  "version": "0.0.14",
+  "licence": "Apache-2.0 | Apache Software License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "rapidocr-onnxruntime": {
+  "version": "1.4.4",
+  "licence": "Apache-2.0",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "redis": {
+  "version": "6.4.0",
+  "licence": "MIT | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "referencing": {
+  "version": "0.36.2",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "regex": {
+  "version": "2026.9.29",
+  "licence": "Apache-2.0 AND CNRI-Python",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "requests": {
+  "version": "2.32.5",
+  "licence": "Apache-2.0 | Apache Software License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "requests-file": {
+  "version": "3.0.1",
+  "licence": "Apache 2.0",
+  "source": "installed metadata, Windows AMD64, 2026-10-13"
+ },
+ "rfc3339-validator": {
+  "version": "0.1.4",
+  "licence": "MIT license | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "rfc3986-validator": {
+  "version": "0.1.1",
+  "licence": "MIT license | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "rfc3987-syntax": {
+  "version": "1.1.0",
+  "licence": "MIT | Apache Software License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "rich": {
+  "version": "15.0.0",
+  "licence": "MIT | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "rpds-py": {
+  "version": "0.27.1",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "ruff": {
+  "version": "0.16.10",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "s3transfer": {
+  "version": "0.19.2",
+  "licence": "Apache License 2.0 | Apache Software License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "safetensors": {
+  "version": "0.8.0",
+  "licence": "Apache Software License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "send2trash": {
+  "version": "1.8.3",
+  "licence": "BSD License | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "sentencepiece": {
+  "version": "0.2.2",
+  "licence": "Apache-2.0",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "setuptools": {
+  "version": "80.9.0",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "shapely": {
+  "version": "2.1.2",
+  "licence": "BSD 3-Clause | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "shellingham": {
+  "version": "1.5.4",
+  "licence": "ISC License | ISC License (ISCL)",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "six": {
+  "version": "1.17.0",
+  "licence": "MIT | MIT License",
+  "source": "SBOM (repo venv) sheet, read 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "smart-open": {
+  "version": "7.7.1",
+  "licence": "MIT License",
+  "source": "installed metadata, Windows AMD64, 2026-10-13"
+ },
+ "sniffio": {
+  "version": "1.3.1",
+  "licence": "MIT OR Apache-2.0 | MIT License; Apache Software License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "soupsieve": {
+  "version": "2.8",
+  "licence": "MIT | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "spacy": {
+  "version": "3.8.7",
+  "licence": "MIT",
+  "source": "installed metadata, Windows AMD64, 2026-10-13"
+ },
+ "spacy-legacy": {
+  "version": "3.0.12",
+  "licence": "MIT",
+  "source": "installed metadata, Windows AMD64, 2026-10-13"
+ },
+ "spacy-loggers": {
+  "version": "1.0.5",
+  "licence": "MIT",
+  "source": "installed metadata, Windows AMD64, 2026-10-13"
+ },
+ "sqlalchemy": {
+  "version": "2.1.3",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "srsly": {
+  "version": "2.5.3",
+  "licence": "MIT",
+  "source": "installed metadata, Windows AMD64, 2026-10-13"
+ },
+ "stack-data": {
+  "version": "0.6.3",
+  "licence": "MIT | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "starlette": {
+  "version": "1.7.0",
+  "licence": "BSD-3-Clause",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "structlog": {
+  "version": "26.1.0",
+  "licence": "MIT OR Apache-2.0 | Apache Software License; MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "sympy": {
+  "version": "1.13.3",
+  "licence": "BSD | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "tenacity": {
+  "version": "9.1.4",
+  "licence": "Apache 2.0 | Apache Software License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "terminado": {
+  "version": "0.18.1",
+  "licence": "BSD 2-Clause License | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "thinc": {
+  "version": "8.3.11",
+  "licence": "MIT",
+  "source": "installed metadata, Windows AMD64, 2026-10-13"
+ },
+ "tinycss2": {
+  "version": "1.4.0",
+  "licence": "BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "tldextract": {
+  "version": "5.3.2",
+  "licence": "BSD-3-Clause",
+  "source": "installed metadata, Windows AMD64, 2026-10-13"
+ },
+ "tokenizers": {
+  "version": "0.23.2",
+  "licence": "Apache Software License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "torch": {
+  "version": "2.8.0+cu128",
+  "licence": "BSD-3-Clause | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "torchaudio": {
+  "version": "2.8.0+cu128",
+  "licence": "BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "torchvision": {
+  "version": "0.23.0+cu128",
+  "licence": "BSD",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "tornado": {
+  "version": "6.5.2",
+  "licence": "Apache-2.0 | Apache Software License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "tqdm": {
+  "version": "4.70.1",
+  "licence": "MPL-2.0 AND MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "2 WEAK COPYLEFT (file level)"
+ },
+ "traitlets": {
+  "version": "5.14.3",
+  "licence": "BSD 3-Clause License | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "transformers": {
+  "version": "5.18.0",
+  "licence": "Apache 2.0 License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "triton": {
+  "version": "3.4.0",
+  "licence": "MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "typer": {
+  "version": "0.27.2",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "types-python-dateutil": {
+  "version": "2.9.0.20251008",
+  "licence": "Apache-2.0",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "typing-extensions": {
+  "version": "4.15.0",
+  "licence": "PSF-2.0",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "typing-inspection": {
+  "version": "0.4.4",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "tzdata": {
+  "version": "2026.4",
+  "licence": "Apache-2.0",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "tzlocal": {
+  "version": "5.4.4",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "uri-template": {
+  "version": "1.3.0",
+  "licence": "MIT License | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "urllib3": {
+  "version": "2.5.0",
+  "licence": "MIT",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "uvicorn": {
+  "version": "0.54.0",
+  "licence": "BSD-3-Clause",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "uvloop": {
+  "version": "0.23.0",
+  "licence": "MIT License | Apache Software License; MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "vine": {
+  "version": "5.1.0",
+  "licence": "BSD | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "virtualenv": {
+  "version": "20.34.0",
+  "licence": "MIT | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "wasabi": {
+  "version": "1.1.3",
+  "licence": "MIT",
+  "source": "installed metadata, Windows AMD64, 2026-10-13"
+ },
+ "watchdog": {
+  "version": "6.0.0",
+  "licence": "Apache-2.0 | Apache Software License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "watchfiles": {
+  "version": "1.3.0",
+  "licence": "MIT | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "wcwidth": {
+  "version": "0.2.14",
+  "licence": "MIT | MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "weasel": {
+  "version": "0.4.3",
+  "licence": "MIT",
+  "source": "installed metadata, Windows AMD64, 2026-10-13"
+ },
+ "webcolors": {
+  "version": "24.11.1",
+  "licence": "BSD-3-Clause | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "webencodings": {
+  "version": "0.5.1",
+  "licence": "BSD | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "websocket-client": {
+  "version": "1.9.0",
+  "licence": "Apache-2.0 | Apache Software License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "websockets": {
+  "version": "17.1",
+  "licence": "BSD-3-Clause",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "wheel": {
+  "version": "0.45.1",
+  "licence": "MIT License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "widgetsnbextension": {
+  "version": "4.0.14",
+  "licence": "BSD 3-Clause License | BSD License",
+  "source": "SBOM (pod) sheet, read on the pod 2026-10-04",
+  "category": "3 PERMISSIVE"
+ },
+ "wrapt": {
+  "version": "2.4.1",
+  "licence": "BSD-2-Clause",
+  "source": "installed metadata, Windows AMD64, 2026-10-13"
+ }
+}

@@ -1,0 +1,216 @@
+{
+ "schema_version": "result.v1",
+ "document_id": "00000000-0000-4000-8000-000000000008",
+ "received_at": null,
+ "source": "synthetic",
+ "page_count": 1,
+ "status": "needs_check",
+ "review": {
+  "needs_check_count": 0,
+  "items": []
+ },
+ "absent": [],
+ "patient": {
+  "name": {
+   "value": "Hari Dummyani",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  },
+  "age_text": {
+   "value": "51 Y",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  },
+  "sex": {
+   "value": "male",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  },
+  "phone": {
+   "value": "9876543217",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  }
+ },
+ "doctor": {
+  "name": {
+   "value": "Dr. Kavya Specimen",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  },
+  "registration_no": {
+   "value": "70004",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  },
+  "qualification": {
+   "value": "MBBS",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  },
+  "department": {
+   "value": "General",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  }
+ },
+ "lab_tests": [
+  {
+   "as_written": "CBC",
+   "kind": "test",
+   "match": "matched",
+   "standard": {
+    "name": "CBC",
+    "code_system": "LOINC",
+    "code": "58410-2"
+   },
+   "value": {
+    "value": "CBC",
+    "status": "accepted",
+    "confidence": 0.97,
+    "evidence": {
+     "page": 1,
+     "bbox": [
+      10,
+      10,
+      200,
+      30
+     ],
+     "observation_ids": [
+      "o1"
+     ]
+    }
+   },
+   "context": [
+    {
+     "type": "diagnosis",
+     "text": "Fever",
+     "relation": "same_page",
+     "quote": "Fever"
+    }
+   ]
+  }
+ ],
+ "preparation": [
+  {
+   "value": "fasting 8 hrs",
+   "status": "needs_check",
+   "confidence": 0.5,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   },
+   "reason": "held for a person",
+   "text": "fasting 8 hrs",
+   "type": "fasting",
+   "amount": 8,
+   "unit": "h",
+   "applies_to": "all",
+   "instruction": "fasting"
+  }
+ ]
+}

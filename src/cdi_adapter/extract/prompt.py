@@ -129,6 +129,16 @@ def data_line(text: Any) -> str:
     return escaped.replace("<", "\\u003c").replace(">", "\\u003e")
 
 
+def prompt_version(doc_type: str) -> str:
+    """OUT-S1 FR5: which wording asked. The first 12 characters of the SHA-256 of the prompt
+    with no page in it - the instructions alone - so any change to them changes the version,
+    and the page's own text never does."""
+    import hashlib
+
+    wording, _ = build_extraction_prompt(doc_type, [])
+    return hashlib.sha256(wording.encode()).hexdigest()[:12]
+
+
 def build_extraction_prompt(
     doc_type: str, ocr_blocks: list[dict[str, Any]]
 ) -> tuple[str, dict[str, str]]:

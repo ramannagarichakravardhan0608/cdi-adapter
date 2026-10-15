@@ -78,6 +78,30 @@ SLA_SECONDS = 300  # ADR-0002: last upload -> governed JSON/FHIR or an explicit 
 JOB_BUCKETS = (30, 60, 120, 180, 240, SLA_SECONDS, 420, 600, 900, 1800)
 JOB_SECONDS = Histogram("cdi_job_seconds", "Job time from upload to review, hold or stop",
                         buckets=JOB_BUCKETS)  # fmt: skip
+# ENT-S4 AC3: one RESULT - a document read, checked and saved - from its upload to that moment.
+# The line for "late" is CDI_RESULT_LATE_SECONDS (60 s); the 60 bucket is that line.
+RESULT_BUCKETS = (10, 20, 30, 45, 60, 90, 120, 180, 300, 600)
+RESULT_SECONDS = Histogram("cdi_result_seconds", "A document's time from upload to saved result",
+                           buckets=RESULT_BUCKETS)  # fmt: skip
+RESULTS = Counter("cdi_results_total", "Results saved")
+RESULTS_LATE = Counter("cdi_results_late_total",
+                       "Results saved later than the late line after their upload")  # fmt: skip
+
+
+def result_saved(seconds: float, late_after: float | None = None) -> bool:
+    """Count one saved result and say whether it was late (ENT-S4 AC3)."""
+    if late_after is None:
+        from cdi_adapter.config import get_settings
+
+        late_after = get_settings().result_late_seconds
+    RESULTS.inc()
+    RESULT_SECONDS.observe(max(0.0, seconds))
+    late = seconds > late_after
+    if late:
+        RESULTS_LATE.inc()
+    return late
+
+
 VLM_OOM = Counter("cdi_vlm_oom_total", "CUDA out-of-memory events in the model gateway",
                   ["where"])  # fmt: skip
 EXTRACTIONS = Counter("cdi_extractions_total", "S4 extractions by outcome", ["outcome"])
@@ -99,6 +123,9 @@ MODEL_EXTRACTIONS = Counter("cdi_model_extractions_total", "S4 extractions per s
 CANARY_FALLBACKS = Counter("cdi_model_canary_fallbacks_total",
                            "Failed canary calls sent to the primary instead")  # fmt: skip
 CANARY_PERCENT = Gauge("cdi_model_canary_percent", "Share of documents routed to the canary (%)")
+# SW-S5: a shadow candidate's answers (saved apart from the real results)
+SHADOW_ANSWERS = Counter("cdi_model_shadow_answers_total", "Shadow candidate answers",
+                         ["outcome"])  # fmt: skip
 # E10-S9: a job taken over after its runner died (lease ran out), and gateway replica failover
 JOB_RESUMES = Counter("cdi_job_resumes_total", "Stored jobs resumed by another run")
 MLSERVE_FAILOVERS = Counter("cdi_mlserve_failovers_total",
@@ -107,6 +134,9 @@ MLSERVE_FAILOVERS = Counter("cdi_mlserve_failovers_total",
 # that stopped being retried and left the queue for the dead-letter table
 JOB_DUPLICATES = Counter("cdi_job_duplicate_uploads_total",
                          "Uploads answered with an existing job (idempotency key)")  # fmt: skip
+# OUT-S3: a page whose bytes already had a result, answered with it instead of read again
+DOC_REUSED = Counter("cdi_job_documents_reused_total",
+                     "Uploaded pages answered with the result they already have")  # fmt: skip
 DEAD_LETTERS = Counter("cdi_dead_letters_total", "Work moved to the dead-letter queue", ["kind"])
 
 # every label value is known up front, so each series exists (at 0) from the first scrape
@@ -464,6 +494,39 @@ def _ts(value: Any) -> float | None:
         return dt.datetime.fromisoformat(str(value)).timestamp()
     except (TypeError, ValueError):
         return None
+
+
+class DiskCollector(Collector):
+    """``cdi_disk_free_ratio{path}`` and ``cdi_disk_free_bytes{path}`` (ENT-S4): how much room
+    is left where the scans, the backups and the logs are written. Read at scrape time; a path
+    that does not exist on this host gives nothing."""
+
+    def __init__(self, paths: list[str] | None = None,
+                 usage: Callable[[str], Any] | None = None) -> None:  # fmt: skip
+        self._paths = paths
+        self._usage = usage
+
+    def collect(self) -> Iterator[GaugeMetricFamily]:
+        import shutil
+
+        if self._paths is None:
+            from cdi_adapter.config import get_settings
+
+            listed = get_settings().disk_watch_paths
+            self._paths = [p.strip() for p in listed.split(",") if p.strip()]
+        ratio = GaugeMetricFamily("cdi_disk_free_ratio", "Share of the disk that is free",
+                                  labels=["path"])  # fmt: skip
+        free = GaugeMetricFamily("cdi_disk_free_bytes", "Bytes free on the disk", labels=["path"])
+        for path in self._paths:
+            try:
+                u = (self._usage or shutil.disk_usage)(path)
+            except OSError:
+                continue
+            if u.total:
+                ratio.add_metric([path], u.free / u.total)
+                free.add_metric([path], float(u.free))
+        yield ratio
+        yield free
 
 
 class DrCollector(Collector):

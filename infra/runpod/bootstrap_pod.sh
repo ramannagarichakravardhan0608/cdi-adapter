@@ -7,7 +7,7 @@
 #   /workspace (persistent):    repo + .venv, hf-cache, minio-data, redis AOF, backup/cdi.dump, logs
 #
 # Postgres lives on the ephemeral overlay because /workspace (MooseFS) forces 0777 and rejects
-# chown, which Postgres refuses for PGDATA. It is rebuilt and pg_restore'd from the 15-minute dump.
+# chown, which Postgres refuses for PGDATA. It is rebuilt and pg_restore'd from the 5-minute dump.
 set -euo pipefail
 
 WS=${WS:-/workspace}
@@ -229,11 +229,18 @@ if [ "$(sha256sum "$FHIR_JAR" 2>/dev/null | cut -d' ' -f1)" != "$FHIR_VALIDATOR_
 fi
 "$REPO/.venv/bin/python" "$REPO/scripts/fhir_ig.py" seed --home "$FHIR_HOME"
 
-# ---------------------------------------------------------------- 6. cron: DB snapshot every 15 min
+# ---------------------------------------------------------------- 6. cron: DB snapshot every 5 min
 service cron start >/dev/null 2>&1 || cron || true
-( crontab -l 2>/dev/null | grep -v -e 'infra/runpod/snapshot.sh' -e 'infra/runpod/golden_nightly.sh' \
-    -e 'cdi_adapter.dr drill' -e 'cdi_adapter.training export'
-  echo "*/15 * * * * bash $REPO/infra/runpod/snapshot.sh >>$WS/logs/snapshot.log 2>&1"
+# ENT-S4: after a restart the crontab is EMPTY (it lives on the overlay). `crontab -l` then
+# exits 1 and so does a grep that selects nothing; under `set -euo pipefail` that ended the
+# script right here, on every restart, and no snapshot job was installed. Both may now come
+# back empty: `|| true` on each, so the lines below are always written.
+( { crontab -l 2>/dev/null || true; } \
+    | { grep -v -e 'infra/runpod/snapshot.sh' -e 'infra/runpod/golden_nightly.sh' \
+          -e 'cdi_adapter.dr drill' -e 'cdi_adapter.training export' || true; }
+  # every 5 minutes (ENT-S4: at most about 5 minutes of rows lost on an abrupt stop). flock: a
+  # dump that is still running when the next is due is not run over
+  echo "*/5 * * * * flock -n $WS/backup/.snapshot.lock bash $REPO/infra/runpod/snapshot.sh >>$WS/logs/snapshot.log 2>&1"
   # E1-S6: nightly golden path on the real model (isolated DB + bucket; drift -> golden_alerts.log)
   echo "30 2 * * * bash $REPO/infra/runpod/golden_nightly.sh >>$WS/logs/golden.log 2>&1"
   # E4-S1: nightly export of the reviewers' decisions into the calibration training table

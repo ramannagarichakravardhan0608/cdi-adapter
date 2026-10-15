@@ -305,6 +305,15 @@ def medication_agent(document_id: str, actor: str = "agent") -> dict[str, Any]:
 
 
 @signals.worker_init.connect
+def _check_queue_server(sender: Any = None, **_: Any) -> None:
+    """SW-S6: the queue's server is the one CDI_QUEUE_SERVER names (Redis 7.2 or Valkey), and
+    its licence is in the OK state - asked of the server itself, before any task is taken."""
+    from cdi_adapter import queueserver
+
+    queueserver.check()
+
+
+@signals.worker_init.connect
 def _start_web_runner(sender: Any = None, **_: Any) -> None:
     """A worker that runs web-app jobs - either half of them (E9-S2: ``cdi-web`` is Phase 1,
     ``cdi-gpu`` is Phase 2) - starts its runner with the lease heartbeat and the orphan sweep at

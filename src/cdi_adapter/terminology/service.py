@@ -133,8 +133,16 @@ def bind_text(fact_type: str, local_text: str | None) -> Binding | None:
 
 
 def bind_fact(fact: dict[str, Any]) -> dict[str, Any]:
-    """Return the column updates for one ``clinical_fact`` row (+ ``medication`` updates)."""
+    """Return the column updates for one ``clinical_fact`` row (+ ``medication`` updates).
+
+    SW-S6: the concept is saved as THIS customer may hold it - without a SNOMED CT licence, as
+    its internal canonical term with no external code (``canonical.present``). The page's own
+    words stay in ``local_text``."""
+    from cdi_adapter.terminology import canonical
+
     b = bind_text(fact["fact_type"], fact.get("local_text"))
+    if b is not None:
+        b = Binding(canonical.present(b.concept), b.how)
     out: dict[str, Any] = {
         "code_system": b.concept.system if b else None,
         "code": b.concept.code if b else None,

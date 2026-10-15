@@ -8,6 +8,12 @@ rollout row plus an ``audit_log`` row. ``rollback`` is the one-command undo:
 - without one: return to the previous primary version, starting its gateway first when it no
   longer runs (``serve``), and switch only once it answers with that version
 
+``switch`` (SW-S5) makes a contest winner the champion in one step: the new primary takes every
+NEW document within ``CDI_MODEL_ROUTE_TTL_S`` seconds, while a document already being read keeps
+the gateway it started on (its client was chosen when it started) and finishes there; ``drain``
+then waits until no extraction is still running on the old model, so its gateway is stopped
+only when nothing needs it. The old model's files are never deleted: ``rollback`` returns to it.
+
 A side of the rollout may be served by several replicas (backlog E10-S9): ``--url`` lists them
 comma separated, e.g. ``http://127.0.0.1:8077,http://127.0.0.1:8078``. Every check then applies to
 every replica (all must serve the version), and ``serve`` starts each replica that is not up.
@@ -15,6 +21,8 @@ every replica (all must serve the version), and ``serve`` starts each replica th
 
 from __future__ import annotations
 
+import datetime as dt
+import json
 import os
 import subprocess
 import sys
@@ -282,6 +290,100 @@ def rollback(*, actor: str, reason: str | None = None, health: Health = gateway_
                               primary_version=target["version"], primary_url=prev.primary_url,
                               reason=reason or f"{st.primary_version} rolled back")  # fmt: skip
         return _record(conn, new, {"from": st.primary_version})
+
+
+KEEP_PREVIOUS_DAYS = 30  # SW-S5 FR3 (ASSUMPTION in the story): the previous model stays ready
+
+
+def contest_won(model_id: str, revision: str | None, index: Path | None = None) -> str | None:
+    """The id of the latest BINDING contest this model won (SW-S4), or None."""
+    from cdi_adapter.modelops import catalog, contest
+
+    entry = catalog.find(f"{model_id}@{revision}" if revision else model_id)
+    path = index or contest.CONTESTS / "index.jsonl"
+    if entry is None or not path.is_file():
+        return None
+    won = None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        row = json.loads(line) if line.strip() else {}
+        if (row.get("candidate") == entry.id and row.get("decision") == "promote"
+                and row.get("binding")):  # fmt: skip
+            won = row.get("contest_id")
+    return won
+
+
+def in_flight(conn: Any, version: str, stale_s: float = 3600.0) -> list[dict[str, Any]]:
+    """Extractions still running on ``version`` (started within ``stale_s``: an older run whose
+    worker died is not waited for - the job's own lease takes it over, E10-S9)."""
+    from sqlalchemy import text
+
+    rows = conn.execute(
+        text("SELECT id, document_id, started_at FROM pipeline_run WHERE stage = 'extract' "
+             "AND status = 'running' AND model_version = :v "
+             "AND started_at > now() - make_interval(secs => :s) ORDER BY started_at"),
+        {"v": version, "s": stale_s},
+    ).mappings().all()  # fmt: skip
+    return [dict(r) for r in rows]
+
+
+def drain(version: str, *, wait_s: float = 600.0, poll_s: float = 1.0, stale_s: float = 3600.0,
+          clock: Callable[[], float] = time.monotonic,
+          sleep: Callable[[float], None] = time.sleep) -> dict[str, Any]:  # fmt: skip
+    """Wait until no document is still being read by ``version``: after a switch or a rollback,
+    the old side's documents finish there. Returns what it saw; never stops a document."""
+    t0 = clock()
+    with session_scope() as conn:
+        first = in_flight(conn, version, stale_s)
+    left = first
+    while left and clock() - t0 < wait_s:
+        sleep(poll_s)
+        with session_scope() as conn:
+            left = in_flight(conn, version, stale_s)
+    return {"version": version, "running_at_switch": len(first),
+            "waited_s": round(clock() - t0, 3),
+            "still_running": [str(r["document_id"]) for r in left]}  # fmt: skip
+
+
+def switch(version: str, url: str, *, actor: str, reason: str | None = None, force: bool = False,
+           health: Health = gateway_health, contest_index: Path | None = None,
+           wait_s: float = 600.0,
+           poll_s: float = 1.0) -> tuple[RolloutState, dict[str, Any]]:  # fmt: skip
+    """The champion changed in one step (SW-S5 FR2). Refused - nothing changed - when the model
+    has no licence entry or text, when its gateway does not serve it, when a canary is running,
+    or when it has not won a binding contest (unless ``force`` with a reason, recorded). Then
+    waits for the documents still running on the old model (``drain``)."""
+    from cdi_adapter.modelops.contest import licence_refusal
+
+    with session_scope() as conn:
+        registry.lock(conn)
+        st = registry.current(conn)
+        v = _version(conn, version)
+        if st is not None and st.primary_version == version:
+            raise RolloutError(f"{version} is already the champion")
+        if st is not None and st.canary_version is not None:
+            raise RolloutError(f"{st.canary_version} is the canary: `promote` or `rollback` it "
+                               "before a switch")  # fmt: skip
+        why = licence_refusal(f"{v['model_id']}@{v['revision']}", "extraction")
+        if why:
+            raise RolloutError(f"switch refused: {why}")
+        won = contest_won(v["model_id"], v["revision"], contest_index)
+        if won is None:
+            if not force:
+                raise RolloutError(f"{version} has not won a binding contest (SW-S4); run the "
+                                   "contest first, or --force with a --reason")  # fmt: skip
+            if not reason:
+                raise RolloutError("--force needs a --reason")
+        _require_serving(url, v, health)
+        new = registry.append(conn, actor=actor, action="switch", primary_version=version,
+                              primary_url=url, reason=reason)  # fmt: skip
+        keep = (dt.date.today() + dt.timedelta(days=KEEP_PREVIOUS_DAYS)).isoformat()
+        _record(conn, new, {"from": st.primary_version if st else None, "contest": won,
+                            "forced": won is None, "keep_previous_until": keep})  # fmt: skip
+    drained = (drain(st.primary_version, wait_s=wait_s, poll_s=poll_s) if st is not None
+               else {"version": None, "running_at_switch": 0, "waited_s": 0.0,
+                     "still_running": []})  # fmt: skip
+    return new, {"previous": st.primary_version if st else None, "contest": won,
+                 "keep_previous_until": keep, "drain": drained}  # fmt: skip
 
 
 def serve(version: str, url: str, *, launch: Launch = launch_gateway,

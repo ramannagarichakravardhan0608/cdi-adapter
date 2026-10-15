@@ -129,17 +129,28 @@ groups:
           description: A MinIO drive is offline or a MinIO host does not answer; one more loss stops writes to the scan store.
           runbook_url: docs/alerts.md#cdiminiodegraded
 
-      # E10-S11: no good backup for 45 minutes (three missed 15-minute runs). The RPO target of a
-      # restore (20 minutes) is already broken.
+      # E10-S11 / ENT-S4: no good backup for 15 minutes (three missed 5-minute runs). The RPO
+      # target of a restore is already broken.
       - alert: CdiBackupStale
-        expr: time() - max(cdi_backup_last_success_timestamp_seconds) > 2700
+        expr: time() - max(cdi_backup_last_success_timestamp_seconds) > 900
         for: 5m
         labels:
           severity: page
         annotations:
-          summary: No good backup for 45 minutes.
-          description: The newest good pg_dump + object backup is more than 45 minutes old; a restore now would lose more than the RPO target.
+          summary: No good backup for 15 minutes.
+          description: The newest good pg_dump + object backup is more than 15 minutes old; a restore now would lose more than the RPO target.
           runbook_url: docs/alerts.md#cdibackupstale
+
+      # ENT-S4 AC4: the backup job RAN and FAILED. Raised at the next check, not after the
+      # staleness window: a failed run is known at once (snapshot.sh records it).
+      - alert: CdiBackupFailed
+        expr: max(cdi_backup_last_ok) == 0
+        labels:
+          severity: page
+        annotations:
+          summary: The last backup failed.
+          description: The newest run of the backup job failed; until one succeeds, a restore goes back to the last good backup and loses everything saved since.
+          runbook_url: docs/alerts.md#cdibackupfailed
 
       # E10-S11: the last restore drill failed: the backups cannot be trusted to restore.
       - alert: CdiRestoreDrillFailed
@@ -253,3 +264,26 @@ groups:
           summary: Documents are being read by the fallback model server.
           description: A model server refused calls in the last 10 minutes and they went to the next one listed; documents still finish, more slowly.
           runbook_url: docs/alerts.md#cdimodelserverfailover
+
+      # ENT-S4 AC3: results were saved later than 60 seconds after their upload
+      # (CDI_RESULT_LATE_SECONDS) in the last 10 minutes. Each one is counted where it is saved.
+      - alert: CdiResultsLate
+        expr: sum(increase(cdi_results_late_total[10m])) > 0
+        labels:
+          severity: ticket
+        annotations:
+          summary: Results are taking longer than 60 seconds.
+          description: One or more results were saved more than 60 seconds after their upload in the last 10 minutes; staff are waiting longer than the target.
+          runbook_url: docs/alerts.md#cdiresultslate
+
+      # ENT-S4: less than a tenth of a disk is free, for 5 minutes. On /workspace that is where
+      # the scans, the backups and the logs are written; a full disk stops uploads and backups.
+      - alert: CdiDiskNearlyFull
+        expr: min by (path) (cdi_disk_free_ratio) < 0.10
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: A disk is nearly full.
+          description: Less than 10% of a watched disk is free; when it fills, uploads, backups and logs stop.
+          runbook_url: docs/alerts.md#cdidisknearlyfull

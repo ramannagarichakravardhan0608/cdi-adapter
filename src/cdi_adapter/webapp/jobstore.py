@@ -35,10 +35,9 @@ import uuid
 from types import SimpleNamespace
 from typing import Any
 
-from botocore.exceptions import ClientError
 from sqlalchemy import text
 
-from cdi_adapter import metrics, repo, tracing
+from cdi_adapter import metrics, repo, storage, tracing
 from cdi_adapter.config import get_settings
 from cdi_adapter.db import session_scope
 from cdi_adapter.logging import get_logger
@@ -237,8 +236,9 @@ class PgJobStore:
             f = meta[i]
             try:
                 raw = self.objects.get_bytes(f["key"])
-            except ClientError as exc:
-                if exc.response.get("Error", {}).get("Code") in ("NoSuchKey", "404"):
+            except Exception as exc:
+                # SW-S1: "that key is gone" in whichever store is in use, asked of the store
+                if storage.missing(exc):
                     log.error("job_staged_missing", job=job.id, key=f["key"])
                     continue
                 raise

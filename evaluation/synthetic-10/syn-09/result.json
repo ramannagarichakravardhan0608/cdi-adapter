@@ -1,0 +1,243 @@
+{
+ "schema_version": "result.v1",
+ "document_id": "00000000-0000-4000-8000-000000000009",
+ "received_at": null,
+ "source": "synthetic",
+ "page_count": 1,
+ "status": "needs_check",
+ "review": {
+  "needs_check_count": 0,
+  "items": []
+ },
+ "absent": [],
+ "patient": {
+  "name": {
+   "value": "Indu Mockerjee",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  },
+  "age_text": {
+   "value": "54 Y",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  },
+  "sex": {
+   "value": "female",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  },
+  "phone": {
+   "value": "9876543218",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  },
+  "address": {
+   "value": "9 Example Road, Sampletown",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  }
+ },
+ "doctor": {
+  "name": {
+   "value": "Dr. Meera Placeholder",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  },
+  "registration_no": {
+   "value": "70001",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  },
+  "qualification": {
+   "value": "MBBS, MD",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  },
+  "department": {
+   "value": "Medicine",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  }
+ },
+ "lab_tests": [
+  {
+   "as_written": "TSH",
+   "kind": "test",
+   "match": "matched",
+   "standard": {
+    "name": "TSH",
+    "code_system": "LOINC",
+    "code": "3016-3"
+   },
+   "value": {
+    "value": "TSH",
+    "status": "accepted",
+    "confidence": 0.97,
+    "evidence": {
+     "page": 1,
+     "bbox": [
+      10,
+      10,
+      200,
+      30
+     ],
+     "observation_ids": [
+      "o1"
+     ]
+    }
+   },
+   "context": [
+    {
+     "type": "diagnosis",
+     "text": "Hypothyroidism",
+     "relation": "same_page",
+     "quote": "Hypothyroidism"
+    }
+   ]
+  },
+  {
+   "as_written": "CBC",
+   "kind": "test",
+   "match": "matched",
+   "standard": {
+    "name": "CBC",
+    "code_system": "LOINC",
+    "code": "58410-2"
+   },
+   "value": {
+    "value": "CBC",
+    "status": "accepted",
+    "confidence": 0.97,
+    "evidence": {
+     "page": 1,
+     "bbox": [
+      10,
+      10,
+      200,
+      30
+     ],
+     "observation_ids": [
+      "o1"
+     ]
+    }
+   },
+   "context": [
+    {
+     "type": "diagnosis",
+     "text": "Fever",
+     "relation": "same_page",
+     "quote": "Fever"
+    }
+   ]
+  }
+ ],
+ "preparation": []
+}

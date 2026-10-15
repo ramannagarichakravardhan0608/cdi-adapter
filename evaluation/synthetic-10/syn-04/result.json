@@ -1,0 +1,252 @@
+{
+ "schema_version": "result.v1",
+ "document_id": "00000000-0000-4000-8000-000000000004",
+ "received_at": null,
+ "source": "synthetic",
+ "page_count": 1,
+ "status": "needs_check",
+ "review": {
+  "needs_check_count": 0,
+  "items": []
+ },
+ "absent": [],
+ "patient": {
+  "name": {
+   "value": "Dev Mockerjee",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  },
+  "age_text": {
+   "value": "39 Y",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  },
+  "sex": {
+   "value": "male",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  },
+  "phone": {
+   "value": "9876543213",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  }
+ },
+ "doctor": {
+  "name": {
+   "value": "Dr. Kavya Specimen",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  },
+  "registration_no": {
+   "value": "70004",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  },
+  "qualification": {
+   "value": "MBBS",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  },
+  "department": {
+   "value": "General",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  }
+ },
+ "lab_tests": [
+  {
+   "as_written": "CBC",
+   "kind": "test",
+   "match": "matched",
+   "standard": {
+    "name": "CBC",
+    "code_system": "LOINC",
+    "code": "58410-2"
+   },
+   "value": {
+    "value": "CBC",
+    "status": "accepted",
+    "confidence": 0.97,
+    "evidence": {
+     "page": 1,
+     "bbox": [
+      10,
+      10,
+      200,
+      30
+     ],
+     "observation_ids": [
+      "o1"
+     ]
+    }
+   },
+   "context": [
+    {
+     "type": "diagnosis",
+     "text": "Fever",
+     "relation": "same_page",
+     "quote": "Fever"
+    }
+   ]
+  },
+  {
+   "as_written": "FBS",
+   "kind": "test",
+   "match": "matched",
+   "standard": {
+    "name": "FBS",
+    "code_system": "LOINC",
+    "code": "1558-6"
+   },
+   "value": {
+    "value": "FBS",
+    "status": "accepted",
+    "confidence": 0.97,
+    "evidence": {
+     "page": 1,
+     "bbox": [
+      10,
+      10,
+      200,
+      30
+     ],
+     "observation_ids": [
+      "o1"
+     ]
+    }
+   },
+   "context": [
+    {
+     "type": "diagnosis",
+     "text": "Type 2 diabetes mellitus",
+     "relation": "same_page",
+     "quote": "Type 2 diabetes mellitus"
+    }
+   ]
+  }
+ ],
+ "preparation": [
+  {
+   "value": "fasting 12 hrs",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   },
+   "text": "fasting 12 hrs",
+   "type": "fasting",
+   "amount": 12,
+   "unit": "h",
+   "applies_to": [
+    "CBC"
+   ],
+   "instruction": "fasting"
+  }
+ ]
+}

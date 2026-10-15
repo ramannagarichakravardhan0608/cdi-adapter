@@ -41,12 +41,11 @@ from cdi_adapter.fhir import resources as R
 from cdi_adapter.logging import get_logger
 from cdi_adapter.mpi.service import get_patient
 from cdi_adapter.storage import ObjectStore, get_store
-from cdi_adapter.terminology.seed import CONDITIONS
+from cdi_adapter.terminology.canonical import icd10_for
 
 log = get_logger(__name__)
 
 _NS = uuid.UUID("5d1e9a8e-7c55-4a6b-9f3e-0c2b8d7a6e41")  # CDI FHIR id namespace
-_ICD10 = {c.code: c.icd10 for c in CONDITIONS if c.icd10}
 
 
 def _ref(*parts: Any) -> str:
@@ -166,7 +165,7 @@ def assemble_document_bundle(document_id: str, doc: dict[str, Any], doc_type: st
     for f in governed:
         fid, ref, t = str(f["id"]), _ref("fact", f["id"]), f["fact_type"]
         if t == "condition":
-            add("condition", ref, R.condition({**f, "icd10": _ICD10.get(f.get("code") or "")},
+            add("condition", ref, R.condition({**f, "icd10": icd10_for(f.get("code"))},
                                               ref, p_ref, e_ref), [fid])  # fmt: skip
         elif t in ("symptom", "finding"):
             add(t, ref, R.exam_observation(f, ref, p_ref, e_ref), [fid])

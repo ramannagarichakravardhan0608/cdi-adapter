@@ -202,7 +202,8 @@ def test_ac1_the_host_has_the_trocr_route_and_names_the_checkpoint(monkeypatch) 
 def test_ac1_trocr_reads_on_the_cpu() -> None:
     source = inspect.getsource(engines.load_trocr) + inspect.getsource(engines.trocr_read)
     assert 'model.to("cpu")' in source and "cuda" not in source
-    assert "VisionEncoderDecoderModel.from_pretrained(model_id)" in source
+    # SW-S2: at its pinned revision, with no code that comes with the model
+    assert "VisionEncoderDecoderModel.from_pretrained(model_id, **pin)" in source
 
 
 # ------------------------------------------------------------------ AC2

@@ -23,7 +23,8 @@ import uuid
 from datetime import date, datetime
 from typing import Any
 
-from cdi_adapter.terminology.seed import ICD10, LOINC, ROUTE_SCT, SNOMED
+from cdi_adapter.terminology.canonical import route_coding
+from cdi_adapter.terminology.seed import ICD10, LOINC, SNOMED
 
 PROFILE_BASE = "https://nrces.in/ndhm/fhir/r4/StructureDefinition/"
 UCUM = "http://unitsofmeasure.org"
@@ -337,9 +338,9 @@ def medication_request(f, ref, pat, enc, practitioner_ref,
         dosage["timing"] = t
     if f.get("prn"):
         dosage["asNeededBoolean"] = True
-    route = ROUTE_SCT.get(str(f.get("route") or "").lower())
+    route = route_coding(f.get("route"))  # SW-S6: a SNOMED CT route only where it is licensed
     if route:
-        dosage["route"] = {"coding": [{"system": SNOMED, "code": route[0], "display": route[1]}]}
+        dosage["route"] = {"coding": [route]}
     elif f.get("route"):
         dosage["route"] = {"text": f["route"]}
     if f.get("dose_num") is not None:

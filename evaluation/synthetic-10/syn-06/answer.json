@@ -1,0 +1,55 @@
+{
+ "schema_version": "answer.v1",
+ "case_id": "syn-06",
+ "slices": {
+  "script": "printed",
+  "doctor": "known",
+  "doctor_group": "clinic-a",
+  "suite": "regression"
+ },
+ "patient": {
+  "name": "Farid Testwala",
+  "age_text": "45 Y",
+  "sex": "male",
+  "dob": null,
+  "phone": "9876543215",
+  "address": null
+ },
+ "doctor": {
+  "name": "Dr. Arun Examplewar",
+  "registration_no": "70002",
+  "qualification": null,
+  "department": "General"
+ },
+ "tests": [
+  {
+   "as_written": "LFT",
+   "standard_code": "LT0020",
+   "reasons": []
+  },
+  {
+   "as_written": "HbA1c",
+   "standard_code": "4548-4",
+   "reasons": [
+    "Type 2 diabetes mellitus"
+   ]
+  }
+ ],
+ "preparation": [],
+ "labelling": {
+  "labellers": [
+   "labeller-a (made up)",
+   "labeller-b (made up)"
+  ],
+  "disagreements": 0
+ },
+ "identity": {
+  "method": "synthetic",
+  "tool": null,
+  "checked_by": "made-up checker (synthetic set)",
+  "checked_on": "2026-10-13",
+  "readable_identity": false,
+  "note": "a made-up person and clinic; there is no picture"
+ },
+ "note": null
+}

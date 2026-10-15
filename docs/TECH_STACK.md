@@ -176,7 +176,7 @@ Compose deployment · **Declared only** = listed as a dependency but never impor
 - **What:** In-memory data store, used here as a message broker.
 - **Why:** Celery's broker and result backend for the queued pipeline.
 - **Where:** `CDI_REDIS_URL` in `config.py`; `worker.py`. On the pod `redis-server` runs natively
-  with AOF persistence in `/workspace/redis` (:6379); in compose it's `redis:7-alpine`.
+  with AOF persistence in `/workspace/redis` (:6379); in compose it's `redis:7.2-alpine` (ENT-S1: the last BSD-3 series).
 - **When:** When documents come in through the folder-watch / Celery path. **The web app's
   `/api/jobs` path doesn't use Redis today** (ARCHITECTURE §3.1, §13).
 

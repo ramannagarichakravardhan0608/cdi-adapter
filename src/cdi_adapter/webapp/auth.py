@@ -57,8 +57,13 @@ POLICY: dict[tuple[str, str], frozenset[str]] = {
     ("GET", "/readyz"): PUBLIC,  # the E10-S9 balancer's health check: booleans + instance name
     ("GET", "/login"): PUBLIC,
     ("POST", "/login"): PUBLIC,
+    # ENT-S2: single sign-on - to the identity provider, and back from it
+    ("GET", "/login/oidc"): PUBLIC,
+    ("GET", "/login/callback"): PUBLIC,
     ("POST", "/logout"): _ANY_STAFF,
     ("GET", "/api/me"): _ANY_STAFF,
+    # SW-S1: which engine and component is in use, by name and version (no content, no secret)
+    ("GET", "/api/components"): _ANY_STAFF,
     # counter: upload, follow the job, hand over the bundles, patient registry
     ("GET", "/"): _COUNTER,
     ("POST", "/api/jobs"): _COUNTER,
@@ -136,6 +141,69 @@ POLICY: dict[tuple[str, str], frozenset[str]] = {
 HOME = {_I: "/", _R: "/reviewer", _A: "/"}  # where each role lands after signing in
 _UNSAFE = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
+# ENT-S2 (FR4): what a person LOOKED AT or TOOK AWAY. (method, route) -> (what, the kind of
+# thing, the path parameter that names it). Written to audit_log after the answer went out,
+# with who, their id, when, from which address and whether it was served. Uploads and every
+# change (a correction, an approval, a merge) are written by the code that makes them.
+# Never the content: no name, no value, no file name.
+AUDITED: dict[tuple[str, str], tuple[str, str, str]] = {
+    ("GET", "/result/{document_id}"): ("result viewed", "source_document", "document_id"),
+    ("GET", "/api/documents/{document_id}/result.json"):
+        ("result viewed", "source_document", "document_id"),
+    ("GET", "/api/documents/{document_id}/result.json/download"):
+        ("result downloaded", "source_document", "document_id"),
+    ("GET", "/api/documents/{document_id}/bundle"):
+        ("FHIR bundle viewed", "source_document", "document_id"),
+    ("GET", "/api/documents/{document_id}/original"):
+        ("original document downloaded", "source_document", "document_id"),
+    ("GET", "/result/job/{job_id}"): ("result viewed", "web_job", "job_id"),
+    ("GET", "/api/jobs/{job_id}/result.json"): ("result viewed", "web_job", "job_id"),
+    ("GET", "/api/jobs/{job_id}/result.json/download"): ("result downloaded", "web_job", "job_id"),
+    ("GET", "/api/jobs/{job_id}/facts"): ("extracted values viewed", "web_job", "job_id"),
+    ("GET", "/api/jobs/{job_id}/fhir"): ("FHIR bundles viewed", "web_job", "job_id"),
+    ("GET", "/api/jobs/{job_id}/fhir/download"): ("FHIR bundles downloaded", "web_job", "job_id"),
+    ("GET", "/api/patients/{patient_id}/fhir"):
+        ("patient FHIR record viewed", "patient_identity", "patient_id"),
+    ("GET", "/api/reviewer/items/{item_id}/elements"): ("review item viewed", "rv_item", "item_id"),
+    ("GET", "/api/reviewer/items/{item_id}/bundle"): ("FHIR bundle viewed", "rv_item", "item_id"),
+    ("GET", "/api/reviewer/items/{item_id}/bundle/download"):
+        ("FHIR bundle downloaded", "rv_item", "item_id"),
+    ("GET", "/api/reviewer/c360/{mpi}"): ("patient record viewed", "patient_identity", "mpi"),
+    ("GET", "/api/monitor/documents/{document_id}"):
+        ("pipeline detail viewed", "source_document", "document_id"),
+    ("GET", "/admin"): ("data inspector opened", "admin", ""),
+}  # fmt: skip
+
+
+def client_of(request: Request) -> str | None:
+    """The address the request came from: the connection's own peer. What a proxy SAYS the
+    address was (X-Forwarded-For) can be typed by anyone, so it is not used as the address."""
+    return request.client.host if request.client else None
+
+
+def audit_access(request: Request, status: int) -> None:
+    """Write who viewed or downloaded what (see ``AUDITED``). Called after the response, and
+    never raises: a full audit table must not turn a served result into an error - it is
+    logged loudly instead."""
+    route = request.scope.get("route")
+    method = "GET" if request.method == "HEAD" else request.method
+    what = AUDITED.get((method, getattr(route, "path", "")))
+    user = current_user(request)
+    if what is None or user is None:
+        return
+    event, entity, param = what
+    try:
+        with session_scope() as c:
+            repo.write_audit(
+                c, actor=user.username, action="read", entity=entity,
+                entity_id=request.path_params.get(param) if param else None,
+                detail={"event": event, "served": 200 <= status < 300, "status": status,
+                        "role": user.role, "route": getattr(route, "path", None)},
+                actor_id=user.id, source_addr=client_of(request))  # fmt: skip
+    except Exception as exc:  # noqa: BLE001 - see above
+        log.error("audit_not_written", what=event, entity=entity, user=user.username,
+                  error=f"{type(exc).__name__}: {exc}")  # fmt: skip
+
 
 @dataclass(frozen=True)
 class User:
@@ -191,7 +259,8 @@ def verify_login(conn: Any, username: str, password: str) -> tuple[User | None, 
     s = get_settings()
     row = conn.execute(text("SELECT * FROM web_user WHERE username = :u"),
                        {"u": username.strip().lower()}).mappings().first()  # fmt: skip
-    if row is None:
+    if row is None or not row["password_hash"]:
+        # unknown, or an account of the identity system: it has no password to try (ENT-S2)
         check_password(password, _DUMMY_HASH)
         return None, "unknown user"
     if not row["active"]:
@@ -325,10 +394,11 @@ def _safe_next(target: str | None) -> str | None:
 
 
 def login_page(error: str = "", next_path: str = "") -> str:
+    from cdi_adapter.webapp import oidc
     from cdi_adapter.webapp.theme import CSS, LOGO_SVG
 
     err = f'<p class="pill bad" role=alert>{escape(error)}</p>' if error else ""
-    return (
+    head = (
         "<!doctype html><html lang=en><head><meta charset=utf-8>"
         '<meta name=viewport content="width=device-width,initial-scale=1">'
         f"<title>Sign in · CareFlow</title><style>{CSS}</style></head><body>"
@@ -336,7 +406,16 @@ def login_page(error: str = "", next_path: str = "") -> str:
         '<section class=card style="max-width:380px;margin:40px auto">'
         '<h1 style="margin-top:0">Sign in</h1>'
         "<p class=muted>Intelligent OCR driven Agentic EMR generation</p>"
-        f'{err}<form method=post action="/login">'
+    )  # fmt: skip
+    if oidc.enabled():  # ENT-S2: no password is asked for here - the organisation's sign-in
+        target = "/login/oidc" + (f"?next={quote(next_path)}" if next_path else "")
+        return (head + err + f'<a class=btn role=button href="{escape(target)}">'
+                "Sign in with your organisation account</a>"
+                "<p class=muted style=\"margin-top:14px\">You will be taken to your "
+                "organisation's sign-in page and brought back here.</p>"
+                "</section></main></body></html>")  # fmt: skip
+    return (
+        head + f'{err}<form method=post action="/login">'
         f'<input type=hidden name=next value="{escape(next_path)}">'
         '<label>Username<br><input name=username autocomplete=username required autofocus '
         'style="width:100%"></label><br><br>'
@@ -354,7 +433,11 @@ def login_form(next: str | None = None) -> str:  # noqa: A002 - the query name
 @router.post("/login")
 def login(request: Request, username: str = Form(...), password: str = Form(...),
           next: str = Form("")) -> Response:  # noqa: A002  # fmt: skip
-    client = request.client.host if request.client else None
+    from cdi_adapter.webapp import oidc
+
+    client = client_of(request)
+    if oidc.enabled():  # ENT-S2: with single sign-on there is no password door at all
+        raise HTTPException(404, "password sign-in is switched off; use /login/oidc")
     with session_scope() as c:
         user, why = verify_login(c, username, password)
         if user is None:
@@ -366,13 +449,105 @@ def login(request: Request, username: str = Form(...), password: str = Form(...)
             return HTMLResponse(login_page(msg, _safe_next(next) or ""), status_code=401)
         token = create_session(c, user, client)
         repo.write_audit(c, actor=user.username, action="create", entity="web_session",
-                         detail={"outcome": "signed_in", "role": user.role,
-                                 "client": client})  # fmt: skip
+                         detail={"outcome": "signed_in", "role": user.role, "client": client},
+                         actor_id=user.id, source_addr=client)  # fmt: skip
     resp = RedirectResponse(_safe_next(next) or HOME[user.role], status_code=303)
+    _set_session_cookie(resp, token)
+    return resp
+
+
+def _set_session_cookie(resp: Response, token: str) -> None:
     s = get_settings()
     resp.set_cookie(COOKIE, token, httponly=True, samesite="strict",
                     secure=s.session_cookie_secure, path="/",
                     max_age=s.session_max_hours * 3600)  # fmt: skip
+
+
+# ---------------------------------------------------------------- single sign-on (ENT-S2)
+
+
+def _redirect_uri(request: Request) -> str:
+    s = get_settings()
+    return s.oidc_redirect_uri or str(request.base_url).rstrip("/") + "/login/callback"
+
+
+def _sso_refused(reason: str, client: str | None, next_path: str = "") -> Response:
+    """The person is told only that it did not work; the reason goes to the audit trail."""
+    with session_scope() as c:
+        repo.write_audit(c, actor="?", action="create", entity="web_session",
+                         detail={"outcome": "refused", "reason": reason, "via": "oidc",
+                                 "client": client}, source_addr=client)  # fmt: skip
+    log.warning("sso_refused", reason=reason)
+    msg = ("Your organisation account has no role for this product. Ask an administrator."
+           if "no role" in reason else "Sign-in did not complete. Please try again.")  # fmt: skip
+    resp = HTMLResponse(login_page(msg, next_path), status_code=403 if "no role" in reason
+                        else 401)  # fmt: skip
+    resp.delete_cookie("cdi_oidc", path="/login")
+    return resp
+
+
+@router.get("/login/oidc")
+def login_oidc(request: Request, next: str | None = None) -> Response:  # noqa: A002
+    """Step 1: to the identity provider, with a one-time state, nonce and PKCE challenge."""
+    from cdi_adapter.webapp import oidc
+
+    s = get_settings()
+    if not oidc.enabled(s):
+        raise HTTPException(404, "single sign-on is not switched on")
+    try:
+        target, flow = oidc.begin(s, _redirect_uri(request), _safe_next(next) or "")
+    except oidc.SignInRefused as exc:
+        return _sso_refused(exc.reason, client_of(request))
+    resp = RedirectResponse(target, status_code=303)
+    # Lax, not Strict: the provider brings the browser back with a top-level navigation, and
+    # this cookie must come with it. It holds no session - only this one sign-in's check values.
+    resp.set_cookie(oidc.FLOW_COOKIE, flow, httponly=True, samesite="lax", path="/login",
+                    secure=s.session_cookie_secure, max_age=oidc.FLOW_SECONDS)  # fmt: skip
+    return resp
+
+
+@router.get("/login/callback")
+def login_callback(request: Request, code: str | None = None, state: str | None = None,
+                   error: str | None = None) -> Response:  # fmt: skip
+    """Steps 2-5: the provider's answer is checked, the person found or made, a session begun."""
+    from cdi_adapter.webapp import oidc
+
+    s = get_settings()
+    if not oidc.enabled(s):
+        raise HTTPException(404, "single sign-on is not switched on")
+    client = client_of(request)
+    try:
+        if error:
+            raise oidc.SignInRefused(f"the identity provider answered: {error[:80]}")
+        flow = oidc.read_flow(request.cookies.get(oidc.FLOW_COOKIE))
+        who = oidc.finish(s, code=code, state=state, flow=flow)
+    except oidc.SignInRefused as exc:
+        return _sso_refused(exc.reason, client)
+    with session_scope() as c:
+        row = oidc.upsert_user(c, who)
+        if not row["active"]:
+            repo.write_audit(c, actor=row["username"], action="create", entity="web_session",
+                             detail={"outcome": "refused", "reason": "disabled", "via": "oidc",
+                                     "client": client},
+                             actor_id=row["id"], source_addr=client)  # fmt: skip
+            return HTMLResponse(login_page("This account is disabled. Ask an administrator."),
+                                status_code=403)  # fmt: skip
+        user = User(str(row["id"]), row["username"], row["display_name"], row["role"])
+        token = create_session(c, user, client)
+        repo.write_audit(c, actor=user.username, action="create", entity="web_session",
+                         detail={"outcome": "signed_in", "role": user.role, "via": "oidc",
+                                 "client": client},
+                         actor_id=user.id, source_addr=client)  # fmt: skip
+    # A page, not a redirect: the session cookie is SameSite=Strict, and a redirect chain that
+    # began at the provider's site would not carry it. This page is ours, so its own move to
+    # the home page does.
+    home = escape(_safe_next(flow.get("next")) or HOME[user.role], quote=True)
+    resp = HTMLResponse(
+        "<!doctype html><html lang=en><head><meta charset=utf-8>"
+        f'<meta http-equiv=refresh content="0;url={home}"><title>Signed in</title></head>'
+        f'<body><p>Signed in. <a href="{home}">Continue</a></p></body></html>')  # fmt: skip
+    _set_session_cookie(resp, token)
+    resp.delete_cookie(oidc.FLOW_COOKIE, path="/login")
     return resp
 
 
@@ -383,7 +558,8 @@ def logout(request: Request) -> Response:
         end_session(c, request.cookies.get(COOKIE))
         if user:
             repo.write_audit(c, actor=user.username, action="delete", entity="web_session",
-                             detail={"outcome": "signed_out"})  # fmt: skip
+                             detail={"outcome": "signed_out"}, actor_id=user.id,
+                             source_addr=client_of(request))  # fmt: skip
     resp = RedirectResponse("/login", status_code=303)
     resp.delete_cookie(COOKIE, path="/")
     return resp

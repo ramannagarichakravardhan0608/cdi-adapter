@@ -1,0 +1,65 @@
+{
+ "schema_version": "answer.v1",
+ "case_id": "syn-02",
+ "slices": {
+  "script": "printed",
+  "doctor": "known",
+  "doctor_group": "clinic-a",
+  "suite": "regression"
+ },
+ "patient": {
+  "name": "Bimal Samplekar",
+  "age_text": "33 Y",
+  "sex": "male",
+  "dob": null,
+  "phone": "9876543211",
+  "address": null
+ },
+ "doctor": {
+  "name": "Dr. Arun Examplewar",
+  "registration_no": "70002",
+  "qualification": "MBBS",
+  "department": null
+ },
+ "tests": [
+  {
+   "as_written": "Lipid profile",
+   "standard_code": "LT0012",
+   "reasons": [
+    "Dyslipidaemia"
+   ]
+  },
+  {
+   "as_written": "TSH",
+   "standard_code": "3016-3",
+   "reasons": [
+    "Hypothyroidism"
+   ]
+  }
+ ],
+ "preparation": [
+  {
+   "text": "fasting 12 hrs",
+   "type": "fasting",
+   "amount": 12,
+   "unit": "h",
+   "applies_to": [
+    "Lipid profile"
+   ]
+  }
+ ],
+ "labelling": {
+  "labellers": [
+   "labeller-b (made up)"
+  ]
+ },
+ "identity": {
+  "method": "synthetic",
+  "tool": null,
+  "checked_by": "made-up checker (synthetic set)",
+  "checked_on": "2026-10-13",
+  "readable_identity": false,
+  "note": "a made-up person and clinic; there is no picture"
+ },
+ "note": null
+}

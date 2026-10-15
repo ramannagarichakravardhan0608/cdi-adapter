@@ -1,0 +1,8 @@
+{
+ "name": "synthetic-10",
+ "suite": "scorer self-test",
+ "sealed": false,
+ "about": "Ten MADE-UP prescriptions with made-up system outputs that carry deliberate mistakes. It proves the scorer and the gate work. It is NOT a measurement of the product: no picture was read, and no number here says how accurate the system is.",
+ "made_by": "scratch generator, 2026-10-13",
+ "real_patient_data": false
+}

@@ -36,7 +36,20 @@ class Settings(BaseSettings):
     # tasks are the same), which is what makes the broker-durability comparison a configuration
     # swap. The result backend stays on Redis either way, so the drill compares brokers only.
     broker_url: str = Field(default="", repr=False)
+    # SW-S6: which server keeps the queue at that address - "redis" (7.2 or older: BSD; later
+    # releases are not open-source) or "valkey" (BSD). The protocol is the same, so nothing else
+    # changes; the server is asked what it is at start, and a mismatch is refused.
+    queue_server: Literal["redis", "valkey"] = "redis"
 
+    # SW-S1: which object store adapter keeps the scans (cdi_adapter.storage.register). "s3" is
+    # the S3 client - MinIO, or any service that speaks the S3 API. Another adapter is named
+    # here once it passes the contract test; nothing else changes.
+    object_store: str = "s3"
+    # SW-S6: the folder the filesystem store ("fs") keeps the scans in. It must be on an
+    # encrypted volume (the scans are patient data); the store refuses to start without it.
+    file_store_root: str = ""
+    # SW-S1: which PDF renderer turns a PDF's pages into pictures (cdi_adapter.ingest.pdf.register)
+    pdf_renderer: str = "pypdfium2"
     # object store (MinIO)
     s3_endpoint_url: str = "http://127.0.0.1:9000"
     s3_access_key: str = Field(default="minioadmin", repr=False)
@@ -262,7 +275,24 @@ class Settings(BaseSettings):
     # the primary or the canary gateway from the rollout log, re-read every model_route_ttl_s
     vlm_model_revision: str | None = None
     model_version: str | None = None
+    # SW-S2: the champion of each role, named from models/registry.json (its id, or its model
+    # id). Empty: no champion - the model settings above and below are used as they are. A
+    # champion that is not registered, has no licence text saved, or whose prompt has changed
+    # since it was registered stops the service at start (modelops/catalog.py).
+    champion_extraction: str = ""
+    champion_handwriting: str = ""
+    champion_printed: str = ""
+    model_registry_path: str = ""  # empty = models/registry.json in the repository
     model_route_ttl_s: float = Field(default=5.0, ge=0)
+    # SW-S5 shadow mode: a CANDIDATE (named from models/registry.json) answers the same page as
+    # the champion, from its own gateway, after the real result is saved; its answer goes to
+    # shadow_result only - never into a result, a fact or a screen. Empty: no shadow.
+    shadow_extraction: str = ""
+    shadow_url: str = ""
+    shadow_percent: int = Field(default=100, ge=0, le=100)
+    shadow_inline: bool = False  # True: answer in the same worker (tests, a replay); else a thread
+    # SW-S5 model packs: the public key a pack's signature is checked with (an Ed25519 PEM file)
+    model_pack_public_key: str = ""
     vlm_max_pixels_ocr: int = 2_000_000
     # hf backend weights: "" = bf16 (ARCHITECTURE §3.4, the pod). "8bit" = bitsandbytes
     # LLM.int8, only for a test host below the 24 GB bar (docs/fallback-host.md): the 7B's bf16
@@ -329,6 +359,9 @@ class Settings(BaseSettings):
     # two_readers_timeout_s is given up on for that line: the line keeps its one reading and
     # goes to review.
     trocr_model_id: str = "microsoft/trocr-base-handwritten"
+    # SW-S2: TrOCR is fetched at this exact revision, never 'latest' (the revision cached on
+    # the pod on 2026-10-04, SBOM (pod) sheet)
+    trocr_model_revision: str = "eaacaf452b06415df8f10bb6fad3a4c11e609406"
     two_readers: bool = False
     two_readers_timeout_s: float = Field(default=20.0, gt=0)
     # RD-S3: deciding each handwritten line (recognition/hierarchy.py). The readers' agreement,
@@ -377,6 +410,10 @@ class Settings(BaseSettings):
     # https://nrces.in/ndhm/fhir/r4); "nrces.fhir.r4.ndhm" is not a registry id (backlog E6-S1)
     ig_package: str = "ndhm.in#6.5.0"
     terminology_package: str = "in-snomed-loinc-icd10"
+    # SW-S6: the external code systems this customer holds a licence for: "snomed", "icd10",
+    # comma separated. Empty (the default): diagnoses, medicines and allergens are saved as the
+    # page's text plus the internal canonical term, with no SNOMED CT or ICD-10 code.
+    licensed_code_systems: str = ""
 
     # HL7 FHIR validator jar (TECH_STACK §10): used when java + this jar + the pinned package
     # cache exist (backlog E6-S1). The cache holds the IG tarball and every package it pulls in,
@@ -399,6 +436,42 @@ class Settings(BaseSettings):
     # two disagree and every POST is refused; name those hostnames here, comma separated, to
     # accept them as well. An explicit list only - no wildcards, never a public deployment.
     public_origins: str = ""
+    # ENT-S2: how staff sign in. "local" = the accounts of web_user with a password (E11-S1,
+    # development and a site with no identity system). "oidc" = the organisation's identity
+    # system - Microsoft Entra ID or any OpenID Connect provider - named ONLY by the settings
+    # below: no password is asked for or stored here, and the password form is switched off.
+    auth_provider: Literal["local", "oidc"] = "local"
+    oidc_issuer: str = ""  # e.g. https://login.microsoftonline.com/<tenant>/v2.0
+    oidc_client_id: str = ""
+    # a confidential client's secret: from a file outside git (preferred) or the environment;
+    # both empty = a public client, protected by PKCE alone
+    oidc_client_secret_file: str = ""
+    oidc_client_secret: str = Field(default="", repr=False)
+    oidc_scopes: str = "openid profile email"
+    # where the provider is told to send the browser back; empty = this site's /login/callback
+    oidc_redirect_uri: str = ""
+    oidc_username_claim: str = "preferred_username"
+    # the claim that says what the person may do here, and which of its values is which role
+    # (JSON: {"<provider value>": "uploader" | "reviewer" | "admin"}); empty map = the claim
+    # holds the role names themselves. A person with none of them is refused.
+    oidc_role_claim: str = "roles"
+    oidc_role_map: str = ""
+    # ENT-S2 FR7: how many uploads one person may send in a minute (0 = no limit). Counted in
+    # the database, so it holds across every web instance.
+    upload_max_per_minute: int = Field(default=30, ge=0)
+    # EX-S1 (open question; Open Items 10): an Aadhaar number read from a page is NOT saved as
+    # a value unless this is switched on. Whether there is a legal basis to store it is
+    # counsel's decision, not an engineering one - so the default is not to.
+    store_aadhaar: bool = False
+    # ENT-S4 AC3: a result saved later than this after its upload is counted as LATE
+    # (cdi_results_late_total). 60 s is the story's own line; the 5-minute SLA is a separate one.
+    result_late_seconds: float = Field(default=60.0, gt=0)
+    # ENT-S4: the folders whose disk is watched (cdi_disk_free_ratio), comma separated
+    disk_watch_paths: str = "/workspace,/"
+    # ENT-S2 FR9: refuse to start while a credential is one of the well-known development
+    # defaults (cdi / minioadmin ...). Off by default so a developer's machine still starts;
+    # every shared deployment sets it. Always on when auth_provider is "oidc".
+    refuse_default_secrets: bool = False
 
     # de-identification before any training / evaluation use (backlog E11-S4, ARCHITECTURE §12):
     # Presidio + spaCy + a clinical de-id NER, loaded from local files at a pinned revision only

@@ -105,6 +105,55 @@ item may approve or reject it (HTTP 403 otherwise). An `admin` may decide any cl
 example when its reviewer has left; that decision is recorded under the admin's own name. The review
 pages no longer have a "Reviewer id" box; they show who is signed in.
 
+## Single sign-on with the organisation's identity system (backlog ENT-S2)
+
+Switched on by settings alone. Any OpenID Connect provider works - Microsoft Entra ID, Google,
+Keycloak, Okta - and changing provider is a change of these settings, not of code.
+
+```
+CDI_AUTH_PROVIDER=oidc
+CDI_OIDC_ISSUER=https://login.microsoftonline.com/<tenant id>/v2.0
+CDI_OIDC_CLIENT_ID=<application (client) id>
+CDI_OIDC_CLIENT_SECRET_FILE=/workspace/secrets/oidc_client_secret   # or leave empty: PKCE only
+CDI_OIDC_ROLE_CLAIM=roles
+CDI_OIDC_ROLE_MAP={"CDI.Uploader":"uploader","CDI.Reviewer":"reviewer","CDI.Admin":"admin"}
+```
+
+At the provider, register this site's address `https://<host>/login/callback` as the redirect
+address. `uploader` is the role this guide calls `intake`.
+
+What changes when it is on:
+
+- `/login` shows one button, "Sign in with your organisation account". **No password is asked
+  for and none is stored**; `POST /login` answers 404.
+- A person is known by the provider's own id for them (`sub`), never by a name. Their account is
+  made on first sign-in; their role follows the provider at every sign-in.
+- A person with none of the mapped roles is refused, and the refusal is in the audit trail.
+- The role rules of every route (the table above) and the session rules are exactly the same.
+- The web app refuses to start while a credential is still a development default
+  (`CDI_REFUSE_DEFAULT_SECRETS` does the same without single sign-on).
+
+Needs migration `0040` and the `sso` extra on the web host: `pip install -e ".[sso]"`
+(`pyjwt[crypto]`; the `listener` extra brings the same package).
+
+## Who looked at what (backlog ENT-S2)
+
+Every view and download of a result, a FHIR bundle, an original document, a review item or a
+patient record is written to `audit_log` after it is served: who (`actor`, `actor_id`), what
+(`detail.event`, e.g. "result downloaded"), which thing (`entity`, `entity_id`), when (`at`),
+from which address (`source_addr`) and whether it was served (`detail.served`). The list of
+audited routes is `AUDITED` in `src/cdi_adapter/webapp/auth.py`. No patient detail is written.
+
+```sql
+SELECT at, actor, detail->>'event' AS what, entity, entity_id, source_addr
+FROM audit_log WHERE entity_id = '<document id>' ORDER BY at;
+```
+
+## Upload limit (backlog ENT-S2)
+
+One person may send `CDI_UPLOAD_MAX_PER_MINUTE` uploads a minute (default 30; 0 = no limit).
+Over it the answer is HTTP 429 with `Retry-After: 60`, before any file is read.
+
 ## Not in this block
 
 - The ingest API `cdi_adapter.api` (`:8080`, `POST /ingest`) is internal and bound to

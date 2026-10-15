@@ -1,0 +1,55 @@
+{
+ "schema_version": "answer.v1",
+ "case_id": "syn-09",
+ "slices": {
+  "script": "printed",
+  "doctor": "known",
+  "doctor_group": "clinic-a",
+  "suite": "capability"
+ },
+ "patient": {
+  "name": "Indu Mockerjee",
+  "age_text": "54 Y",
+  "sex": "female",
+  "dob": null,
+  "phone": "9876543218",
+  "address": "9 Example Road, Sampletown"
+ },
+ "doctor": {
+  "name": "Dr. Meera Placeholder",
+  "registration_no": "70001",
+  "qualification": "MBBS, MD",
+  "department": "Medicine"
+ },
+ "tests": [
+  {
+   "as_written": "TSH",
+   "standard_code": "3016-3",
+   "reasons": [
+    "Hypothyroidism"
+   ]
+  },
+  {
+   "as_written": "CBC",
+   "standard_code": "58410-2",
+   "reasons": [
+    "Fever"
+   ]
+  }
+ ],
+ "preparation": [],
+ "labelling": {
+  "labellers": [
+   "labeller-b (made up)"
+  ]
+ },
+ "identity": {
+  "method": "synthetic",
+  "tool": null,
+  "checked_by": "made-up checker (synthetic set)",
+  "checked_on": "2026-10-13",
+  "readable_identity": false,
+  "note": "a made-up person and clinic; there is no picture"
+ },
+ "note": null
+}

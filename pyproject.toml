@@ -71,10 +71,20 @@ quant = ["llmcompressor==0.7.1.4", "qwen-vl-utils>=0.0.8", "pillow>=10.2"]
 # LS-S2 signing in to OneDrive / SharePoint (MSAL: device code, app only, token cache) and to
 # Google Drive with a service account (PyJWT signs the request). Not needed for a local folder.
 listener = ["msal>=1.28", "pyjwt[crypto]>=2.8"]
+# ENT-S2 single sign-on: checks the identity provider's signed ID token (PyJWT is MIT,
+# cryptography Apache-2.0 / BSD). Needed only where CDI_AUTH_PROVIDER=oidc; imported only then.
+sso = ["pyjwt[crypto]>=2.8"]
+# SW-S5 model packs: the Ed25519 signature a pack is made and checked with (cryptography is
+# Apache-2.0 / BSD). Needed only where a pack is made or installed; imported only then.
+modelpack = ["cryptography>=42"]
 # E1-S7 load-test harness: dev/test tool, run from a client machine, never on the pod
 load = ["locust>=2.40"]
 # torch (+CUDA) is preinstalled on the pod image and inherited via --system-site-packages
 ml = ["transformers>=4.49", "accelerate>=0.30", "qwen-vl-utils>=0.0.8", "einops>=0.7", "sentencepiece>=0.2"]
+
+# ENT-S1: the NOTICE file goes into every built package (wheel and sdist)
+[tool.setuptools]
+license-files = ["NOTICE"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

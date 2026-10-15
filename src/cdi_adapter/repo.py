@@ -46,22 +46,32 @@ def write_audit(
     entity: str,
     entity_id: str | UUID | None = None,
     detail: dict[str, Any] | None = None,
+    actor_id: str | UUID | None = None,
+    source_addr: str | None = None,
 ) -> int:
+    """``actor_id`` / ``source_addr`` (ENT-S2, migration 0040): the user's id and the address
+    the request came from. Written only when given, so every earlier caller is unchanged."""
     if action not in AUDIT_ACTIONS:
         raise ValueError(f"audit action must be one of {AUDIT_ACTIONS}, got {action!r}")
+    params: dict[str, Any] = {
+        "actor": actor,
+        "action": action,
+        "entity": entity,
+        "entity_id": str(entity_id) if entity_id is not None else None,
+        "detail": _json(detail),
+    }
+    cols = ["actor", "action", "entity", "entity_id", "detail"]
+    values = [":actor", ":action", ":entity", ":entity_id", "CAST(:detail AS jsonb)"]
+    for name, given in (("actor_id", actor_id), ("source_addr", source_addr)):
+        if given is not None:
+            cols.append(name)
+            values.append(f":{name}")
+            params[name] = str(given)
     return conn.execute(
-        text(
-            "INSERT INTO audit_log (actor, action, entity, entity_id, detail) "
-            "VALUES (:actor, :action, :entity, :entity_id, CAST(:detail AS jsonb)) RETURNING id"
-        ),
-        {
-            "actor": actor,
-            "action": action,
-            "entity": entity,
-            "entity_id": str(entity_id) if entity_id is not None else None,
-            "detail": _json(detail),
-        },
-    ).scalar_one()
+        text(f"INSERT INTO audit_log ({', '.join(cols)}) VALUES ({', '.join(values)}) "
+             "RETURNING id"),
+        params,
+    ).scalar_one()  # fmt: skip
 
 
 # ------------------------------------------------------------------ pipeline runs

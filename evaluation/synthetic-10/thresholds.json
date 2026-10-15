@@ -1,0 +1,69 @@
+{
+ "schema_version": "accuracy-thresholds.v1",
+ "about": "SELF-TEST of the scorer and the gate on ten made-up prescriptions with planted mistakes. These limits are the scores those made-up outputs give, so that any change to the scorer that moves a number is caught. They are NOT product thresholds and nobody agreed them as such.",
+ "agreed": null,
+ "allowed_drop": 0.0,
+ "limits": [
+  {
+   "group": "patient",
+   "metric": "precision_accepted",
+   "min": 0.975
+  },
+  {
+   "group": "patient",
+   "metric": "coverage",
+   "min": 0.93
+  },
+  {
+   "group": "doctor",
+   "metric": "precision_accepted",
+   "min": 1.0
+  },
+  {
+   "group": "doctor",
+   "metric": "coverage",
+   "min": 1.0
+  },
+  {
+   "group": "tests",
+   "metric": "precision_accepted",
+   "min": 0.95
+  },
+  {
+   "group": "tests",
+   "metric": "coverage",
+   "min": 1.0
+  },
+  {
+   "group": "tests",
+   "metric": "f1",
+   "min": 0.974
+  },
+  {
+   "group": "preparation",
+   "metric": "precision_accepted",
+   "min": 0.857
+  },
+  {
+   "group": "preparation",
+   "metric": "coverage",
+   "min": 0.875
+  },
+  {
+   "group": "context",
+   "metric": "prep_to_test.error_rate",
+   "max": 0.125
+  },
+  {
+   "group": "context",
+   "metric": "test_to_reason.error_rate",
+   "max": 0.059
+  },
+  {
+   "group": "all",
+   "metric": "standard_name_accuracy",
+   "min": 0.947
+  }
+ ],
+ "claims": []
+}

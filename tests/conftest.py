@@ -59,6 +59,16 @@ for _name in ("CDI_GRAPH_CLIENT_ID", "CDI_GRAPH_TENANT_ID", "CDI_GRAPH_CLIENT_SE
               "CDI_GRAPH_CLIENT_SECRET_FILE", "CDI_GRAPH_CLIENT_CERT_FILE",
               "CDI_GDRIVE_SERVICE_ACCOUNT_FILE"):  # fmt: skip
     os.environ[_name] = ""
+# ENT-S2: the tests sign in with local test accounts whatever the developer's .env says, and
+# the per-person upload limit - which counts in the database on every upload - is off, so a
+# suite that drives the upload route with no database does not wait for one. The limit and
+# single sign-on are switched on, by name, in the tests that are about them.
+os.environ["CDI_AUTH_PROVIDER"] = "local"
+os.environ["CDI_UPLOAD_MAX_PER_MINUTE"] = "0"
+# SW-S6: the product's default is NO SNOMED CT / ICD-10 (no licence). The suites written before
+# SW-S6 check the coded output, so they run as a customer who holds both licences; the tests of
+# the default (tests/test_sw_s6_acceptance_unit.py) switch it off by name.
+os.environ.setdefault("CDI_LICENSED_CODE_SYSTEMS", "snomed,icd10")
 
 # Suites that drive the job runner with placeholder bytes (``b"x"``) to test *orchestration* -
 # ordering, retries, batching, tracing, leases. They are not pictures, so with the picture check
@@ -68,7 +78,8 @@ for _name in ("CDI_GRAPH_CLIENT_ID", "CDI_GRAPH_TENANT_ID", "CDI_GRAPH_CLIENT_SE
 # test_upload_quality_unit, the *_acceptance_unit suites).
 PLACEHOLDER_UPLOADS = {"test_jobs_unit", "test_batch_unit", "test_tracing_unit",
                        "test_epic2_unit", "test_pool_split_unit", "test_metrics_unit",
-                       "test_apptier_unit", "test_monitoring_unit"}  # fmt: skip
+                       "test_apptier_unit", "test_monitoring_unit",
+                       "test_out_s3_acceptance_unit"}  # fmt: skip
 
 
 @pytest.fixture(autouse=True)

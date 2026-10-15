@@ -1,0 +1,8 @@
+{
+  "about": "File names of NVIDIA libraries an INSTALLED-version package may carry: only those listed in the CUDA / cuDNN EULA's redistributable attachment.",
+  "status": "NOT ESTABLISHED. The Licence Register (2026-10-04) records that the EULA text was not read in full and the exact files were not listed. Until someone reads the EULA and lists the files here, the list is empty - so an installed package may contain NO NVIDIA file (scripts/licence_audit.py inspect fails on any). The customer's machine then provides the driver and CUDA runtime itself.",
+  "read_by": null,
+  "read_on": null,
+  "eula_version": null,
+  "files": []
+}

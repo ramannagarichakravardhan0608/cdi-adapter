@@ -1,0 +1,34 @@
+{
+ "schema_version": "accuracy-thresholds.v1",
+ "about": "PRODUCT thresholds for the real answer-key set (ENT-S3). To be written down BEFORE the run and agreed by the product owner and a clinician (NFR3). Nothing here was set by guess: the limits are empty until they are agreed, and the one claim is the story's own target, marked 'to confirm'.",
+ "agreed": {
+  "owner": null,
+  "clinician": null,
+  "date": null
+ },
+ "allowed_drop": null,
+ "allowed_drop_note": "The Accuracy Plan's forgetting guard assumes 1.0 point; the owner decides.",
+ "limits": [],
+ "claims": [
+  {
+   "group": "patient",
+   "target": 0.99,
+   "status": "target to confirm (story NFR4)"
+  },
+  {
+   "group": "doctor",
+   "target": 0.99,
+   "status": "target to confirm (story NFR4)"
+  },
+  {
+   "group": "tests",
+   "target": 0.99,
+   "status": "target to confirm (story NFR4)"
+  },
+  {
+   "group": "preparation",
+   "target": 0.99,
+   "status": "target to confirm (story NFR4)"
+  }
+ ]
+}

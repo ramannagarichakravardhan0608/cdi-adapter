@@ -1,0 +1,186 @@
+{
+ "schema_version": "result.v1",
+ "document_id": "00000000-0000-4000-8000-000000000006",
+ "received_at": null,
+ "source": "synthetic",
+ "page_count": 1,
+ "status": "needs_check",
+ "review": {
+  "needs_check_count": 0,
+  "items": []
+ },
+ "absent": [],
+ "patient": {
+  "name": {
+   "value": "Farid Testwala",
+   "status": "needs_check",
+   "confidence": 0.62,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   },
+   "reason": "low confidence"
+  },
+  "age_text": {
+   "value": "45 Y",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  },
+  "sex": {
+   "value": "male",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  },
+  "phone": {
+   "value": "9876543215",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  }
+ },
+ "doctor": {
+  "name": {
+   "value": "Dr. Arun Examplewar",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  },
+  "department": {
+   "value": "General",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  }
+ },
+ "lab_tests": [
+  {
+   "as_written": "LFT",
+   "kind": "test",
+   "match": "matched",
+   "standard": {
+    "name": "LFT",
+    "code_system": "LOINC",
+    "code": "LT0020"
+   },
+   "value": {
+    "value": "LFT",
+    "status": "accepted",
+    "confidence": 0.97,
+    "evidence": {
+     "page": 1,
+     "bbox": [
+      10,
+      10,
+      200,
+      30
+     ],
+     "observation_ids": [
+      "o1"
+     ]
+    }
+   },
+   "context": []
+  },
+  {
+   "as_written": "HbA1c",
+   "kind": "test",
+   "match": "matched",
+   "standard": {
+    "name": "HbA1c",
+    "code_system": "LOINC",
+    "code": "4548-4"
+   },
+   "value": {
+    "value": "HbA1c",
+    "status": "accepted",
+    "confidence": 0.97,
+    "evidence": {
+     "page": 1,
+     "bbox": [
+      10,
+      10,
+      200,
+      30
+     ],
+     "observation_ids": [
+      "o1"
+     ]
+    }
+   },
+   "context": [
+    {
+     "type": "diagnosis",
+     "text": "Type 2 diabetes mellitus",
+     "relation": "same_page",
+     "quote": "Type 2 diabetes mellitus"
+    }
+   ]
+  }
+ ],
+ "preparation": []
+}

@@ -99,6 +99,12 @@ class _Conn:
     def scalar_one_or_none(self) -> None:
         return None
 
+    def mappings(self) -> Any:  # OUT-S1 reads the document's facts back: none here
+        return self
+
+    def all(self) -> list[Any]:
+        return []
+
 
 @pytest.fixture
 def saved(monkeypatch) -> dict[str, Any]:
@@ -400,3 +406,113 @@ def test_only_a_prescription_gets_patient_detail_facts() -> None:
     lab = {"confidence": 0.9, "tests": [], "patient": {"name": "Ravi Kumar", "phone": "98765"}}
     assert [f for f in facts_from_payload("lab_report", lab)
             if f.fact_type == "patient_detail"] == []  # fmt: skip
+
+
+# =====================================================================================
+# the story's open question: an Aadhaar number must not be stored without a legal basis
+# =====================================================================================
+
+AADHAAR = "2345 6789 0124"  # made up; twelve digits with a valid check digit
+NOT_ONE = "2345 6789 0123"  # the same with a wrong check digit: an ordinary number
+
+
+def test_aadhaar_a_number_of_that_form_is_recognised_and_an_ordinary_one_is_not() -> None:
+    assert P.is_aadhaar(AADHAAR) and P.is_aadhaar("234567890124")
+    assert not P.is_aadhaar(NOT_ONE)
+    assert not P.is_aadhaar("1234 5678 9012"), "an Aadhaar number never starts with 0 or 1"
+    assert not P.is_aadhaar("91-1234-5678-9012"), "an ABHA number has fourteen digits"
+    assert not P.is_aadhaar("98765 43210") and not P.is_aadhaar("") and not P.is_aadhaar(None)
+
+
+@pytest.mark.parametrize("field", ["mrn", "abha"])
+def test_aadhaar_given_as_an_id_is_not_saved_as_a_value(field: str) -> None:
+    payload = P.withhold_aadhaar(_payload(name="Ravi Kumar", **{field: AADHAAR}), store=False)
+    assert payload["patient"][field] is None
+    assert payload["_withheld"] == [{"field": f"patient.{field}", "kind": "aadhaar",
+                                     "why": "an Aadhaar number is not stored without a legal "
+                                            "basis"}]  # fmt: skip
+    details = _details(payload)
+    assert "hospital number" not in details and "abha number" not in details
+    assert details["name"].value_text == "Ravi Kumar", "the rest of the patient is untouched"
+
+
+def test_aadhaar_the_note_never_holds_the_number_itself() -> None:
+    payload = P.withhold_aadhaar(_payload(name="Ravi Kumar", mrn=f"Aadhaar: {AADHAAR}"),
+                                 store=False)  # fmt: skip
+    assert payload["patient"]["mrn"] is None, "a label and the number: the detail is not there"
+    said = json.dumps(payload)
+    assert "0124" not in said and "234567890124" not in said.replace(" ", "")
+
+
+def test_aadhaar_inside_an_address_is_taken_out_and_the_address_kept() -> None:
+    address = f"12 Lake Road, Kolkata 700029, Aadhaar {AADHAAR}"
+    payload = P.withhold_aadhaar(_payload(name="Ravi Kumar", address=address), store=False)
+    kept = payload["patient"]["address"]
+    assert kept == f"12 Lake Road, Kolkata 700029, Aadhaar {P.AADHAAR_WITHHELD}"
+    assert payload["_withheld"][0]["field"] == "patient.address"
+
+
+def test_aadhaar_the_models_own_words_are_cleaned_too() -> None:
+    payload = _payload(name="Ravi Kumar", mrn=AADHAAR)
+    payload["_raw_answer"] = '{"patient": {"name": "Ravi Kumar", "mrn": "234567890124"}}'
+    cleaned = P.withhold_aadhaar(payload, store=False)["_raw_answer"]
+    assert "234567890124" not in cleaned and P.AADHAAR_WITHHELD in cleaned
+    assert "Ravi Kumar" in cleaned
+
+
+def test_aadhaar_an_ordinary_number_and_a_phone_with_91_are_left_alone() -> None:
+    payload = _payload(name="Ravi Kumar", mrn=NOT_ONE, phone="91 98765 43216",
+                       abha="91-1234-5678-9012", age_text="42 Y")  # fmt: skip
+    assert P.is_aadhaar("919876543216"), "this phone, with 91, happens to pass the check digit"
+    out = P.withhold_aadhaar(json.loads(json.dumps(payload)), store=False)
+    assert out == payload and "_withheld" not in out
+
+
+def test_aadhaar_nothing_of_it_reaches_the_database(saved, monkeypatch) -> None:
+    written: dict[str, Any] = {}
+    monkeypatch.setattr(X.repo, "insert_extraction",
+                        lambda conn, **k: written.update(k) or "ext-1")  # fmt: skip
+    payload = _payload(name="Ravi Kumar", mrn=AADHAAR, phone="98765 43210")
+    payload["_raw_answer"] = f'{{"mrn": "{AADHAAR}"}}'
+    _write(payload)
+    everything = json.dumps([written["payload"], saved["facts"], saved["proof"]], default=str)
+    assert "0124" not in everything, "not as a value, not in the saved answer, not in a proof"
+    labels = [f["local_text"] for f in saved["facts"] if f["fact_type"] == "patient_detail"]
+    assert "hospital number" not in labels and "name" in labels and "phone" in labels
+    assert written["payload"]["_withheld"][0]["kind"] == "aadhaar"
+
+
+def test_aadhaar_it_is_stored_only_when_the_owner_says_there_is_a_legal_basis() -> None:
+    assert Settings.model_fields["store_aadhaar"].default is False
+    payload = _payload(name="Ravi Kumar", mrn=AADHAAR)
+    assert P.withhold_aadhaar(json.loads(json.dumps(payload)), store=True) == payload
+    assert "store_aadhaar" in Path(X.__file__).with_name("patient.py").read_text("utf-8")
+
+
+def test_aadhaar_the_log_line_names_the_field_never_the_number(saved, monkeypatch) -> None:
+    logged: list[dict[str, Any]] = []
+    monkeypatch.setattr(X.log, "warning", lambda event, **k: logged.append({"event": event, **k}))
+    _write(_payload(name="Ravi Kumar", mrn=AADHAAR))
+    line = next(entry for entry in logged if entry["event"] == "aadhaar_not_stored")
+    assert line["fields"] == ["patient.mrn"] and "0124" not in json.dumps(line)
+
+
+@pytest.mark.xfail(strict=True, reason="The PICTURE and its OCR lines still show an Aadhaar "
+                   "number that is on the page: only the extracted value and the saved answer "
+                   "are cleaned. Blanking it in the stored picture is a separate decision "
+                   "(counsel, Open Items 10).")
+def test_aadhaar_is_also_removed_from_the_stored_picture_and_its_ocr_lines() -> None:
+    assert "withhold_aadhaar" in (Path(X.__file__).parents[1] / "ocr" / "service.py").read_text(
+        encoding="utf-8")  # fmt: skip
+
+
+def test_fr4_the_result_never_shows_a_birth_date_worked_out_from_an_age() -> None:
+    """An identity made from an age keeps 1 January of the estimated year, for matching. The
+    result asks for a date of birth only where a document or the registry holds that date."""
+    import inspect
+
+    sql = " ".join(inspect.getsource(result._patient_record).split())
+    assert "CASE WHEN EXISTS (SELECT 1 FROM patient_identity_alias a" in sql
+    assert "a.birth_date = i.birth_date" in sql and "patient_registry r" in sql
+    assert "THEN i.birth_date END AS birth_date" in sql
+

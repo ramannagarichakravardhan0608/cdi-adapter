@@ -1,0 +1,198 @@
+{
+  "absent": [
+    "engines"
+  ],
+  "context_rules_version": "indication-groups.2026-10-12.1",
+  "diagnoses": [
+    {
+      "canonical_term": "Type 2 diabetes mellitus",
+      "external_codes": [
+        {
+          "code": "44054006",
+          "system": "http://snomed.info/sct"
+        }
+      ],
+      "raw_text": "Type 2 diabetes mellitus",
+      "value": {
+        "confidence": 0.965,
+        "evidence": {
+          "bbox": [
+            100,
+            260,
+            1200,
+            290
+          ],
+          "observation_ids": [
+            "00adf755-5aae-478f-9cfe-b918ccfc37c4"
+          ],
+          "page": 1
+        },
+        "status": "accepted",
+        "value": "Type 2 diabetes mellitus"
+      }
+    }
+  ],
+  "doctor": {
+    "link": {
+      "confidence": null,
+      "method": "unknown",
+      "practitioner_id": null,
+      "why": "no doctor information on the page"
+    },
+    "signature_present": null,
+    "stamp_present": null
+  },
+  "document": {
+    "source": {
+      "channel": "upload",
+      "drive": null,
+      "file_name": "rx.pdf",
+      "folder": null
+    }
+  },
+  "document_id": "ae16cb3d-0dbd-41c8-a39f-590a4314e351",
+  "lab_master_version": "lab-master.2026-10-12.1",
+  "lab_tests": [
+    {
+      "as_written": "HbA1c",
+      "context": [
+        {
+          "evidence": {
+            "bbox": [
+              100,
+              260,
+              1200,
+              290
+            ],
+            "observation_ids": [
+              "00adf755-5aae-478f-9cfe-b918ccfc37c4"
+            ],
+            "page": 1
+          },
+          "fits": true,
+          "quote": "Type 2 diabetes mellitus",
+          "relation": "same_page",
+          "text": "Type 2 diabetes mellitus",
+          "type": "diagnosis"
+        }
+      ],
+      "kind": "test",
+      "match": "matched",
+      "matched_by": "alias",
+      "preparation_refs": [],
+      "specimen": "blood",
+      "standard": {
+        "code": "4548-4",
+        "code_system": "http://loinc.org",
+        "name": "Hemoglobin A1c/Hemoglobin.total in Blood"
+      },
+      "urgency": null,
+      "value": {
+        "confidence": 0.965,
+        "evidence": {
+          "bbox": [
+            100,
+            300,
+            1200,
+            330
+          ],
+          "observation_ids": [
+            "2ec264fc-195a-4ef5-a70f-678871105c8f"
+          ],
+          "page": 1
+        },
+        "status": "accepted",
+        "value": "HbA1c"
+      }
+    }
+  ],
+  "page_count": 0,
+  "patient": {
+    "age_text": {
+      "confidence": 0.965,
+      "evidence": {
+        "bbox": [
+          100,
+          140,
+          1200,
+          170
+        ],
+        "observation_ids": [
+          "0e68f38a-39c8-4108-9969-61b5ef25f16e"
+        ],
+        "page": 1
+      },
+      "status": "accepted",
+      "value": "42 Y"
+    },
+    "ids": [
+      {
+        "type": "mpi_id",
+        "value": "CFP-2026-000001"
+      }
+    ],
+    "name": {
+      "confidence": 0.965,
+      "evidence": {
+        "bbox": [
+          100,
+          140,
+          1200,
+          170
+        ],
+        "observation_ids": [
+          "0e68f38a-39c8-4108-9969-61b5ef25f16e"
+        ],
+        "page": 1
+      },
+      "status": "accepted",
+      "value": "Ravi Testloklfcpm"
+    },
+    "phone": {
+      "confidence": 0.965,
+      "evidence": {
+        "bbox": [
+          100,
+          180,
+          1200,
+          210
+        ],
+        "observation_ids": [
+          "a106e94b-3617-49ae-bde8-9805cafa7678"
+        ],
+        "page": 1
+      },
+      "status": "accepted",
+      "value": "98765 43210"
+    },
+    "sex": {
+      "confidence": 0.965,
+      "evidence": {
+        "bbox": [
+          100,
+          140,
+          1200,
+          170
+        ],
+        "observation_ids": [
+          "0e68f38a-39c8-4108-9969-61b5ef25f16e"
+        ],
+        "page": 1
+      },
+      "status": "accepted",
+      "value": "M"
+    }
+  },
+  "preparation": [],
+  "preparation_phrases_version": null,
+  "received_at": "2026-10-13T19:07:57.758879+05:30",
+  "review": {
+    "items": [],
+    "needs_check_count": 0
+  },
+  "schema_version": "result.v1",
+  "source": "upload_screen",
+  "status": "complete",
+  "status_reason": null,
+  "visit": {}
+}

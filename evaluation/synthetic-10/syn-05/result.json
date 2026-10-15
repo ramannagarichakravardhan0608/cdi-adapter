@@ -1,0 +1,292 @@
+{
+ "schema_version": "result.v1",
+ "document_id": "00000000-0000-4000-8000-000000000005",
+ "received_at": null,
+ "source": "synthetic",
+ "page_count": 1,
+ "status": "needs_check",
+ "review": {
+  "needs_check_count": 0,
+  "items": []
+ },
+ "absent": [],
+ "patient": {
+  "name": {
+   "value": "Esha Fakenath",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  },
+  "age_text": {
+   "value": "42 Y",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  },
+  "sex": {
+   "value": "female",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  },
+  "phone": {
+   "value": "9876543214",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  },
+  "address": {
+   "value": "5 Example Road, Sampletown",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  }
+ },
+ "doctor": {
+  "name": {
+   "value": "Dr. Meera Placeholder",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  },
+  "registration_no": {
+   "value": "70001",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  },
+  "qualification": {
+   "value": "MBBS, MD",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  },
+  "department": {
+   "value": "Medicine",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   }
+  }
+ },
+ "lab_tests": [
+  {
+   "as_written": "FBS",
+   "kind": "test",
+   "match": "matched",
+   "standard": {
+    "name": "FBS",
+    "code_system": "LOINC",
+    "code": "9999-9"
+   },
+   "value": {
+    "value": "FBS",
+    "status": "accepted",
+    "confidence": 0.97,
+    "evidence": {
+     "page": 1,
+     "bbox": [
+      10,
+      10,
+      200,
+      30
+     ],
+     "observation_ids": [
+      "o1"
+     ]
+    }
+   },
+   "context": [
+    {
+     "type": "diagnosis",
+     "text": "Type 2 diabetes mellitus",
+     "relation": "same_page",
+     "quote": "Type 2 diabetes mellitus"
+    }
+   ]
+  },
+  {
+   "as_written": "LFT",
+   "kind": "test",
+   "match": "matched",
+   "standard": {
+    "name": "LFT",
+    "code_system": "LOINC",
+    "code": "LT0020"
+   },
+   "value": {
+    "value": "LFT",
+    "status": "accepted",
+    "confidence": 0.97,
+    "evidence": {
+     "page": 1,
+     "bbox": [
+      10,
+      10,
+      200,
+      30
+     ],
+     "observation_ids": [
+      "o1"
+     ]
+    }
+   },
+   "context": [
+    {
+     "type": "diagnosis",
+     "text": "Anaemia",
+     "relation": "same_page",
+     "quote": "Anaemia"
+    }
+   ]
+  }
+ ],
+ "preparation": [
+  {
+   "value": "fasting 12 hrs",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   },
+   "text": "fasting 12 hrs",
+   "type": "fasting",
+   "amount": 12,
+   "unit": "h",
+   "applies_to": [
+    "FBS"
+   ],
+   "instruction": "fasting"
+  },
+  {
+   "value": "bring old reports",
+   "status": "accepted",
+   "confidence": 0.97,
+   "evidence": {
+    "page": 1,
+    "bbox": [
+     10,
+     10,
+     200,
+     30
+    ],
+    "observation_ids": [
+     "o1"
+    ]
+   },
+   "text": "bring old reports",
+   "type": "bring_documents",
+   "amount": null,
+   "unit": null,
+   "applies_to": "all",
+   "instruction": "bring_documents"
+  }
+ ]
+}

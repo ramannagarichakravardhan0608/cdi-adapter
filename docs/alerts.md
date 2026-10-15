@@ -19,7 +19,10 @@ who is not at a screen is told.
 | [CdiPgReplicationLag](#cdipgreplicationlag) | page | the Postgres standby is more than 30 s behind, for 2 min |
 | [CdiPgStandbyDisconnected](#cdipgstandbydisconnected) | ticket | a replication slot has had no standby on it for 5 min |
 | [CdiMinioDegraded](#cdiminiodegraded) | ticket | a MinIO drive is offline, or a host of a multi-host set does not answer, for 2 min |
-| [CdiBackupStale](#cdibackupstale) | page | no good backup (pg_dump + objects) for 45 min |
+| [CdiBackupStale](#cdibackupstale) | page | no good backup (pg_dump + objects) for 15 min |
+| [CdiBackupFailed](#cdibackupfailed) | page | the newest run of the backup job failed |
+| [CdiResultsLate](#cdiresultslate) | ticket | a result was saved more than 60 s after its upload, in the last 10 min |
+| [CdiDiskNearlyFull](#cdidisknearlyfull) | page | less than 10% of a watched disk free for 5 min |
 | [CdiRestoreDrillFailed](#cdirestoredrillfailed) | page | the last restore drill failed |
 | [CdiRestoreDrillOverdue](#cdirestoredrilloverdue) | ticket | no restore drill for 8 days |
 | [CdiConfidenceDrift](#cdiconfidencedrift) | ticket | the fact-confidence distribution of the last 6 h differs from the 7 days before it (Kolmogorov-Smirnov distance > 0.25, at least 50 facts), for 30 min |
@@ -175,8 +178,8 @@ writes** to the scan store.
 
 ## CdiBackupStale
 
-No good backup for 45 minutes (backlog E10-S11). `snapshot.sh` runs every 15 minutes; three have
-failed or not run. A restore now would lose more than the RPO target (20 minutes).
+No good backup for 15 minutes (backlog E10-S11, ENT-S4). `snapshot.sh` runs every 5 minutes;
+three have failed or not run. A restore now would lose more than the RPO target.
 
 1. `python -m cdi_adapter.dr status`: the `error` of the last run, and `last_success_at`.
 2. `tail -50 $WS/logs/snapshot.log`: the failing step (`pg_dump`, the dump check, or the object
@@ -184,6 +187,45 @@ failed or not run. A restore now would lose more than the RPO target (20 minutes
 3. Not running at all: `crontab -l` (the bootstrap installs it), and whether `cron` runs.
 4. Disk full on `/workspace` (`df -h`): the dumps keep 10; old `restore-*.json` reports can go.
 5. Run it by hand once fixed: `bash $REPO/infra/runpod/snapshot.sh`, then check the alert clears.
+
+## CdiBackupFailed
+
+The newest run of the backup job failed (backlog ENT-S4). `snapshot.sh` records a failure the
+moment it happens, so this fires at the next check - it does not wait for the staleness window.
+Until a run succeeds, a restore goes back to the last good backup.
+
+1. `python -m cdi_adapter.dr status`: the `error` of the last run says which step failed.
+2. `tail -50 $WS/logs/snapshot.log`: `pg_dump` (is Postgres up?), the dump check, or the object
+   copy (is MinIO up?).
+3. Disk full on `/workspace` (`df -h`) is the usual cause: see [CdiDiskNearlyFull](#cdidisknearlyfull).
+4. Run it by hand once fixed: `bash $REPO/infra/runpod/snapshot.sh`. The alert clears when
+   that run succeeds.
+
+## CdiResultsLate
+
+One or more results were saved more than 60 seconds after their upload in the last 10 minutes
+(backlog ENT-S4; the line is `CDI_RESULT_LATE_SECONDS`). Nothing is lost and nothing is wrong
+with those results; staff waited longer than the target.
+
+1. Is the model server answering? See [CdiModelServerDown](#cdimodelserverdown) and
+   [CdiModelServerFailover](#cdimodelserverfailover): the serial fallback server is much slower.
+2. Is there a queue? `cdi_extract_waiting` on the dashboard; see [CdiQueueBacklog](#cdiqueuebacklog).
+3. Which stage is slow: `cdi_stage_seconds` by stage (ingest, ocr, extract, validate).
+4. `grep result_late $WS/logs/webapp-*.log`: the jobs and how long each took.
+5. Never skip a check or accept a value to make a result faster.
+
+## CdiDiskNearlyFull
+
+Less than 10% of a watched disk is free (backlog ENT-S4; the paths are `CDI_DISK_WATCH_PATHS`).
+On `/workspace` a full disk stops uploads, backups and logs.
+
+1. `df -h` and `du -sh $WS/* | sort -h`: what is taking the room.
+2. Safe to remove: old logs in `$WS/logs` (not today's), old `restore-*.json` drill reports,
+   model caches of versions no longer served (`$WS/hf-cache`).
+3. Never remove: `$WS/minio-data` (the scans), `$WS/backup` (the dumps keep only the last 10
+   by themselves), `$WS/redis`.
+4. If the scans themselves fill the disk, the volume has to grow: that is a capacity decision,
+   not a clean-up.
 
 ## CdiRestoreDrillFailed
 

@@ -1,0 +1,65 @@
+{
+ "schema_version": "answer.v1",
+ "case_id": "syn-01",
+ "slices": {
+  "script": "handwritten",
+  "doctor": "known",
+  "doctor_group": "clinic-a",
+  "suite": "capability"
+ },
+ "patient": {
+  "name": "Asha Testwala",
+  "age_text": "30 Y",
+  "sex": "female",
+  "dob": null,
+  "phone": "9876543210",
+  "address": "1 Example Road, Sampletown"
+ },
+ "doctor": {
+  "name": "Dr. Meera Placeholder",
+  "registration_no": "70001",
+  "qualification": "MBBS, MD",
+  "department": "Medicine"
+ },
+ "tests": [
+  {
+   "as_written": "HbA1c",
+   "standard_code": "4548-4",
+   "reasons": [
+    "Type 2 diabetes mellitus"
+   ]
+  },
+  {
+   "as_written": "Lipid profile",
+   "standard_code": "LT0012",
+   "reasons": [
+    "Dyslipidaemia"
+   ]
+  }
+ ],
+ "preparation": [
+  {
+   "text": "fasting 12 hrs",
+   "type": "fasting",
+   "amount": 12,
+   "unit": "h",
+   "applies_to": [
+    "Lipid profile"
+   ]
+  }
+ ],
+ "labelling": {
+  "labellers": [
+   "labeller-b (made up)"
+  ]
+ },
+ "identity": {
+  "method": "synthetic",
+  "tool": null,
+  "checked_by": "made-up checker (synthetic set)",
+  "checked_on": "2026-10-13",
+  "readable_identity": false,
+  "note": "a made-up person and clinic; there is no picture"
+ },
+ "note": null
+}

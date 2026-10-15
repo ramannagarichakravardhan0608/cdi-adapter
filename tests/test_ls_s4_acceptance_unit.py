@@ -436,7 +436,10 @@ def test_the_pods_locked_requirements_have_been_updated() -> None:
 
 def test_ingest_records_the_renderer_it_used() -> None:
     source = (SRC / "ingest" / "service.py").read_text(encoding="utf-8")
-    assert "pymupdf" not in source and "model_name=pages.pdf.renderer().name" in source
+    # SW-S1: the name AND the version of what made the pages (the renderer for a PDF)
+    assert "pymupdf" not in source and "pages.pdf.describe(mime)" in source
+    assert "model_name=maker" in source and "model_version=maker_version" in source
+    assert pdf.describe("application/pdf") == ("pypdfium2", pdf.renderer().version)
 
 
 def test_handwriting_is_read_by_whatever_the_screen_uses_not_a_listener_copy() -> None:

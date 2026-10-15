@@ -38,17 +38,25 @@ from cdi_adapter.extract.doctor import FACT_TYPE as DOCTOR_DETAIL
 from cdi_adapter.extract.doctor import stamp_of, with_doctor, with_stamp
 from cdi_adapter.extract.facts import ENCOUNTER_DATE_KEYS, FactDraft, facts_from_payload
 from cdi_adapter.extract.patient import FACT_TYPE as PATIENT_DETAIL
-from cdi_adapter.extract.patient import proof_blocks
+from cdi_adapter.extract.patient import proof_blocks, withhold_aadhaar
 from cdi_adapter.extract.prompt import (
     SCHEMA_FOR_DOC_TYPE,
     build_extraction_prompt,
     max_tokens_for,
 )
 from cdi_adapter.logging import get_logger
-from cdi_adapter.ml.client import JsonRequest, MLClient, client_for, get_client, is_partial
+from cdi_adapter.ml.client import (
+    JsonRequest,
+    MLClient,
+    client_for,
+    get_client,
+    is_partial,
+    keep_raw,
+)  # fmt: skip
 from cdi_adapter.modelops import router
 from cdi_adapter.modelops.router import Route
 from cdi_adapter.mpi import service as mpi
+from cdi_adapter.persist import normalized
 from cdi_adapter.recognition import practitioner
 from cdi_adapter.storage import ObjectStore, get_store
 
@@ -125,6 +133,13 @@ def write_extraction(
     prior = conn.execute(text("SELECT patient_id FROM source_document WHERE id = :d"),
                          {"d": str(document_id)}).scalar_one_or_none()  # fmt: skip
     repo.purge_document_facts(conn, document_id)
+    if doc_type == "prescription":
+        # EX-S1: an Aadhaar number is not stored (patient.py). Done HERE, at the one place an
+        # answer is written, so no path saves one - not as a value, not in the saved answer.
+        payload = withhold_aadhaar(payload)
+        if payload.get("_withheld"):
+            log.warning("aadhaar_not_stored", document_id=str(document_id),
+                        fields=[w["field"] for w in payload["_withheld"]])  # fmt: skip
     partial = is_partial(payload)
     extraction_id = repo.insert_extraction(
         conn, document_id=document_id, doc_type=doc_type, schema_id=SCHEMA_FOR_DOC_TYPE[doc_type],
@@ -204,6 +219,9 @@ def write_extraction(
             extracted_text=" | ".join(str(b["text"]) for b in ev_blocks) or None,
             pipeline_run_ids=[str(r) for r in run_ids], model_stack=model_stack,
         )  # fmt: skip
+    # OUT-S1: the lab tests, preparation and context of this document as rows of their own -
+    # in this same transaction, so a document is saved whole or not at all
+    normalized.refresh(conn, document_id)
     return {"extraction_id": extraction_id, "patient_id": patient_id, "identity": how,
             "encounter_id": encounter_id, "facts": len(drafts), "partial": partial}  # fmt: skip
 
@@ -283,16 +301,53 @@ def annotate(payload: dict[str, Any], doc_type: str, blocks: list[dict[str, Any]
     return payload
 
 
+def revision_of(model_id: str | None) -> str | None:
+    """SW-S2: the pinned revision of the model that answered - the settings' pin when it is
+    the configured model (the champion's, once applied), else the registry's for that id."""
+    from cdi_adapter.config import get_settings
+    from cdi_adapter.modelops import catalog
+
+    s = get_settings()
+    if model_id and model_id == s.vlm_model_id and s.vlm_model_revision:
+        return s.vlm_model_revision
+    e = catalog.find(model_id) if model_id else None
+    return e.revision if e else None
+
+
+def registered_as(model_id: str | None) -> str | None:
+    from cdi_adapter.modelops import catalog
+
+    e = catalog.find(model_id) if model_id else None
+    return e.id if e else None
+
+
+def versions(doc_type: str) -> dict[str, str]:
+    """OUT-S1 FR5: what read the page besides the model - the prompt's wording and the lists the
+    values were named and checked with. Saved with every value (``fact_provenance.model_stack``)."""
+    from cdi_adapter.extract import context, preparation
+    from cdi_adapter.extract.prompt import prompt_version
+    from cdi_adapter.terminology import lab_master
+
+    return {"prompt_version": prompt_version(doc_type), "lab_master": lab_master.version(),
+            "preparation_phrases": preparation.version(),
+            "context_rules": context.version()}  # fmt: skip
+
+
 def _complete(ctx: _Ctx, payload: dict[str, Any], vlm: MLClient, *,
               patient_id: UUID | str | None, expected_patient: dict[str, Any] | None,
               actor: str) -> dict[str, Any]:  # fmt: skip
+    answer = payload  # as the model gave it: its own words go into what is saved (OUT-S1)
     if ctx.doc_type == "prescription":  # EX-S2 AC4: the stamp, found in the picture itself
         payload = with_stamp(payload, ctx.image, ctx.blocks)
-    payload = annotate(payload, ctx.doc_type, ctx.blocks)
+    payload = keep_raw(annotate(payload, ctx.doc_type, ctx.blocks), answer)
     model_stack = {"classifier": (ctx.cls or {}).get("method"),
                    "ocr": ctx.blocks[0]["engine"] if ctx.blocks else None,
                    "extractor": vlm.model, "extractor_version": vlm.version,
-                   "schema": SCHEMA_FOR_DOC_TYPE[ctx.doc_type]}  # fmt: skip
+                   # SW-S2: the exact revision of the model that answered, and its registry id
+                   "extractor_revision": revision_of(vlm.model),
+                   "extractor_registered_as": registered_as(vlm.model),
+                   "schema": SCHEMA_FOR_DOC_TYPE[ctx.doc_type],
+                   **versions(ctx.doc_type)}  # fmt: skip
     with session_scope() as conn:
         out = write_extraction(
             conn, document_id=ctx.document_id, doc_type=ctx.doc_type, payload=payload,
@@ -350,11 +405,21 @@ def extract_document(
     try:
         req = _request(ctx, store)
         payload = vlm.vlm_json(req.image_png, req.prompt, req.schema, max_tokens=req.max_tokens)
-        return _complete(ctx, payload, vlm, patient_id=patient_id,
-                         expected_patient=expected_patient, actor=actor)  # fmt: skip
+        out = _complete(ctx, payload, vlm, patient_id=patient_id,
+                        expected_patient=expected_patient, actor=actor)  # fmt: skip
     except Exception as exc:
         _record_failure(ctx, exc, actor, vlm)
         raise
+    _shadow(ctx, req, payload, vlm)
+    return out
+
+
+def _shadow(ctx: _Ctx, req: JsonRequest, answer: dict[str, Any], vlm: MLClient) -> None:
+    """SW-S5: once the real result is saved, a shadow candidate (if one is set) answers the same
+    request; its answer is saved apart and never changes this document."""
+    from cdi_adapter.modelops import shadow
+
+    shadow.after_extraction(ctx.document_id, req, answer, vlm.model, vlm.version)
 
 
 def extract_documents(
@@ -426,4 +491,6 @@ def extract_documents(
         except Exception as exc:
             _record_failure(ctx, exc, actor, vlm)
             results[i] = exc
+            continue
+        _shadow(ctx, req, payload, vlm)
     return [r if r is not None else RuntimeError("not extracted") for r in results]

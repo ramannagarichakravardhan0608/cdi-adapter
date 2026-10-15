@@ -1,0 +1,55 @@
+{
+ "schema_version": "answer.v1",
+ "case_id": "syn-03",
+ "slices": {
+  "script": "printed",
+  "doctor": "unknown",
+  "doctor_group": "clinic-b",
+  "suite": "capability"
+ },
+ "patient": {
+  "name": "Chitra Dummyani",
+  "age_text": "36 Y",
+  "sex": "female",
+  "dob": null,
+  "phone": null,
+  "address": "3 Example Road, Sampletown"
+ },
+ "doctor": {
+  "name": "Dr. Sunil Notreal",
+  "registration_no": "70003",
+  "qualification": "MBBS, DNB",
+  "department": "Endocrinology"
+ },
+ "tests": [
+  {
+   "as_written": "TSH",
+   "standard_code": "3016-3",
+   "reasons": [
+    "Hypothyroidism"
+   ]
+  },
+  {
+   "as_written": "CBC",
+   "standard_code": "58410-2",
+   "reasons": [
+    "Fever"
+   ]
+  }
+ ],
+ "preparation": [],
+ "labelling": {
+  "labellers": [
+   "labeller-a (made up)"
+  ]
+ },
+ "identity": {
+  "method": "synthetic",
+  "tool": null,
+  "checked_by": "made-up checker (synthetic set)",
+  "checked_on": "2026-10-13",
+  "readable_identity": false,
+  "note": "a made-up person and clinic; there is no picture"
+ },
+ "note": null
+}

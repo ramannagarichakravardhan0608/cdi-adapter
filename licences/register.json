@@ -1,0 +1,364 @@
+{
+  "about": "ENT-S1 register: everything in the product that is not a Python package (those are in packages.json), the licence decisions, and the release sign-off. NOT LEGAL ADVICE. Every licence here was transcribed from the owner's 'Licence Register' and 'SBOM (pod)' sheets (evidence dated 2026-10-03 / 2026-10-04) or is null. A null licence is UNKNOWN and blocks the build: nothing was filled in from memory.",
+  "product": "CDI-Adapter",
+  "copyright": "",
+  "notice_lines": [],
+  "signoff": {
+    "by": null,
+    "role": null,
+    "date": null,
+    "release": null
+  },
+  "ip_file": {
+    "about": "FR11: signed assignments from all authors, a prior-art search before any patent filing, no public disclosure before filing. Kept by the owner and counsel, not in this repository.",
+    "author_assignments": null,
+    "prior_art_search": null,
+    "owner": null,
+    "due": null
+  },
+  "aliases": {
+    "vllm-transformers": "transformers",
+    "quant-transformers": "transformers"
+  },
+  "blanket": {
+    "id": "REG-PY-2026-10-04",
+    "decision": "Accepted: the Licence Register's row 'Other Python packages' gives GREEN to every package of the SBOM sheets except PyMuPDF (AGPL) and psycopg (LGPL), naming the MPL ones (pathspec, tqdm).",
+    "by": "Licence Register sheet (owner's decision; counsel to confirm)",
+    "date": "2026-10-04",
+    "covers_categories": [
+      "3 PERMISSIVE",
+      "2 WEAK COPYLEFT (file level)"
+    ]
+  },
+  "decisions": {
+    "pymupdf": {
+      "about": "PyMuPDF (AGPL-3.0 or Artifex commercial)",
+      "check": "pymupdf-replaced",
+      "decision": "Replace with pypdfium2; ship the PDFium licence files.",
+      "outcome": "do not use",
+      "by": "Licence Register sheet (owner's decision; counsel to confirm)",
+      "date": "2026-10-04",
+      "owner": null,
+      "due": null
+    },
+    "qwen-3b": {
+      "about": "Qwen2.5-VL-3B-Instruct (Qwen RESEARCH licence, non-commercial)",
+      "check": "qwen-3b-removed",
+      "decision": "Remove it; no fallback model. Delete vlm_fallback_model_id.",
+      "outcome": "do not use",
+      "by": "Licence Register sheet (owner's decision; counsel to confirm)",
+      "date": "2026-10-04",
+      "owner": null,
+      "due": null
+    },
+    "iam": {
+      "about": "IAM handwriting database as training data (non-commercial research only)",
+      "check": "iam-not-used-for-training",
+      "decision": "Never train or fine-tune on IAM for the sold product.",
+      "outcome": "do not use",
+      "by": "Licence Register sheet (owner's decision; counsel to confirm)",
+      "date": "2026-10-04",
+      "owner": null,
+      "due": null
+    },
+    "minio": {
+      "about": "MinIO server (AGPL-3.0)",
+      "check": "object-store-pluggable",
+      "decision": "Do not make it mandatory: an ObjectStore interface (SW-S6) - cloud storage when hosted; an encrypted filesystem store or the customer's S3-compatible store when installed.",
+      "by": "Licence Register sheet (owner's decision; counsel to confirm)",
+      "date": "2026-10-04",
+      "owner": null,
+      "due": null
+    },
+    "redis": {
+      "about": "Redis server (BSD-3 up to 7.2; RSALv2 / SSPLv1 from 7.4)",
+      "check": "redis-pinned",
+      "decision": "Pin 7.2 or older, or switch to Valkey. No upgrade to 7.4 or later without a compliance review.",
+      "by": "Licence Register sheet (owner's decision; counsel to confirm)",
+      "date": "2026-10-04",
+      "owner": null,
+      "due": null
+    },
+    "grafana": {
+      "about": "Grafana OSS (AGPL-3.0)",
+      "check": "grafana-not-bundled",
+      "decision": "Do not bundle. Expose Prometheus / OpenTelemetry metrics; customers attach their own.",
+      "by": "Licence Register sheet (owner's decision; counsel to confirm)",
+      "date": "2026-10-04",
+      "owner": null,
+      "due": null
+    },
+    "opencv": {
+      "about": "OpenCV wheels (Apache-2.0; bundle FFmpeg LGPL; the non-headless wheel also bundles Qt LGPL)",
+      "check": "opencv-headless-only",
+      "decision": "Headless wheel only; ship the third-party notices.",
+      "by": "Licence Register sheet (owner's decision; counsel to confirm)",
+      "date": "2026-10-04",
+      "owner": null,
+      "due": null
+    },
+    "onemg": {
+      "about": "1mg catalogue (terms prohibit commercial reuse and scraping)",
+      "check": "onemg-not-used",
+      "decision": "Do not scrape or copy it. If medicines are added later: CDSCO lists plus a licensed drug database.",
+      "outcome": "do not use",
+      "by": "Licence Register sheet (owner's decision; counsel to confirm)",
+      "date": "2026-10-04",
+      "owner": null,
+      "due": null
+    },
+    "external-codes": {
+      "about": "ICD-10 (WHO, CC BY-ND 3.0 IGO conditions) and SNOMED CT (affiliate licence)",
+      "check": "external-codes-optional",
+      "decision": "Not bundled, not required: an optional adapter a customer enables (SW-S6). Never alter code descriptions.",
+      "by": "Licence Register sheet (owner's decision; counsel to confirm)",
+      "date": "2026-10-04",
+      "owner": null,
+      "due": null
+    },
+    "notice": {
+      "about": "NOTICE file and third-party licence texts",
+      "check": "notice-shipped",
+      "decision": "Ship a NOTICE file; for the installed version also every third-party licence text.",
+      "by": "Backlog story ENT-S1 (FR5, FR8)",
+      "date": "2026-10-04",
+      "owner": null,
+      "due": null
+    },
+    "qwen-awq": {
+      "about": "Qwen2.5-VL-7B-Instruct-AWQ (Qwen LICENSE AGREEMENT)",
+      "decision": "Conditional: give recipients the agreement and the notice line 'Qwen is licensed under the Qwen LICENSE AGREEMENT, Copyright (c) Alibaba Cloud. All Rights Reserved.'; show 'Built with Qwen' where required; request a licence above 100 million monthly users.",
+      "by": "Licence Register sheet (owner's decision; counsel to confirm)",
+      "date": "2026-10-04",
+      "owner": null,
+      "due": null
+    },
+    "loinc": {
+      "about": "LOINC codes",
+      "decision": "Accepted: free licence, commercial use allowed. Keep the notices and accept the licence terms.",
+      "by": "Licence Register sheet (owner's decision; counsel to confirm)",
+      "date": "2026-10-03",
+      "owner": null,
+      "due": null
+    },
+    "nvidia": {
+      "about": "NVIDIA driver, CUDA runtime and cuDNN",
+      "decision": "Hosted: not redistributed. Installed: ship ONLY the files on the EULA's redistributable list; read the EULA text, then list the exact files.",
+      "by": "Licence Register sheet (owner's decision; counsel to confirm)",
+      "date": "2026-10-04",
+      "owner": null,
+      "due": null
+    }
+  },
+  "components": {
+    "minio": {
+      "version": "RELEASE.2025-10-15T17-29-55Z",
+      "licence": "AGPL-3.0",
+      "source": "Licence Register sheet: MinIO's own compliance page, checked 2026-10-04",
+      "decision": "minio"
+    },
+    "grafana": {
+      "version": "13.2.2",
+      "licence": "AGPL-3.0",
+      "source": "Licence Register sheet: Grafana's own licence announcement, checked 2026-10-04",
+      "decision": "grafana"
+    },
+    "go": {
+      "licence": null,
+      "source": null,
+      "note": "Go toolchain, used to build MinIO from source. Licence not read from its source."
+    },
+    "caddy": {
+      "licence": null,
+      "source": null,
+      "note": "Application-tier balancer and ingress. Licence not read from its source."
+    },
+    "cloudflared": {
+      "licence": null,
+      "source": null,
+      "note": "Tunnel client. Licence not read from its source."
+    },
+    "prometheus": {
+      "licence": null,
+      "source": null,
+      "note": "Metrics server. Licence not read from its source."
+    },
+    "alertmanager": {
+      "licence": null,
+      "source": null,
+      "note": "Alert routing. Licence not read from its source."
+    },
+    "tempo": {
+      "licence": null,
+      "source": null,
+      "note": "Trace store (a Grafana Labs project; Grafana itself is AGPL-3.0). Licence not read from its source."
+    },
+    "loki": {
+      "licence": null,
+      "source": null,
+      "note": "Log store (a Grafana Labs project; Grafana itself is AGPL-3.0). Licence not read from its source."
+    },
+    "fhir-validator": {
+      "licence": null,
+      "source": null,
+      "note": "HL7 FHIR validator jar. Licence not read from its source."
+    },
+    "image:postgres": {
+      "licence": null,
+      "source": null,
+      "note": "Docker image for the compose stack. The image's own licences were not read."
+    },
+    "image:redis": {
+      "licence": "BSD-3-Clause (Redis 7.2 and earlier); RSALv2 / SSPLv1 from 7.4",
+      "source": "Licence Register sheet: redis.io/legal/licenses, checked 2026-10-04",
+      "decision": "redis"
+    },
+    "apt:postgresql-16": {
+      "version": "16.15-0ubuntu0.24.04.1",
+      "licence": "PostgreSQL; PostgreSQL and Custom-regex and Tcl; Custom-pg_dump; BSD-3-Clause",
+      "source": "SBOM (pod) sheet: the package's copyright file, read on the pod 2026-10-04",
+      "category": "3 PERMISSIVE"
+    },
+    "apt:postgresql-client-16": {
+      "version": "16.15-0ubuntu0.24.04.1",
+      "licence": "PostgreSQL; PostgreSQL and Custom-regex and Tcl; Custom-pg_dump; BSD-3-Clause",
+      "source": "SBOM (pod) sheet: the package's copyright file, read on the pod 2026-10-04",
+      "category": "3 PERMISSIVE"
+    },
+    "apt:redis-server": {
+      "version": "5:7.0.15-1ubuntu0.24.04.4",
+      "licence": "BSD-3-clause; BSD-2-clause; MIT",
+      "source": "SBOM (pod) sheet: the package's copyright file, read on the pod 2026-10-04",
+      "category": "3 PERMISSIVE"
+    },
+    "apt:cron": {
+      "version": "3.0pl1-184ubuntu2",
+      "licence": "Paul-Vixie's-license; Paul-Vixie's-license and GPL-2+ and ISC; GPL-2+; Artistic",
+      "source": "SBOM (pod) sheet: the package's copyright file, read on the pod 2026-10-04",
+      "category": "1 STRONG COPYLEFT"
+    },
+    "apt:git": {
+      "version": "1:2.43.0-1ubuntu7.3",
+      "licence": "GPL-2; BSD-3-clause; Zlib; LGPL-2.1+",
+      "source": "SBOM (pod) sheet: the package's copyright file, read on the pod 2026-10-04",
+      "category": "2 WEAK COPYLEFT (LGPL)"
+    },
+    "apt:curl": {
+      "version": "8.5.0-2ubuntu10.15",
+      "licence": "curl; OLDAP-2.8; ISC; GPL-2+ with Autoconf-data exception",
+      "source": "SBOM (pod) sheet: the package's copyright file, read on the pod 2026-10-04",
+      "category": "1 STRONG COPYLEFT"
+    },
+    "apt:libcurl4t64": {
+      "version": "8.5.0-2ubuntu10.15",
+      "licence": "curl; OLDAP-2.8; ISC; GPL-2+ with Autoconf-data exception",
+      "source": "SBOM (pod) sheet: the package's copyright file, read on the pod 2026-10-04",
+      "category": "1 STRONG COPYLEFT"
+    },
+    "apt:libgl1": {
+      "version": "1.7.0-1build1",
+      "licence": "MIT; Apache-2.0; public-domain; GPL-3+",
+      "source": "SBOM (pod) sheet: the package's copyright file, read on the pod 2026-10-04",
+      "category": "1 STRONG COPYLEFT"
+    },
+    "apt:libglib2.0-0t64": {
+      "version": "2.80.0-6ubuntu3.9",
+      "licence": "LGPL-2.1+; old-glib-tests; AFL-2.0 or LGPL-2.1+; Janik-permissive",
+      "source": "SBOM (pod) sheet: the package's copyright file, read on the pod 2026-10-04",
+      "category": "2 WEAK COPYLEFT (LGPL)"
+    },
+    "apt:python3-venv": {
+      "licence": null,
+      "source": null,
+      "note": "Pinned in versions.env; not listed in the SBOM (pod) sheet. Licence not read."
+    },
+    "apt:autossh": {
+      "licence": null,
+      "source": null,
+      "note": "Pinned in versions.env; not listed in the SBOM (pod) sheet. Licence not read."
+    },
+    "apt:openjdk-21-jre-headless": {
+      "licence": null,
+      "source": null,
+      "note": "Pinned in versions.env; not listed in the SBOM (pod) sheet. Licence not read."
+    }
+  },
+  "models": {
+    "Qwen/Qwen2.5-VL-7B-Instruct": {
+      "used_for": "Main reading model",
+      "licence": "Apache-2.0 (Hugging Face metadata; the repository has NO LICENSE file)",
+      "source": "Licence Register sheet: model card and file list, checked 2026-10-04; discussion #31 unanswered",
+      "revision": "cc594898137f460bfe9f0759e9844b3ce807cfb5",
+      "revision_source": "SBOM (pod) sheet: the revision cached on the pod, 2026-10-04",
+      "sha256": null,
+      "licence_text_copy": null,
+      "trained_on": "not recorded (the maker's training data is not published in the register)",
+      "rights": "use under Apache-2.0 as tagged; written confirmation from Alibaba requested (Open Items)",
+      "conditions": "Pin the exact revision; keep a dated copy of the model card."
+    },
+    "microsoft/trocr-base-handwritten": {
+      "used_for": "Handwriting line reader (second reader)",
+      "licence": "MIT (model card); fine-tuned on the IAM dataset, which is non-commercial research only",
+      "source": "Licence Register sheet: model card, checked 2026-10-04",
+      "revision": "eaacaf452b06415df8f10bb6fad3a4c11e609406",
+      "revision_source": "SBOM (pod) sheet: the revision cached on the pod, 2026-10-04 (no LICENSE file in it)",
+      "sha256": null,
+      "licence_text_copy": null,
+      "trained_on": "IAM handwriting database (free for non-commercial research use only)",
+      "rights": "undecided: counsel to decide whether the IAM terms carry into the weights",
+      "note": "Register status AMBER: REVIEW - no decision is recorded, so this blocks. Keep only if the RD-S2 ablation shows it adds value."
+    },
+    "Qwen/Qwen2.5-VL-7B-Instruct-AWQ": {
+      "used_for": "Smaller build for L4-class GPUs (not in the build today)",
+      "licence": "Qwen LICENSE AGREEMENT (commercial use allowed; licence request above 100 million monthly users)",
+      "source": "Licence Register sheet: LICENSE file read 2026-10-04",
+      "revision": null,
+      "sha256": null,
+      "licence_text_copy": null,
+      "trained_on": "not recorded",
+      "rights": "as the agreement's conditions allow",
+      "decision": "qwen-awq"
+    }
+  },
+  "datasets": {
+    "medicine catalogue (1mg-derived)": {
+      "used_for": "Medicine names for the catalogue lookup (src/cdi_adapter/catalogue)",
+      "licence": "Proprietary: 1mg terms of use prohibit commercial reuse of the content and automated scraping",
+      "source": "Licence Register sheet: 1mg terms of use, checked 2026-10-04",
+      "decision": "onemg"
+    },
+    "lab-test master (terminology/data/lab_tests.csv)": {
+      "used_for": "Names, aliases and codes of lab tests (EX-S3)",
+      "licence": "Own work (engineer-written, not clinician-reviewed); the LOINC codes in it are under the LOINC licence",
+      "source": "The file's own header and docs/evidence/EX-S3, 2026-10-12"
+    },
+    "preparation phrases (extract/data/preparation_phrases.json)": {
+      "used_for": "Wording of test preparation (EX-S4)",
+      "licence": "Own work (engineer-written)",
+      "source": "The file's own header, 2026-10-12"
+    },
+    "indication groups (extract/data/indication_groups.json)": {
+      "used_for": "Which tests go with which reasons (EX-S5)",
+      "licence": "Own work (engineer-written)",
+      "source": "The file's own header, 2026-10-12"
+    }
+  },
+  "code_lists": {
+    "LOINC": {
+      "used_for": "Standard lab test codes",
+      "licence": "LOINC licence (custom terms: free, commercial use allowed, notices required)",
+      "source": "Licence Register sheet, checked 2026-10-03",
+      "version": null,
+      "decision": "loinc"
+    }
+  },
+  "other": {
+    "NVIDIA driver, CUDA runtime and cuDNN": {
+      "used_for": "Run models on the GPU",
+      "licence": "Proprietary: NVIDIA EULAs; the CUDA EULA's Attachment A lists the redistributable files",
+      "source": "Licence Register sheet: search summary 2026-10-04 - the EULA text was NOT read in full",
+      "reviewed": false,
+      "decision": "nvidia"
+    }
+  }
+}

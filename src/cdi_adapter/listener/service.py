@@ -760,8 +760,8 @@ def pipeline_reader(settings: Any = None) -> Reader:
         except Exception as exc:  # noqa: BLE001 - any failure means "not now"
             return f"the database cannot be reached ({type(exc).__name__})"
         try:
-            store = get_store()
-            store.client.head_bucket(Bucket=store.bucket)
+            if not get_store().healthy():  # SW-S1: through the store's interface
+                return "the document store cannot be reached"
         except Exception as exc:  # noqa: BLE001
             return f"the document store cannot be reached ({type(exc).__name__})"
         return ledger.ready()  # LS-S3: the listener_file table

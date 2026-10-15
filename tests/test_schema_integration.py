@@ -59,15 +59,23 @@ TRAINING_TABLES = {
     "gate_threshold_set",
     "gate_threshold",
 }  # 0017 (E4-S3)
+# migration 0037 (backlog EX-S2): the doctor list and how each document's doctor was identified
+PRACTITIONER_TABLES = {"practitioner", "document_practitioner"}
+# migration 0039 (backlog OUT-S1): the prescription's tests, preparation and context as rows
+RX_TABLES = {"rx_lab_test", "rx_preparation", "rx_test_context"}
+SHADOW_TABLES = {"shadow_result"}  # migration 0041 (backlog SW-S5): candidate answers, apart
 ALL_TABLES = ((PER_DOC_TABLES - {"ocr_block"}) | {"patient_registry"} | CANONICAL_TABLES
               | AUTH_TABLES | MODEL_TABLES | JOB_TABLES | CATALOGUE_TABLES | AGENT_TABLES
               | ORDER_TABLES | EVIDENCE_TABLES | LONGITUDINAL_TABLES
               | TRAINING_TABLES | ORCHESTRATOR_TABLES | MIGRATION_TABLES
-              | QUEUE_TABLES | SUMMARY_TABLES
+              | QUEUE_TABLES | SUMMARY_TABLES | PRACTITIONER_TABLES | RX_TABLES | SHADOW_TABLES
               | {"listener_file", "listener_heartbeat"})  # 0029, 0034 (LS)  # fmt: skip
 VIEWS = {"v_problem_list", "v_medication_list", "v_allergy_list", "v_results_grid",
          "v_encounter_timeline", "ocr_block", "v_medication_history",
-         "v_problem_history", "v_patient_summary"}  # fmt: skip
+         "v_problem_history", "v_patient_summary",
+         # 0039 (OUT-S1): each kind of prescription value with its evidence
+         "v_rx_evidence", "v_rx_patient_detail", "v_rx_doctor_detail", "v_rx_lab_test",
+         "v_rx_preparation", "v_rx_test_context"}  # fmt: skip
 
 
 def _tables(engine) -> set[str]:
@@ -101,7 +109,7 @@ def test_upgrade_head_creates_every_table_and_view(engine):
     assert _tables(engine) == ALL_TABLES
     assert _views(engine) == VIEWS
     with engine.connect() as c:
-        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0038"
+        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0041"
         assert c.execute(text("SELECT nextval('patient_mpi_seq')")).scalar_one() >= 1
 
 

@@ -321,33 +321,52 @@ tests:
 
   # ---------------------------------------------------------------- backups + restore drill (E10-S11)
   # promtool's clock starts at 0: a timestamp gauge that stays at 0 ages with time()
-  - name: backup - no good backup for 45 minutes pages
+  - name: backup - no good backup for 15 minutes pages
     interval: 1m
     input_series:
       - series: cdi_backup_last_success_timestamp_seconds{job="cdi-webapp"}
         values: "0x60"
     alert_rule_test:
-      - eval_time: 40m
+      - eval_time: 12m
         alertname: CdiBackupStale
         exp_alerts: []
-      - eval_time: 55m
+      - eval_time: 25m
         alertname: CdiBackupStale
         exp_alerts:
           - exp_labels: {severity: page}
             exp_annotations:
-              summary: No good backup for 45 minutes.
-              description: The newest good pg_dump + object backup is more than 45 minutes old; a restore now would lose more than the RPO target.
+              summary: No good backup for 15 minutes.
+              description: The newest good pg_dump + object backup is more than 15 minutes old; a restore now would lose more than the RPO target.
               runbook_url: docs/alerts.md#cdibackupstale
 
-  - name: backup - a backup every 15 minutes stays quiet
-    interval: 15m
+  - name: backup - a backup every 5 minutes stays quiet
+    interval: 5m
     input_series:
       - series: cdi_backup_last_success_timestamp_seconds{job="cdi-webapp"}
-        values: "0+900x8"
+        values: "0+300x24"
     alert_rule_test:
       - eval_time: 115m
         alertname: CdiBackupStale
         exp_alerts: []
+
+  # ENT-S4 AC4: the backup job fails -> the alert is there at the next check
+  - name: backup - a failed run pages at the next check
+    interval: 1m
+    input_series:
+      - series: cdi_backup_last_ok{job="cdi-webapp"}
+        values: "1 1 0 0 0"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: CdiBackupFailed
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: CdiBackupFailed
+        exp_alerts:
+          - exp_labels: {severity: page}
+            exp_annotations:
+              summary: The last backup failed.
+              description: The newest run of the backup job failed; until one succeeds, a restore goes back to the last good backup and loses everything saved since.
+              runbook_url: docs/alerts.md#cdibackupfailed
 
   - name: restore drill - a failed drill pages
     interval: 1m
@@ -597,3 +616,42 @@ tests:
       - eval_time: 10m
         alertname: CdiListenerNotPolling
         exp_alerts: []
+
+  # ---------------------------------------------------------------- ENT-S4: late results, disk
+  - name: results - a result saved after 60 seconds raises a ticket
+    interval: 1m
+    input_series:
+      - series: cdi_results_late_total{job="cdi-webapp",instance="127.0.0.1:9471"}
+        values: "0 0 0 1 2 2"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: CdiResultsLate
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: CdiResultsLate
+        exp_alerts:
+          - exp_labels: {severity: ticket}
+            exp_annotations:
+              summary: Results are taking longer than 60 seconds.
+              description: One or more results were saved more than 60 seconds after their upload in the last 10 minutes; staff are waiting longer than the target.
+              runbook_url: docs/alerts.md#cdiresultslate
+
+  - name: disk - less than a tenth free for 5 minutes pages
+    interval: 1m
+    input_series:
+      - series: cdi_disk_free_ratio{job="cdi-webapp",path="/workspace"}
+        values: "0.5 0.5 0.05x12"
+      - series: cdi_disk_free_ratio{job="cdi-webapp",path="/"}
+        values: "0.6x14"
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: CdiDiskNearlyFull
+        exp_alerts: []
+      - eval_time: 9m
+        alertname: CdiDiskNearlyFull
+        exp_alerts:
+          - exp_labels: {severity: page, path: /workspace}
+            exp_annotations:
+              summary: A disk is nearly full.
+              description: Less than 10% of a watched disk is free; when it fills, uploads, backups and logs stop.
+              runbook_url: docs/alerts.md#cdidisknearlyfull

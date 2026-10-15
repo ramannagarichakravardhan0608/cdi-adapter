@@ -40,6 +40,7 @@ ALERTS = (
     "CdiPgStandbyDisconnected",
     "CdiMinioDegraded",
     "CdiBackupStale",
+    "CdiBackupFailed",  # ENT-S4
     "CdiRestoreDrillFailed",
     "CdiRestoreDrillOverdue",
     "CdiWebappInstanceDown",
@@ -49,6 +50,8 @@ ALERTS = (
     "CdiReaderDisagreementDrift",  # RD-S3
     "CdiModelServerDown",  # RD-S5
     "CdiModelServerFailover",  # RD-S5
+    "CdiResultsLate",  # ENT-S4
+    "CdiDiskNearlyFull",  # ENT-S4
 )
 
 
@@ -73,6 +76,8 @@ def _exposed_names() -> set[str]:
     backup = {"ok": True, "last_success_at": "2026-09-24T10:00:00+00:00"}
     drill = {"ok": True, "finished_at": "2026-09-24T11:00:00+00:00", "rpo_s": 60.0, "rto_s": 90.0}
     reg.register(metrics.DrCollector(lambda: (backup, drill)))
+    reg.register(metrics.DiskCollector(["/workspace"], lambda p: SimpleNamespace(
+        total=100, free=40)))  # fmt: skip
     text = generate_latest(reg).decode() + generate_latest().decode()
     return {s.name for f in text_string_to_metric_families(text) for s in f.samples}
 
@@ -92,7 +97,9 @@ def test_exactly_the_alerts_of_the_blocks():
                    "CdiPartialRateAboveBaseline": "ticket",
                    "CdiConfidenceDrift": "ticket", "CdiPgReplicationLag": "page",
                    "CdiPgStandbyDisconnected": "ticket", "CdiMinioDegraded": "ticket",
-                   "CdiBackupStale": "page", "CdiRestoreDrillFailed": "page",
+                   "CdiBackupStale": "page", "CdiBackupFailed": "page",
+                   "CdiResultsLate": "ticket", "CdiDiskNearlyFull": "page",
+                   "CdiRestoreDrillFailed": "page",
                    "CdiRestoreDrillOverdue": "ticket", "CdiWebappInstanceDown": "ticket",
                    "CdiJobsOrphaned": "page", "CdiListenerFileQuarantined": "ticket",
                    "CdiListenerNotPolling": "page",

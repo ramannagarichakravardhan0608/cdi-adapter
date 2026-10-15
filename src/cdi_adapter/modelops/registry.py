@@ -17,7 +17,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError
 
-ACTIONS = ("deploy", "canary", "set_percent", "promote", "rollback")
+ACTIONS = ("deploy", "canary", "set_percent", "promote", "rollback", "switch")  # switch: SW-S5
 
 
 class RolloutError(Exception):

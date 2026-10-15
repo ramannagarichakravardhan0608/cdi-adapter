@@ -491,6 +491,9 @@ def _load_kwargs(model_id: str, settings: Settings) -> dict[str, Any]:
 
     kwargs: dict[str, Any] = {
         "revision": _revision(model_id, settings),
+        # SW-S2: no code that comes with a model, and the safe file format only
+        "trust_remote_code": False,
+        "use_safetensors": True,
         "torch_dtype": torch.bfloat16,
         "attn_implementation": "sdpa",
         "device_map": "cuda",
@@ -509,8 +512,14 @@ def _default_loader(model_id: str, settings: Settings):  # pragma: no cover - ne
     kwargs = _load_kwargs(model_id, settings)
     model = AutoModelForImageTextToText.from_pretrained(model_id, **kwargs)
     processor = AutoProcessor.from_pretrained(
-        model_id, revision=rev, max_pixels=settings.vlm_max_pixels_ocr
+        model_id, revision=rev, max_pixels=settings.vlm_max_pixels_ocr, trust_remote_code=False
     )
+    # SW-S2 AC4: the files that were loaded are the files the registry pinned
+    from cdi_adapter.modelops import catalog
+
+    found = catalog.verify_loaded(model_id, rev, settings)
+    log.info("model_files_verified", model=model_id, revision=rev,
+             checksum=(found or "not registered")[:16])  # fmt: skip
     return model, processor
 
 
@@ -721,9 +730,11 @@ class HFBackend(Backend):
 def _default_engine_factory(model_id: str, settings: Settings):  # pragma: no cover - GPU pod
     from vllm import AsyncEngineArgs, AsyncLLMEngine
 
+    rev = _revision(model_id, settings)
     args = AsyncEngineArgs(
         model=model_id,
-        revision=_revision(model_id, settings),
+        revision=rev,
+        trust_remote_code=False,  # SW-S7 FR4: no code that comes with a model
         dtype="bfloat16",
         gpu_memory_utilization=settings.vllm_gpu_memory_utilization,
         max_model_len=settings.vllm_max_model_len,
@@ -733,7 +744,12 @@ def _default_engine_factory(model_id: str, settings: Settings):  # pragma: no co
         enforce_eager=False,
         **_structured_output_args(settings),
     )
-    return AsyncLLMEngine.from_engine_args(args)
+    engine = AsyncLLMEngine.from_engine_args(args)
+    # SW-S7 AC4: the files vLLM loaded are the files the registry checked, as for ``hf``
+    from cdi_adapter.modelops import catalog
+
+    catalog.verify_loaded(model_id, rev, settings)
+    return engine
 
 
 def _structured_output_args(settings: Settings) -> dict[str, Any]:  # pragma: no cover - needs vllm

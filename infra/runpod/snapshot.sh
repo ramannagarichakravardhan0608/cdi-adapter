@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # DB snapshot (ARCHITECTURE §10.3): pg_dump -Fc -> /workspace/backup/cdi.dump, keep the last 10.
-# cron runs this every 15 minutes; run it by hand before a planned pod stop.
+# cron runs this every 5 minutes (ENT-S4); before a planned pod stop use prepare_stop.sh,
+# which stops the writers first so the dump and the row counts are of the same moment.
 set -euo pipefail
 WS=${WS:-/workspace}
 REPO=${REPO:-$WS/cdi}
@@ -9,7 +10,7 @@ set -a; [ -f "$REPO/.env" ] && . "$REPO/.env"; set +a
 export PGPASSFILE=${PGPASSFILE:-${CDI_SECRETS_DIR:-/run/cdi-secrets}/pgpass}
 URL=postgresql://cdi@127.0.0.1:5432/cdi
 DIR=$WS/backup
-mkdir -p "$DIR"
+mkdir -p "$DIR" "$WS/logs"
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 TAKEN=$(date -u -d "${STAMP:0:8} ${STAMP:9:2}:${STAMP:11:2}:${STAMP:13:2}" +%Y-%m-%dT%H:%M:%SZ)
 TMP="$DIR/.cdi.$STAMP.dump.partial"

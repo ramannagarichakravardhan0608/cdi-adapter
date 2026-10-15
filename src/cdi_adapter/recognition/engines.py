@@ -75,7 +75,7 @@ def _one_line(text: Any) -> str:
 
 
 @lru_cache(maxsize=2)
-def load_trocr(model_id: str) -> tuple[Any, Any, Any]:
+def load_trocr(model_id: str, revision: str | None = None) -> tuple[Any, Any, Any]:
     """What turns the crop into pixels, what turns tokens into text, and the model - on the
     CPU. Loaded once: it is several hundred megabytes."""
     from transformers import (
@@ -85,20 +85,37 @@ def load_trocr(model_id: str) -> tuple[Any, Any, Any]:
         VisionEncoderDecoderModel,
     )
 
-    pixels = AutoImageProcessor.from_pretrained(model_id)
+    # SW-S2: the pinned revision only, and no code that comes with the model
+    pin: dict[str, Any] = {"revision": revision, "trust_remote_code": False} if revision else {
+        "trust_remote_code": False}  # fmt: skip
+    pixels = AutoImageProcessor.from_pretrained(model_id, **pin)
     try:
-        words = AutoTokenizer.from_pretrained(model_id)
+        words = AutoTokenizer.from_pretrained(model_id, **pin)
     except ValueError:
         # the handwritten checkpoints ship a vocabulary and merges but no tokenizer file, which
         # this version of transformers will not build on its own (seen on the pod, 2026-10-09)
-        words = RobertaTokenizer.from_pretrained(model_id)
-    model = VisionEncoderDecoderModel.from_pretrained(model_id)
+        words = RobertaTokenizer.from_pretrained(model_id, **pin)
+    model = VisionEncoderDecoderModel.from_pretrained(model_id, **pin)
+    # SW-S7 AC4: the files that were loaded are the files the registry checked; a mismatch
+    # (ModelMismatch) stops the reader before it reads a single line
+    from cdi_adapter.modelops import catalog
+
+    catalog.verify_loaded(model_id, revision)
     model.to("cpu")  # type: ignore[arg-type]
     model.eval()
     return pixels, words, model
 
 
 _trocr_lock = threading.Lock()  # one line at a time: the model is not shared between threads
+
+
+def pinned_revision(model_id: str) -> str | None:
+    """SW-S2: the exact revision the settings pin for this checkpoint (the champion's, when
+    one is set - modelops.catalog.apply). Another checkpoint named directly is not pinned."""
+    from cdi_adapter.config import get_settings
+
+    s = get_settings()
+    return s.trocr_model_revision or None if model_id == s.trocr_model_id else None
 
 
 def trocr_read(
@@ -109,7 +126,7 @@ def trocr_read(
     import torch
     from PIL import Image
 
-    to_pixels, words, model = load_trocr(model_id)
+    to_pixels, words, model = load_trocr(model_id, pinned_revision(model_id))
     with Image.open(io.BytesIO(crop_png)) as im:
         pixels = to_pixels(images=im.convert("RGB"), return_tensors="pt").pixel_values
     with _trocr_lock, torch.no_grad():
